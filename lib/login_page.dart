@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:blackforest_app/empty_page.dart'; // We'll create this next
+import 'package:blackforest_app/categories_page.dart'; // We'll create this next
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -54,7 +54,7 @@ class _LoginPageState extends State<LoginPage> {
           // Navigate to empty page only for branch
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (context) => const EmptyPage()),
+            MaterialPageRoute(builder: (context) => const CategoriesPage()),
           );
         } else if (response.statusCode == 401) {
           _showError('Invalid credentials');
