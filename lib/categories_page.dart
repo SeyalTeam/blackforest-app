@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:blackforest_app/products_page.dart'; // Import the new ProductsPage
+import 'package:blackforest_app/products_page.dart'; // Import ProductsPage
 
 class CategoriesPage extends StatefulWidget {
   const CategoriesPage({super.key});
@@ -93,16 +93,6 @@ class _CategoriesPageState extends State<CategoriesPage> {
     );
   }
 
-  void _openProducts(String categoryId, String categoryName) {
-    _resetTimer(); // Reset timer on tap
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ProductsPage(categoryId: categoryId, categoryName: categoryName),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return GestureDetector( // Detect taps to reset timer
@@ -117,9 +107,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
               icon: const Icon(Icons.shopping_cart, color: Colors.grey), // Cart icon
               onPressed: () {
                 _resetTimer(); // Reset timer
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Cart screen coming soon')),
-                );
+                _showError('Cart screen coming soon');
               },
             ),
           ],
@@ -146,9 +134,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
                 onTap: () {
                   _resetTimer(); // Reset timer on tap
                   Navigator.pop(context); // Close drawer
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Products screen coming soon')),
-                  );
+                  _showError('Products screen coming soon');
                 },
               ),
               ListTile(
@@ -157,9 +143,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
                 onTap: () {
                   _resetTimer();
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Categories screen coming soon')),
-                  );
+                  _showError('Categories screen coming soon');
                 },
               ),
               ListTile(
@@ -168,9 +152,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
                 onTap: () {
                   _resetTimer();
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Branches screen coming soon')),
-                  );
+                  _showError('Branches screen coming soon');
                 },
               ),
               ListTile(
@@ -179,9 +161,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
                 onTap: () {
                   _resetTimer();
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Employees screen coming soon')),
-                  );
+                  _showError('Employees screen coming soon');
                 },
               ),
               ListTile(
@@ -190,9 +170,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
                 onTap: () {
                   _resetTimer();
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Billing screen coming soon')),
-                  );
+                  _showError('Billing screen coming soon');
                 },
               ),
               ListTile(
@@ -201,9 +179,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
                 onTap: () {
                   _resetTimer();
                   Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Reports screen coming soon')),
-                  );
+                  _showError('Reports screen coming soon');
                 },
               ),
               ListTile( // Logout at bottom
@@ -222,71 +198,88 @@ class _CategoriesPageState extends State<CategoriesPage> {
             ? const Center(child: CircularProgressIndicator(color: Colors.black))
             : _bilingCategories.isEmpty
             ? const Center(child: Text('No biling categories found', style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18)))
-            : GridView.builder(
-          padding: const EdgeInsets.all(10),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 3, // 3 columns
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-            childAspectRatio: 0.75, // Rectangular (taller than wide)
-          ),
-          itemCount: _bilingCategories.length,
-          itemBuilder: (context, index) {
-            final category = _bilingCategories[index];
-            final imageUrl = category['image'] != null
-                ? 'https://apib.theblackforestcakes.com/' + category['image']
-                : 'https://via.placeholder.com/150?text=No+Image'; // Fallback image
-
-            return GestureDetector(
-              onTap: () => _openProducts(category['_id'], category['name']), // Open products on tap
-              child: Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(8),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.grey.withOpacity(0.1),
-                      spreadRadius: 2,
-                      blurRadius: 4,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  children: [
-                    Expanded(
-                      flex: 8, // 80% image
-                      child: ClipRRect(
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-                        child: Image.network(
-                          imageUrl,
-                          fit: BoxFit.cover,
-                          width: double.infinity,
-                          errorBuilder: (context, error, stackTrace) {
-                            return const Center(child: Text('No Image', style: TextStyle(color: Colors.grey)));
-                          },
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      flex: 2, // 20% name
-                      child: Container(
-                        width: double.infinity,
-                        decoration: const BoxDecoration(
-                          color: Colors.black,
-                          borderRadius: BorderRadius.vertical(bottom: Radius.circular(8)),
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          category['name'] ?? 'Unknown',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                          textAlign: TextAlign.center,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+            : LayoutBuilder(
+          builder: (context, constraints) {
+            final width = constraints.maxWidth;
+            final crossAxisCount = (width > 600) ? 5 : 3; // 3 on phones, 5 on desktop/web/tablets
+            return GridView.builder(
+              padding: const EdgeInsets.all(10),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: crossAxisCount,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 10,
+                childAspectRatio: 0.75, // Rectangular
               ),
+              itemCount: _bilingCategories.length,
+              itemBuilder: (context, index) {
+                final category = _bilingCategories[index];
+                final imageUrl = category['image'] != null
+                    ? 'https://apib.theblackforestcakes.com/uploads/categories/${category['image'].split('/').last}'
+                    : 'https://via.placeholder.com/150?text=No+Image'; // Fallback
+
+                return GestureDetector(
+                  onTap: () {
+                    _resetTimer(); // Reset timer on tap
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ProductsPage(
+                          categoryId: category['_id'],
+                          categoryName: category['name'],
+                        ),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.grey.withOpacity(0.1),
+                          spreadRadius: 2,
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        Expanded(
+                          flex: 8, // 80% image
+                          child: ClipRRect(
+                            borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                            child: Image.network(
+                              imageUrl,
+                              fit: BoxFit.cover,
+                              width: double.infinity,
+                              errorBuilder: (context, error, stackTrace) {
+                                return const Center(child: Text('No Image', style: TextStyle(color: Colors.grey)));
+                              },
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2, // 20% name
+                          child: Container(
+                            width: double.infinity,
+                            decoration: const BoxDecoration(
+                              color: Colors.black,
+                              borderRadius: BorderRadius.vertical(bottom: Radius.circular(8)),
+                            ),
+                            alignment: Alignment.center,
+                            child: Text(
+                              category['name'] ?? 'Unknown',
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                              textAlign: TextAlign.center,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
             );
           },
         ),
