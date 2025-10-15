@@ -2,16 +2,18 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:blackforest_app/common_header.dart'; // Import CommonScaffold
+import 'package:blackforest_app/common_scaffold.dart';
 
 class ProductsPage extends StatefulWidget {
   final String categoryId;
   final String categoryName;
+  final bool isPastryFilter; // New flag for pastry products
 
   const ProductsPage({
     super.key,
     required this.categoryId,
     required this.categoryName,
+    this.isPastryFilter = false, // Default false for normal category filter
   });
 
   @override
@@ -27,7 +29,11 @@ class _ProductsPageState extends State<ProductsPage> {
   @override
   void initState() {
     super.initState();
-    _fetchProducts();
+    if (widget.isPastryFilter) {
+      _fetchPastryProducts();
+    } else {
+      _fetchProducts();
+    }
   }
 
   Future<void> _fetchProducts() async {
@@ -59,6 +65,81 @@ class _ProductsPageState extends State<ProductsPage> {
           SnackBar(content: Text('Failed to fetch products: ${response.statusCode}')),
         );
       }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Network error: Check your internet')),
+      );
+    }
+
+    setState(() {
+      _isLoading = false;
+    });
+  }
+
+  Future<void> _fetchPastryProducts() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      if (token == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No token found. Please login again.')),
+        );
+        return;
+      }
+
+      // Step 1: Fetch categories with isPastryProduct: true
+      final categoryResponse = await http.get(
+        Uri.parse('https://apib.theblackforestcakes.com/api/categories/list-categories'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+
+      if (categoryResponse.statusCode != 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to fetch categories: ${categoryResponse.statusCode}')),
+        );
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final List<dynamic> allCategories = jsonDecode(categoryResponse.body);
+      final pastryCategoryIds = allCategories
+          .where((category) => category['isPastryProduct'] == true)
+          .map((category) => category['_id'])
+          .toList();
+
+      if (pastryCategoryIds.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No pastry categories found')),
+        );
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+
+      // Step 2: Fetch products for all pastry categories
+      List<dynamic> allProducts = [];
+      for (String catId in pastryCategoryIds) {
+        final productResponse = await http.get(
+          Uri.parse('https://apib.theblackforestcakes.com/api/products?categoryId=$catId'),
+          headers: {'Authorization': 'Bearer $token'},
+        );
+
+        if (productResponse.statusCode == 200) {
+          final products = jsonDecode(productResponse.body);
+          allProducts.addAll(products);
+        }
+      }
+
+      setState(() {
+        _products = allProducts;
+      });
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Network error: Check your internet')),
@@ -103,7 +184,8 @@ class _ProductsPageState extends State<ProductsPage> {
   @override
   Widget build(BuildContext context) {
     return CommonScaffold(
-      title: 'Products in ${widget.categoryName}',
+      title: widget.categoryName,
+      pageType: PageType.cart, // Placeholder for Billing
       onScanCallback: _handleScan, // Pass the scan handler
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(color: Colors.black))

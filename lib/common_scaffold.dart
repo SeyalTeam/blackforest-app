@@ -3,17 +3,22 @@ import 'dart:io' as io; // For Platform check
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobile_scanner/mobile_scanner.dart'; // Import for scanner
+import 'package:blackforest_app/categories_page.dart'; // Import CategoriesPage
+
+enum PageType { home, pastry, cart } // Enum for active page
 
 class CommonScaffold extends StatefulWidget {
   final String title; // Custom title for the page
   final Widget body; // The main content
-  final Function(String)? onScanCallback; // Optional callback for scan result (e.g., for UPC selection in ProductsPage)
+  final Function(String)? onScanCallback; // Optional callback for scan result
+  final PageType pageType; // To highlight active footer icon
 
   const CommonScaffold({
     super.key,
     required this.title,
     required this.body,
     this.onScanCallback,
+    required this.pageType,
   });
 
   @override
@@ -78,7 +83,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     ).then((result) {
       if (result != null) {
         if (widget.onScanCallback != null) {
-          widget.onScanCallback!(result); // Call page-specific handler for UPC selection
+          widget.onScanCallback!(result); // Call page-specific handler
         } else {
           _showMessage('Scanned barcode: $result');
         }
@@ -99,8 +104,11 @@ class _CommonScaffoldState extends State<CommonScaffold> {
           iconTheme: const IconThemeData(color: Colors.white), // White menu icon
           actions: [
             IconButton(
-              icon: const Icon(Icons.qr_code_scanner, color: Colors.white), // Barcode scanner icon, white
-              onPressed: _scanBarcode, // Launch scanner
+              icon: const Icon(Icons.shopping_cart_outlined, color: Colors.white), // Cart icon, white, line style
+              onPressed: () {
+                _resetTimer(); // Reset timer on tap
+                _showMessage('Cart screen coming soon');
+              },
             ),
           ],
         ),
@@ -188,6 +196,56 @@ class _CommonScaffoldState extends State<CommonScaffold> {
         ),
         body: widget.body, // Page-specific content
         backgroundColor: Colors.white,
+        bottomNavigationBar: BottomAppBar(
+          color: Colors.white, // White background
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween, // Push Home and File to edges
+            children: [
+              IconButton(
+                icon: Icon(
+                  Icons.home_outlined, // Line style
+                  color: widget.pageType == PageType.home ? Colors.blue : Colors.black, // Blue when active, black otherwise
+                  size: 32, // Larger icon
+                ),
+                onPressed: () {
+                  _resetTimer(); // Reset timer on tap
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(builder: (context) => const CategoriesPage()),
+                        (route) => false, // Clear stack to go back to Categories
+                  );
+                },
+              ),
+              IconButton(
+                icon: const Icon(
+                  Icons.qr_code_scanner_outlined, // Line style, white
+                  size: 32, // Larger icon
+                  color: Colors.white,
+                ),
+                style: const ButtonStyle(
+                  backgroundColor: WidgetStatePropertyAll(Colors.black), // Black round background
+                  shape: WidgetStatePropertyAll(CircleBorder()),
+                ),
+                onPressed: _scanBarcode, // Launch scanner
+              ),
+              IconButton(
+                icon: Icon(
+                  Icons.description_outlined, // File icon, line style
+                  color: widget.pageType == PageType.pastry ? Colors.blue : Colors.black, // Blue when active
+                  size: 32, // Larger icon
+                ),
+                onPressed: () {
+                  _resetTimer(); // Reset timer on tap
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(builder: (context) => const CategoriesPage(isPastryFilter: true)),
+                        (route) => false, // Clear stack
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

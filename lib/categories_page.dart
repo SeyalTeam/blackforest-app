@@ -2,27 +2,29 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:blackforest_app/common_header.dart'; // Import CommonScaffold
-import 'package:blackforest_app/products_page.dart'; // Import ProductsPage
+import 'package:blackforest_app/common_scaffold.dart';
+import 'package:blackforest_app/products_page.dart';
 
 class CategoriesPage extends StatefulWidget {
-  const CategoriesPage({super.key});
+  final bool isPastryFilter; // New parameter to toggle filter
+
+  const CategoriesPage({super.key, this.isPastryFilter = false});
 
   @override
   _CategoriesPageState createState() => _CategoriesPageState();
 }
 
 class _CategoriesPageState extends State<CategoriesPage> {
-  List<dynamic> _bilingCategories = [];
+  List<dynamic> _categories = [];
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _fetchBilingCategories();
+    _fetchCategories();
   }
 
-  Future<void> _fetchBilingCategories() async {
+  Future<void> _fetchCategories() async {
     setState(() {
       _isLoading = true;
     });
@@ -38,13 +40,17 @@ class _CategoriesPageState extends State<CategoriesPage> {
       }
 
       final response = await http.get(
-        Uri.parse('https://apib.theblackforestcakes.com/api/categories/list-categories?type=biling'),
+        Uri.parse('https://apib.theblackforestcakes.com/api/categories/list-categories'),
         headers: {'Authorization': 'Bearer $token'},
       );
 
       if (response.statusCode == 200) {
+        final List<dynamic> allCategories = jsonDecode(response.body);
+        // Filter based on isPastryFilter
         setState(() {
-          _bilingCategories = jsonDecode(response.body);
+          _categories = allCategories.where((category) {
+            return widget.isPastryFilter ? category['isPastryProduct'] == true : category['isBiling'] == true;
+          }).toList();
         });
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -65,11 +71,17 @@ class _CategoriesPageState extends State<CategoriesPage> {
   @override
   Widget build(BuildContext context) {
     return CommonScaffold(
-      title: 'Welcome Team',
+      title: widget.isPastryFilter ? 'Pastry Categories' : 'Welcome Team',
+      pageType: widget.isPastryFilter ? PageType.pastry : PageType.home, // Highlight appropriate icon
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(color: Colors.black))
-          : _bilingCategories.isEmpty
-          ? const Center(child: Text('No biling categories found', style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18)))
+          : _categories.isEmpty
+          ? const Center(
+        child: Text(
+          'No categories found',
+          style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18),
+        ),
+      )
           : LayoutBuilder(
         builder: (context, constraints) {
           final width = constraints.maxWidth;
@@ -82,9 +94,9 @@ class _CategoriesPageState extends State<CategoriesPage> {
               mainAxisSpacing: 10,
               childAspectRatio: 0.75, // Rectangular
             ),
-            itemCount: _bilingCategories.length,
+            itemCount: _categories.length,
             itemBuilder: (context, index) {
-              final category = _bilingCategories[index];
+              final category = _categories[index];
               final imageUrl = category['image'] != null
                   ? 'https://apib.theblackforestcakes.com/uploads/categories/${category['image'].split('/').last}'
                   : 'https://via.placeholder.com/150?text=No+Image'; // Fallback
