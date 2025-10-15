@@ -13,6 +13,8 @@ dependencies:
   cupertino_icons: ^1.0.8
   http: ^1.2.2
   shared_preferences: ^2.3.2
+  provider: ^6.1.2
+  mobile_scanner: ^5.1.1
 
 
 dev_dependencies:
