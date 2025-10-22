@@ -95,7 +95,8 @@ class _CommonScaffoldState extends State<CommonScaffold> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector( // Detect taps to reset timer
+    return GestureDetector(
+      // Detect taps to reset timer
       onTap: _resetTimer,
       child: Scaffold(
         appBar: AppBar(
@@ -204,7 +205,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
               IconButton(
                 icon: Icon(
                   Icons.home_outlined, // Line style
-                  color: widget.pageType == PageType.home ? Colors.blue : Colors.black, // Blue when active, black otherwise
+                  color: (widget.pageType == PageType.home || widget.pageType == PageType.cart) ? Colors.blue : Colors.black, // Blue when active
                   size: 32, // Larger icon
                 ),
                 onPressed: () {

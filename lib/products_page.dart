@@ -1,19 +1,18 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 
 class ProductsPage extends StatefulWidget {
   final String categoryId;
   final String categoryName;
-  final bool isPastryFilter; // New flag for pastry products
 
   const ProductsPage({
     super.key,
     required this.categoryId,
     required this.categoryName,
-    this.isPastryFilter = false, // Default false for normal category filter
   });
 
   @override
@@ -29,11 +28,7 @@ class _ProductsPageState extends State<ProductsPage> {
   @override
   void initState() {
     super.initState();
-    if (widget.isPastryFilter) {
-      _fetchPastryProducts();
-    } else {
-      _fetchProducts();
-    }
+    _fetchProducts();
   }
 
   Future<void> _fetchProducts() async {
@@ -51,95 +46,23 @@ class _ProductsPageState extends State<ProductsPage> {
         return;
       }
 
+      final url =
+          'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
       final response = await http.get(
-        Uri.parse('https://apib.theblackforestcakes.com/api/products?categoryId=${widget.categoryId}'),
+        Uri.parse(url),
         headers: {'Authorization': 'Bearer $token'},
       );
 
       if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
         setState(() {
-          _products = jsonDecode(response.body);
+          _products = data['docs'] ?? [];
         });
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to fetch products: ${response.statusCode}')),
         );
       }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Network error: Check your internet')),
-      );
-    }
-
-    setState(() {
-      _isLoading = false;
-    });
-  }
-
-  Future<void> _fetchPastryProducts() async {
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('token');
-      if (token == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No token found. Please login again.')),
-        );
-        return;
-      }
-
-      // Step 1: Fetch categories with isPastryProduct: true
-      final categoryResponse = await http.get(
-        Uri.parse('https://apib.theblackforestcakes.com/api/categories/list-categories'),
-        headers: {'Authorization': 'Bearer $token'},
-      );
-
-      if (categoryResponse.statusCode != 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to fetch categories: ${categoryResponse.statusCode}')),
-        );
-        setState(() {
-          _isLoading = false;
-        });
-        return;
-      }
-
-      final List<dynamic> allCategories = jsonDecode(categoryResponse.body);
-      final pastryCategoryIds = allCategories
-          .where((category) => category['isPastryProduct'] == true)
-          .map((category) => category['_id'])
-          .toList();
-
-      if (pastryCategoryIds.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No pastry categories found')),
-        );
-        setState(() {
-          _isLoading = false;
-        });
-        return;
-      }
-
-      // Step 2: Fetch products for all pastry categories
-      List<dynamic> allProducts = [];
-      for (String catId in pastryCategoryIds) {
-        final productResponse = await http.get(
-          Uri.parse('https://apib.theblackforestcakes.com/api/products?categoryId=$catId'),
-          headers: {'Authorization': 'Bearer $token'},
-        );
-
-        if (productResponse.statusCode == 200) {
-          final products = jsonDecode(productResponse.body);
-          allProducts.addAll(products);
-        }
-      }
-
-      setState(() {
-        _products = allProducts;
-      });
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Network error: Check your internet')),
@@ -184,7 +107,7 @@ class _ProductsPageState extends State<ProductsPage> {
   @override
   Widget build(BuildContext context) {
     return CommonScaffold(
-      title: widget.categoryName,
+      title: 'Products in ${widget.categoryName}',
       pageType: PageType.cart, // Placeholder for Billing
       onScanCallback: _handleScan, // Pass the scan handler
       body: _isLoading
@@ -206,28 +129,34 @@ class _ProductsPageState extends State<ProductsPage> {
             itemCount: _products.length,
             itemBuilder: (context, index) {
               final product = _products[index];
-              final filename = product['images'] != null && product['images'].isNotEmpty ? product['images'][0] : null; // Use 'images' array, first item
-              final encodedFilename = filename != null ? Uri.encodeComponent(filename) : null;
-              final imageUrl = encodedFilename != null
-                  ? 'https://apib.theblackforestcakes.com/uploads/products/$encodedFilename'
-                  : 'https://via.placeholder.com/150?text=No+Image'; // Fallback
-              final price = product['priceDetails'] != null && product['priceDetails'].isNotEmpty
-                  ? '₹${product['priceDetails'][0]['price'] ?? 0}'
-                  : '₹0'; // Use priceDetails[0].price
+              String? imageUrl;
+              // Null-safe image handling for images array
+              if (product['images'] != null && product['images'].isNotEmpty &&
+                  product['images'][0]['image'] != null && product['images'][0]['image']['url'] != null) {
+                imageUrl = product['images'][0]['image']['url'];
+                if (imageUrl != null && imageUrl.startsWith('/')) {
+                  imageUrl = 'https://admin.theblackforestcakes.com$imageUrl';
+                }
+              }
+              imageUrl ??= 'https://via.placeholder.com/150?text=No+Image';
+              final price = product['defaultPriceDetails'] != null
+                  ? '₹${product['defaultPriceDetails']['price'] ?? 0}'
+                  : '₹0'; // Use defaultPriceDetails.price
               final isSelected = _selectedIndices.contains(index); // Check if selected
               final qty = _quantities[index] ?? 1; // Get qty or default 1
 
               return GestureDetector(
                 onTap: () {
-                  _toggleProductSelection(index); // Toggle multi-select and increase qty
+                  _toggleProductSelection(index);
+                  final currentQty = _quantities[index] ?? 1; // Read after update
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('${product['name']} selected (Qty: $qty)')),
+                    SnackBar(content: Text('${product['name']} selected (Qty: $currentQty)')),
                   );
                 },
                 child: Container(
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(8),
-                    border: isSelected ? Border.all(color: Colors.green, width: 4) : null, // Increased border width to 4
+                    border: isSelected ? Border.all(color: Colors.green, width: 4) : null,
                     boxShadow: [
                       BoxShadow(
                         color: Colors.grey.withOpacity(0.1),
@@ -245,13 +174,14 @@ class _ProductsPageState extends State<ProductsPage> {
                             flex: 8, // 80% image
                             child: ClipRRect(
                               borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-                              child: Image.network(
-                                imageUrl,
+                              child: CachedNetworkImage(
+                                imageUrl: imageUrl,
                                 fit: BoxFit.cover,
                                 width: double.infinity,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return const Center(child: Text('No Image', style: TextStyle(color: Colors.grey)));
-                                },
+                                placeholder: (context, url) =>
+                                const Center(child: CircularProgressIndicator()),
+                                errorWidget: (context, url, error) =>
+                                const Center(child: Text('No Image', style: TextStyle(color: Colors.grey))),
                               ),
                             ),
                           ),
@@ -275,33 +205,33 @@ class _ProductsPageState extends State<ProductsPage> {
                         ],
                       ),
                       Positioned(
-                        top: 2, // Moved up more
-                        left: 2, // Moved left more
+                        top: 2,
+                        left: 2,
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2), // Reduced padding more for smaller background
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                           decoration: BoxDecoration(
                             color: Colors.black,
                             borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
                             price,
-                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10), // Reduced font size more
+                            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
                           ),
                         ),
                       ),
                       if (isSelected)
-                        Positioned.fill( // Overlay on image
+                        Positioned.fill(
                           child: Align(
                             alignment: Alignment.center,
                             child: Container(
                               decoration: BoxDecoration(
-                                color: Colors.black.withOpacity(0.7), // Semi-transparent black
-                                border: Border.all(color: Colors.grey, width: 1), // Added grey border
+                                color: Colors.black.withOpacity(0.7),
+                                border: Border.all(color: Colors.grey, width: 1),
                                 borderRadius: BorderRadius.circular(4),
                               ),
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), // Maintain size
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                               child: Text(
-                                '$qty', // Removed "Qty:" text, just number
+                                '$qty',
                                 style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
                               ),
                             ),
