@@ -5,7 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobile_scanner/mobile_scanner.dart'; // Import for scanner
 import 'package:blackforest_app/categories_page.dart'; // Import CategoriesPage
 
-enum PageType { home, pastry, cart } // Enum for active page
+enum PageType { home, pastry, cart, stock } // Enum for active page
 
 class CommonScaffold extends StatefulWidget {
   final String title; // Custom title for the page
@@ -200,7 +200,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
         bottomNavigationBar: BottomAppBar(
           color: Colors.white, // White background
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween, // Push Home and File to edges
+            mainAxisAlignment: MainAxisAlignment.spaceAround, // Adjusted for four icons
             children: [
               IconButton(
                 icon: Icon(
@@ -228,6 +228,21 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                   shape: WidgetStatePropertyAll(CircleBorder()),
                 ),
                 onPressed: _scanBarcode, // Launch scanner
+              ),
+              IconButton(
+                icon: Icon(
+                  Icons.inventory_outlined, // Stock icon, line style
+                  color: widget.pageType == PageType.stock ? Colors.blue : Colors.black, // Blue when active
+                  size: 32, // Larger icon
+                ),
+                onPressed: () {
+                  _resetTimer(); // Reset timer on tap
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(builder: (context) => const CategoriesPage(isStockFilter: true)),
+                        (route) => false, // Clear stack
+                  );
+                },
               ),
               IconButton(
                 icon: Icon(

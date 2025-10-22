@@ -5,12 +5,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:blackforest_app/products_page.dart';
 import 'package:blackforest_app/pastry_products_page.dart';
+import 'package:blackforest_app/return_order_page.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
 class CategoriesPage extends StatefulWidget {
-  final bool isPastryFilter; // Toggle between biling and pastry categories
+  final bool isPastryFilter;
+  final bool isStockFilter;
 
-  const CategoriesPage({super.key, this.isPastryFilter = false});
+  const CategoriesPage({
+    super.key,
+    this.isPastryFilter = false,
+    this.isStockFilter = false,
+  });
 
   @override
   _CategoriesPageState createState() => _CategoriesPageState();
@@ -35,7 +41,6 @@ class _CategoriesPageState extends State<CategoriesPage> {
         Uri.parse('https://admin.theblackforestcakes.com/api/users/me?depth=2'),
         headers: {'Authorization': 'Bearer $token'},
       );
-
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final user = data['user'] ?? data; // Depending on response structure
@@ -61,7 +66,6 @@ class _CategoriesPageState extends State<CategoriesPage> {
       _isLoading = true;
       _errorMessage = '';
     });
-
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
@@ -75,26 +79,21 @@ class _CategoriesPageState extends State<CategoriesPage> {
         );
         return;
       }
-
       // Fetch user data if not already fetched
       if (_companyId == null && _userRole == null) {
         await _fetchUserData(token);
       }
-
-      String filterQuery = widget.isPastryFilter
+      String filterQuery = (widget.isPastryFilter || widget.isStockFilter)
           ? 'where[isStock][equals]=true'
           : 'where[isBilling][equals]=true';
-
       // Add company filter if not superadmin and _companyId is available
       if (_userRole != 'superadmin' && _companyId != null) {
         filterQuery += '&where[company][contains]=$_companyId';
       }
-
       final response = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/categories?$filterQuery&limit=100&depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
-
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         setState(() {
@@ -123,11 +122,22 @@ class _CategoriesPageState extends State<CategoriesPage> {
 
   @override
   Widget build(BuildContext context) {
-    final String title = widget.isPastryFilter ? 'Pastry Categories' : 'Billing Categories';
+    String title;
+    PageType pageType;
+    if (widget.isStockFilter) {
+      title = 'Return Order Categories';
+      pageType = PageType.stock;
+    } else if (widget.isPastryFilter) {
+      title = 'Pastry Categories';
+      pageType = PageType.pastry;
+    } else {
+      title = 'Billing Categories';
+      pageType = PageType.home;
+    }
 
     return CommonScaffold(
       title: title,
-      pageType: widget.isPastryFilter ? PageType.pastry : PageType.home,
+      pageType: pageType,
       body: RefreshIndicator(
         onRefresh: _fetchCategories,
         child: _isLoading
@@ -179,22 +189,28 @@ class _CategoriesPageState extends State<CategoriesPage> {
                   }
                 }
                 imageUrl ??= 'https://via.placeholder.com/150?text=No+Image'; // Fallback
-
                 return GestureDetector(
                   onTap: () {
+                    Widget productPage;
+                    if (widget.isStockFilter) {
+                      productPage = ReturnOrderPage(
+                        categoryId: category['id'],
+                        categoryName: category['name'],
+                      );
+                    } else if (widget.isPastryFilter) {
+                      productPage = PastryProductsPage(
+                        categoryId: category['id'],
+                        categoryName: category['name'],
+                      );
+                    } else {
+                      productPage = ProductsPage(
+                        categoryId: category['id'],
+                        categoryName: category['name'],
+                      );
+                    }
                     Navigator.push(
                       context,
-                      MaterialPageRoute(
-                        builder: (context) => widget.isPastryFilter
-                            ? PastryProductsPage(
-                          categoryId: category['id'],
-                          categoryName: category['name'],
-                        )
-                            : ProductsPage(
-                          categoryId: category['id'],
-                          categoryName: category['name'],
-                        ),
-                      ),
+                      MaterialPageRoute(builder: (context) => productPage),
                     );
                   },
                   child: Container(
@@ -220,7 +236,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
                               fit: BoxFit.cover,
                               width: double.infinity,
                               placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
-                              errorWidget: (context, url, error) => const Center(child: Text('No Image', style: TextStyle(color: Colors.grey))),
+                              errorWidget: (context, url, error) =>
+                              const Center(child: Text('No Image', style: TextStyle(color: Colors.grey))),
                             ),
                           ),
                         ),
