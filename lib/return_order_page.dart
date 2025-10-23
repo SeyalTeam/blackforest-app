@@ -26,6 +26,8 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
   Map<int, TextEditingController> _qtyControllers = {}; // Persistent controllers
   TextEditingController _searchController = TextEditingController();
   List<dynamic> _filteredProducts = [];
+  String? _branchId;
+  String? _userRole;
 
   @override
   void initState() {
@@ -41,6 +43,29 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
     super.dispose();
   }
 
+  Future<void> _fetchUserData(String token) async {
+    try {
+      final response = await http.get(
+        Uri.parse('https://admin.theblackforestcakes.com/api/users/me?depth=2'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        final user = data['user'] ?? data; // Depending on response structure
+        setState(() {
+          _userRole = user['role'];
+          if (user['role'] == 'branch' && user['branch'] != null) {
+            _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
+          }
+        });
+      } else {
+        // Handle error silently
+      }
+    } catch (e) {
+      // Handle error silently
+    }
+  }
+
   Future<void> _fetchProducts() async {
     setState(() {
       _isLoading = true;
@@ -54,6 +79,11 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
           const SnackBar(content: Text('No token found. Please login again.')),
         );
         return;
+      }
+
+      // Fetch user data if not already fetched
+      if (_branchId == null && _userRole == null) {
+        await _fetchUserData(token);
       }
 
       final url =
@@ -184,11 +214,23 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
               itemCount: _filteredProducts.length,
               itemBuilder: (context, index) {
                 final product = _filteredProducts[index];
-                final price = product['defaultPriceDetails'] != null
-                    ? '₹${product['defaultPriceDetails']['price'] ?? 0}'
+                // Determine price details based on branch override
+                dynamic priceDetails = product['defaultPriceDetails'];
+                if (_branchId != null && product['branchOverrides'] != null) {
+                  for (var override in product['branchOverrides']) {
+                    var branch = override['branch'];
+                    String branchOid = branch is Map ? branch[r'$oid'] ?? branch['id'] ?? '' : branch ?? '';
+                    if (branchOid == _branchId) {
+                      priceDetails = override;
+                      break;
+                    }
+                  }
+                }
+                final price = priceDetails != null
+                    ? '₹${priceDetails['price'] ?? 0}'
                     : '₹0';
-                final unit = product['defaultPriceDetails'] != null
-                    ? product['defaultPriceDetails']['unit'] ?? 'pcs'
+                final unit = priceDetails != null
+                    ? priceDetails['unit'] ?? 'pcs'
                     : 'pcs';
                 return Container(
                   margin: const EdgeInsets.only(bottom: 12.0),

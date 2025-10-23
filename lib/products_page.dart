@@ -24,11 +24,36 @@ class _ProductsPageState extends State<ProductsPage> {
   bool _isLoading = true;
   Set<int> _selectedIndices = {}; // Track multiple selected product indices
   Map<int, int> _quantities = {}; // Track qty for each selected product
+  String? _branchId;
+  String? _userRole;
 
   @override
   void initState() {
     super.initState();
     _fetchProducts();
+  }
+
+  Future<void> _fetchUserData(String token) async {
+    try {
+      final response = await http.get(
+        Uri.parse('https://admin.theblackforestcakes.com/api/users/me?depth=2'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        final user = data['user'] ?? data; // Depending on response structure
+        setState(() {
+          _userRole = user['role'];
+          if (user['role'] == 'branch' && user['branch'] != null) {
+            _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
+          }
+        });
+      } else {
+        // Handle error silently
+      }
+    } catch (e) {
+      // Handle error silently
+    }
   }
 
   Future<void> _fetchProducts() async {
@@ -44,6 +69,11 @@ class _ProductsPageState extends State<ProductsPage> {
           const SnackBar(content: Text('No token found. Please login again.')),
         );
         return;
+      }
+
+      // Fetch user data if not already fetched
+      if (_branchId == null && _userRole == null) {
+        await _fetchUserData(token);
       }
 
       final url =
@@ -139,9 +169,21 @@ class _ProductsPageState extends State<ProductsPage> {
                 }
               }
               imageUrl ??= 'https://via.placeholder.com/150?text=No+Image';
-              final price = product['defaultPriceDetails'] != null
-                  ? '₹${product['defaultPriceDetails']['price'] ?? 0}'
-                  : '₹0'; // Use defaultPriceDetails.price
+              // Determine price details based on branch override
+              dynamic priceDetails = product['defaultPriceDetails'];
+              if (_branchId != null && product['branchOverrides'] != null) {
+                for (var override in product['branchOverrides']) {
+                  var branch = override['branch'];
+                  String branchOid = branch is Map ? branch[r'$oid'] ?? branch['id'] ?? '' : branch ?? '';
+                  if (branchOid == _branchId) {
+                    priceDetails = override;
+                    break;
+                  }
+                }
+              }
+              final price = priceDetails != null
+                  ? '₹${priceDetails['price'] ?? 0}'
+                  : '₹0'; // Use price from details
               final isSelected = _selectedIndices.contains(index); // Check if selected
               final qty = _quantities[index] ?? 1; // Get qty or default 1
 
