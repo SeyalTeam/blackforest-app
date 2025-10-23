@@ -1,24 +1,25 @@
+// stock_order.dart (renamed from pastry_products_page.dart)
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 
-class PastryProductsPage extends StatefulWidget {
+class StockOrderPage extends StatefulWidget {
   final String categoryId;
   final String categoryName;
 
-  const PastryProductsPage({
+  const StockOrderPage({
     super.key,
     required this.categoryId,
     required this.categoryName,
   });
 
   @override
-  _PastryProductsPageState createState() => _PastryProductsPageState();
+  _StockOrderPageState createState() => _StockOrderPageState();
 }
 
-class _PastryProductsPageState extends State<PastryProductsPage> {
+class _StockOrderPageState extends State<StockOrderPage> {
   List<dynamic> _products = [];
   bool _isLoading = true;
   Map<int, int?> _quantities = {}; // Track qty (nullable for empty)
