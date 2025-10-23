@@ -13,7 +13,12 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return CommonScaffold(
       title: 'Home',
-      body: const Center(child: Text('Coming Soon')), // Replace with your actual home UI
+      body: const Center(
+        child: Text(
+          'Home Page Coming soon',
+          style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+        ),
+      ),
       pageType: PageType.home,
     );
   }

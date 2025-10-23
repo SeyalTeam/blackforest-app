@@ -5,8 +5,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobile_scanner/mobile_scanner.dart'; // Import for scanner
 import 'package:blackforest_app/categories_page.dart'; // Import CategoriesPage
 import 'package:blackforest_app/home.dart'; // Import HomePage
+import 'package:blackforest_app/cake.dart'; // Import CakePage
 
-enum PageType { home, billing, pastry, cart, stock } // Enum for active page
+enum PageType { home, billing, pastry, cart, stock, cake } // Added cake to enum
 
 class CommonScaffold extends StatefulWidget {
   final String title; // Custom title for the page
@@ -207,140 +208,174 @@ class _CommonScaffoldState extends State<CommonScaffold> {
         ),
         body: widget.body, // Page-specific content
         backgroundColor: Colors.white,
-        bottomNavigationBar: BottomAppBar(
-          color: Colors.white, // White background
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround, // Adjusted for four icons
-            children: [
-              GestureDetector(
-                onTap: () {
-                  _resetTimer(); // Reset timer on tap
-                  Navigator.pushAndRemoveUntil(
-                    context,
-                    _createRoute(const HomePage()),
-                        (route) => false, // Clear stack
-                  );
-                },
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.home_outlined,
-                      color: widget.pageType == PageType.home ? Colors.blue : Colors.black,
-                      size: 32,
-                    ),
-                    Text(
-                      'Home',
-                      style: TextStyle(
+        bottomNavigationBar: Container(
+          decoration: const BoxDecoration(
+            border: Border(
+              top: BorderSide(color: Colors.grey, width: 1.0),
+            ),
+          ),
+          child: BottomAppBar(
+            color: Colors.white, // White background
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround, // Adjusted for five icons
+              children: [
+                GestureDetector(
+                  onTap: () {
+                    _resetTimer(); // Reset timer on tap
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      _createRoute(const HomePage()),
+                          (route) => false, // Clear stack
+                    );
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.home_outlined,
                         color: widget.pageType == PageType.home ? Colors.blue : Colors.black,
-                        fontSize: 10,
+                        size: 32,
                       ),
-                    ),
-                  ],
+                      Text(
+                        'Home',
+                        style: TextStyle(
+                          color: widget.pageType == PageType.home ? Colors.blue : Colors.black,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              GestureDetector(
-                onTap: () {
-                  _resetTimer(); // Reset timer on tap
-                  Navigator.pushAndRemoveUntil(
-                    context,
-                    _createRoute(const CategoriesPage()),
-                        (route) => false, // Clear stack to go back to Categories
-                  );
-                },
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.receipt_outlined,
-                      color: widget.pageType == PageType.billing ? Colors.blue : Colors.black,
-                      size: 32,
-                    ),
-                    Text(
-                      'Billing',
-                      style: TextStyle(
+                GestureDetector(
+                  onTap: () {
+                    _resetTimer(); // Reset timer on tap
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      _createRoute(const CategoriesPage()),
+                          (route) => false, // Clear stack to go back to Categories
+                    );
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.receipt_outlined,
                         color: widget.pageType == PageType.billing ? Colors.blue : Colors.black,
-                        fontSize: 10,
+                        size: 32,
                       ),
-                    ),
-                  ],
+                      Text(
+                        'Billing',
+                        style: TextStyle(
+                          color: widget.pageType == PageType.billing ? Colors.blue : Colors.black,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              GestureDetector(
-                onTap: _scanBarcode,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.qr_code_scanner_outlined,
-                      color: Colors.black,
-                      size: 32,
-                    ),
-                    const Text(
-                      'Scan',
-                      style: TextStyle(
+                GestureDetector(
+                  onTap: _scanBarcode,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.qr_code_scanner_outlined,
                         color: Colors.black,
-                        fontSize: 10,
+                        size: 32,
                       ),
-                    ),
-                  ],
+                      const Text(
+                        'Scan',
+                        style: TextStyle(
+                          color: Colors.black,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              GestureDetector(
-                onTap: () {
-                  _resetTimer(); // Reset timer on tap
-                  Navigator.pushAndRemoveUntil(
-                    context,
-                    _createRoute(const CategoriesPage(isStockFilter: true)),
-                        (route) => false, // Clear stack
-                  );
-                },
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.inventory_outlined,
-                      color: widget.pageType == PageType.stock ? Colors.blue : Colors.black,
-                      size: 32,
-                    ),
-                    Text(
-                      'Return',
-                      style: TextStyle(
+                GestureDetector(
+                  onTap: () {
+                    _resetTimer(); // Reset timer on tap
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      _createRoute(const CakePage()),
+                          (route) => false, // Clear stack
+                    );
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.cake_outlined,
+                        color: widget.pageType == PageType.cake ? Colors.blue : Colors.black,
+                        size: 32,
+                      ),
+                      Text(
+                        'Cake',
+                        style: TextStyle(
+                          color: widget.pageType == PageType.cake ? Colors.blue : Colors.black,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () {
+                    _resetTimer(); // Reset timer on tap
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      _createRoute(const CategoriesPage(isStockFilter: true)),
+                          (route) => false, // Clear stack
+                    );
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.inventory_outlined,
                         color: widget.pageType == PageType.stock ? Colors.blue : Colors.black,
-                        fontSize: 10,
+                        size: 32,
                       ),
-                    ),
-                  ],
+                      Text(
+                        'Return',
+                        style: TextStyle(
+                          color: widget.pageType == PageType.stock ? Colors.blue : Colors.black,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              GestureDetector(
-                onTap: () {
-                  _resetTimer(); // Reset timer on tap
-                  Navigator.pushAndRemoveUntil(
-                    context,
-                    _createRoute(const CategoriesPage(isPastryFilter: true)),
-                        (route) => false, // Clear stack
-                  );
-                },
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.description_outlined,
-                      color: widget.pageType == PageType.pastry ? Colors.blue : Colors.black,
-                      size: 32,
-                    ),
-                    Text(
-                      'Stock',
-                      style: TextStyle(
+                GestureDetector(
+                  onTap: () {
+                    _resetTimer(); // Reset timer on tap
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      _createRoute(const CategoriesPage(isPastryFilter: true)),
+                          (route) => false, // Clear stack
+                    );
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.description_outlined,
                         color: widget.pageType == PageType.pastry ? Colors.blue : Colors.black,
-                        fontSize: 10,
+                        size: 32,
                       ),
-                    ),
-                  ],
+                      Text(
+                        'Stock',
+                        style: TextStyle(
+                          color: widget.pageType == PageType.pastry ? Colors.blue : Colors.black,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
