@@ -116,6 +116,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
           iconTheme: const IconThemeData(color: Colors.white), // White menu icon
           actions: [
             IconButton(
+              icon: const Icon(Icons.qr_code_scanner_outlined, color: Colors.white), // Scan icon, white, line style
+              onPressed: _scanBarcode,
+            ),
+            IconButton(
               icon: const Icon(Icons.shopping_cart_outlined, color: Colors.white), // Cart icon, white, line style
               onPressed: () {
                 _resetTimer(); // Reset timer on tap
@@ -267,26 +271,6 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                         'Billing',
                         style: TextStyle(
                           color: widget.pageType == PageType.billing ? Colors.blue : Colors.black,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                GestureDetector(
-                  onTap: _scanBarcode,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.qr_code_scanner_outlined,
-                        color: Colors.black,
-                        size: 32,
-                      ),
-                      const Text(
-                        'Scan',
-                        style: TextStyle(
-                          color: Colors.black,
                           fontSize: 10,
                         ),
                       ),
