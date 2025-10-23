@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobile_scanner/mobile_scanner.dart'; // Import for scanner
 import 'package:blackforest_app/categories_page.dart'; // Import CategoriesPage
+import 'package:blackforest_app/home.dart'; // Import HomePage
 
-enum PageType { home, pastry, cart, stock } // Enum for active page
+enum PageType { home, billing, pastry, cart, stock } // Enum for active page
 
 class CommonScaffold extends StatefulWidget {
   final String title; // Custom title for the page
@@ -75,7 +76,6 @@ class _CommonScaffoldState extends State<CommonScaffold> {
       _showMessage('Scanner not supported on this platform');
       return;
     }
-
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -92,6 +92,15 @@ class _CommonScaffoldState extends State<CommonScaffold> {
         _showMessage('Scan cancelled');
       }
     });
+  }
+
+  Route _createRoute(Widget page) {
+    return PageRouteBuilder(
+      pageBuilder: (context, animation, secondaryAnimation) => page,
+      transitionsBuilder: (context, animation, secondaryAnimation, child) {
+        return child; // No transition animation
+      },
+    );
   }
 
   @override
@@ -198,120 +207,140 @@ class _CommonScaffoldState extends State<CommonScaffold> {
         ),
         body: widget.body, // Page-specific content
         backgroundColor: Colors.white,
-        bottomNavigationBar: Container(
-          decoration: const BoxDecoration(
-            border: Border(
-              top: BorderSide(color: Colors.grey, width: 1.0),
-            ),
-          ),
-          child: BottomAppBar(
-            color: Colors.white, // White background
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround, // Adjusted for four icons
-              children: [
-                GestureDetector(
-                  onTap: () {
-                    _resetTimer(); // Reset timer on tap
-                    Navigator.pushAndRemoveUntil(
-                      context,
-                      MaterialPageRoute(builder: (context) => const CategoriesPage()),
-                          (route) => false, // Clear stack to go back to Categories
-                    );
-                  },
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.home_outlined, // Line style
-                        color: (widget.pageType == PageType.home || widget.pageType == PageType.cart) ? Colors.blue : Colors.black, // Blue when active
-                        size: 32, // Larger icon
+        bottomNavigationBar: BottomAppBar(
+          color: Colors.white, // White background
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround, // Adjusted for four icons
+            children: [
+              GestureDetector(
+                onTap: () {
+                  _resetTimer(); // Reset timer on tap
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    _createRoute(const HomePage()),
+                        (route) => false, // Clear stack
+                  );
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.home_outlined,
+                      color: widget.pageType == PageType.home ? Colors.blue : Colors.black,
+                      size: 32,
+                    ),
+                    Text(
+                      'Home',
+                      style: TextStyle(
+                        color: widget.pageType == PageType.home ? Colors.blue : Colors.black,
+                        fontSize: 10,
                       ),
-                      Text(
-                        'Home',
-                        style: TextStyle(
-                          color: (widget.pageType == PageType.home || widget.pageType == PageType.cart) ? Colors.blue : Colors.black,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                GestureDetector(
-                  onTap: _scanBarcode, // Launch scanner
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.qr_code_scanner_outlined, // Line style
-                        color: Colors.black, // Consistent black color (or blue if you want to add a pageType for it)
-                        size: 32, // Larger icon, matching others
+              ),
+              GestureDetector(
+                onTap: () {
+                  _resetTimer(); // Reset timer on tap
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    _createRoute(const CategoriesPage()),
+                        (route) => false, // Clear stack to go back to Categories
+                  );
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.receipt_outlined,
+                      color: widget.pageType == PageType.billing ? Colors.blue : Colors.black,
+                      size: 32,
+                    ),
+                    Text(
+                      'Billing',
+                      style: TextStyle(
+                        color: widget.pageType == PageType.billing ? Colors.blue : Colors.black,
+                        fontSize: 10,
                       ),
-                      const Text(
-                        'Scan',
-                        style: TextStyle(
-                          color: Colors.black,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                GestureDetector(
-                  onTap: () {
-                    _resetTimer(); // Reset timer on tap
-                    Navigator.pushAndRemoveUntil(
-                      context,
-                      MaterialPageRoute(builder: (context) => const CategoriesPage(isStockFilter: true)),
-                          (route) => false, // Clear stack
-                    );
-                  },
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.inventory_outlined, // Stock icon, line style
-                        color: widget.pageType == PageType.stock ? Colors.blue : Colors.black, // Blue when active
-                        size: 32, // Larger icon
+              ),
+              GestureDetector(
+                onTap: _scanBarcode,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.qr_code_scanner_outlined,
+                      color: Colors.black,
+                      size: 32,
+                    ),
+                    const Text(
+                      'Scan',
+                      style: TextStyle(
+                        color: Colors.black,
+                        fontSize: 10,
                       ),
-                      Text(
-                        'Return',
-                        style: TextStyle(
-                          color: widget.pageType == PageType.stock ? Colors.blue : Colors.black,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-                GestureDetector(
-                  onTap: () {
-                    _resetTimer(); // Reset timer on tap
-                    Navigator.pushAndRemoveUntil(
-                      context,
-                      MaterialPageRoute(builder: (context) => const CategoriesPage(isPastryFilter: true)),
-                          (route) => false, // Clear stack
-                    );
-                  },
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.description_outlined, // File icon, line style
-                        color: widget.pageType == PageType.pastry ? Colors.blue : Colors.black, // Blue when active
-                        size: 32, // Larger icon
+              ),
+              GestureDetector(
+                onTap: () {
+                  _resetTimer(); // Reset timer on tap
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    _createRoute(const CategoriesPage(isStockFilter: true)),
+                        (route) => false, // Clear stack
+                  );
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.inventory_outlined,
+                      color: widget.pageType == PageType.stock ? Colors.blue : Colors.black,
+                      size: 32,
+                    ),
+                    Text(
+                      'Return',
+                      style: TextStyle(
+                        color: widget.pageType == PageType.stock ? Colors.blue : Colors.black,
+                        fontSize: 10,
                       ),
-                      Text(
-                        'Stock',
-                        style: TextStyle(
-                          color: widget.pageType == PageType.pastry ? Colors.blue : Colors.black,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+              GestureDetector(
+                onTap: () {
+                  _resetTimer(); // Reset timer on tap
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    _createRoute(const CategoriesPage(isPastryFilter: true)),
+                        (route) => false, // Clear stack
+                  );
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.description_outlined,
+                      color: widget.pageType == PageType.pastry ? Colors.blue : Colors.black,
+                      size: 32,
+                    ),
+                    Text(
+                      'Stock',
+                      style: TextStyle(
+                        color: widget.pageType == PageType.pastry ? Colors.blue : Colors.black,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),

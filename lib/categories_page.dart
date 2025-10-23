@@ -1,11 +1,10 @@
-// categories_page.dart (updated import and usage)
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:blackforest_app/products_page.dart';
-import 'package:blackforest_app/stock_order.dart'; // Updated import
+import 'package:blackforest_app/stock_order.dart';
 import 'package:blackforest_app/return_order_page.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 
@@ -133,7 +132,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
       pageType = PageType.pastry;
     } else {
       title = 'Billing Categories';
-      pageType = PageType.home;
+      pageType = PageType.billing;
     }
 
     return CommonScaffold(
@@ -199,7 +198,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
                         categoryName: category['name'],
                       );
                     } else if (widget.isPastryFilter) {
-                      productPage = StockOrderPage( // Updated class name
+                      productPage = StockOrderPage(
                         categoryId: category['id'],
                         categoryName: category['name'],
                       );

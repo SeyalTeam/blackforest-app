@@ -1,4 +1,4 @@
-// stock_order.dart (renamed from pastry_products_page.dart)
+// stock_order.dart
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;

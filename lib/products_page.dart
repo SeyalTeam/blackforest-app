@@ -138,7 +138,7 @@ class _ProductsPageState extends State<ProductsPage> {
   Widget build(BuildContext context) {
     return CommonScaffold(
       title: 'Products in ${widget.categoryName}',
-      pageType: PageType.cart, // Placeholder for Billing
+      pageType: PageType.billing, // Updated to billing
       onScanCallback: _handleScan, // Pass the scan handler
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(color: Colors.black))
