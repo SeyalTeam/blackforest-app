@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'dart:io' as io; // For Platform check
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart'; // Add this import for Provider
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobile_scanner/mobile_scanner.dart'; // Import for scanner
 import 'package:blackforest_app/categories_page.dart'; // Import CategoriesPage
 import 'package:blackforest_app/home.dart'; // Import HomePage
 import 'package:blackforest_app/cake.dart'; // Import CakePage
+import 'package:blackforest_app/cart_page.dart'; // Import CartPage
+import 'package:blackforest_app/cart_provider.dart'; // Import CartProvider
 
 enum PageType { home, billing, pastry, cart, stock, cake } // Added cake to enum
 
@@ -106,8 +109,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      // Detect taps to reset timer
+    return GestureDetector( // Detect taps to reset timer
       onTap: _resetTimer,
       child: Scaffold(
         appBar: AppBar(
@@ -119,11 +121,47 @@ class _CommonScaffoldState extends State<CommonScaffold> {
               icon: const Icon(Icons.qr_code_scanner_outlined, color: Colors.white), // Scan icon, white, line style
               onPressed: _scanBarcode,
             ),
-            IconButton(
-              icon: const Icon(Icons.shopping_cart_outlined, color: Colors.white), // Cart icon, white, line style
-              onPressed: () {
-                _resetTimer(); // Reset timer on tap
-                _showMessage('Cart screen coming soon');
+            Consumer<CartProvider>( // Wrap cart icon with Consumer for badge
+              builder: (context, cartProvider, child) {
+                final int itemCount = cartProvider.cartItems.fold(0, (sum, item) => sum + item.quantity); // Total quantity
+                return Stack(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.shopping_cart_outlined, color: Colors.white), // Cart icon
+                      onPressed: () {
+                        _resetTimer(); // Reset timer on tap
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => const CartPage()),
+                        );
+                      },
+                    ),
+                    if (itemCount > 0)
+                      Positioned(
+                        right: 8,
+                        top: 8,
+                        child: Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          constraints: const BoxConstraints(
+                            minWidth: 16,
+                            minHeight: 16,
+                          ),
+                          child: Text(
+                            '$itemCount',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                  ],
+                );
               },
             ),
           ],
