@@ -11,20 +11,25 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:blackforest_app/main.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('App starts at LoginPage when no token', (WidgetTester tester) async {
+    // Build our app without token (login page)
+    await tester.pumpWidget(const MyApp(hasToken: false));
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    // Verify that LoginPage elements are present
+    expect(find.text('Welcome Team'), findsOneWidget);
+    expect(find.text('Login'), findsOneWidget);
+    expect(find.text('Enter email'), findsOneWidget);
+    expect(find.text('Enter password'), findsNothing); // It's a label, but check for button
+    expect(find.byType(TextFormField), findsNWidgets(2)); // Email and password fields
+    expect(find.text('Login'), findsOneWidget); // Button text
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+  testWidgets('App starts at CategoriesPage when has token', (WidgetTester tester) async {
+    // Build our app with token (categories page)
+    await tester.pumpWidget(const MyApp(hasToken: true));
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    // Verify that CategoriesPage elements are present (adjust based on your CategoriesPage content)
+    expect(find.text('Categories'), findsOneWidget); // Assuming appBar title
+    expect(find.text('Manage categories, products, branches, employees, billing, reports here'), findsOneWidget);
   });
 }
