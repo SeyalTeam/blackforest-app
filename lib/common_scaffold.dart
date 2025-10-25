@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io' as io; // For Platform check
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart'; // Add this import for Provider
+import 'package:provider/provider.dart'; // For cart badge
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobile_scanner/mobile_scanner.dart'; // Import for scanner
 import 'package:blackforest_app/categories_page.dart'; // Import CategoriesPage
@@ -80,22 +80,27 @@ class _CommonScaffoldState extends State<CommonScaffold> {
       _showMessage('Scanner not supported on this platform');
       return;
     }
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const ScannerPage(),
-      ),
-    ).then((result) {
-      if (result != null) {
-        if (widget.onScanCallback != null) {
-          widget.onScanCallback!(result); // Call page-specific handler
-        } else {
-          _showMessage('Scanned barcode: $result');
-        }
+
+    // Show full-screen dialog for scanner
+    final result = await showGeneralDialog<String>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Dismiss',
+      pageBuilder: (context, anim1, anim2) => const ScannerDialog(),
+      transitionBuilder: (context, anim1, anim2, child) {
+        return FadeTransition(opacity: anim1, child: child);
+      },
+    );
+
+    if (result != null) {
+      if (widget.onScanCallback != null) {
+        widget.onScanCallback!(result); // Call page-specific handler
       } else {
-        _showMessage('Scan cancelled');
+        _showMessage('Scanned barcode: $result');
       }
-    });
+    } else {
+      _showMessage('Scan cancelled');
+    }
   }
 
   Route _createRoute(Widget page) {
@@ -405,15 +410,15 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   }
 }
 
-// ScannerPage for barcode scanning
-class ScannerPage extends StatefulWidget {
-  const ScannerPage({super.key});
+// ScannerDialog for barcode scanning as dialog content
+class ScannerDialog extends StatefulWidget {
+  const ScannerDialog({super.key});
 
   @override
-  _ScannerPageState createState() => _ScannerPageState();
+  _ScannerDialogState createState() => _ScannerDialogState();
 }
 
-class _ScannerPageState extends State<ScannerPage> {
+class _ScannerDialogState extends State<ScannerDialog> {
   final MobileScannerController _controller = MobileScannerController();
 
   @override
@@ -424,7 +429,7 @@ class _ScannerPageState extends State<ScannerPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return Scaffold( // Use Scaffold for full screen feel in dialog
       appBar: AppBar(title: const Text('Scan Barcode')),
       body: MobileScanner(
         controller: _controller,

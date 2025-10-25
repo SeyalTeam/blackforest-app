@@ -7,6 +7,8 @@ import 'package:blackforest_app/products_page.dart';
 import 'package:blackforest_app/stock_order.dart';
 import 'package:blackforest_app/return_order_page.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:provider/provider.dart';
+import 'package:blackforest_app/cart_provider.dart';
 
 class CategoriesPage extends StatefulWidget {
   final bool isPastryFilter;
@@ -120,6 +122,71 @@ class _CategoriesPageState extends State<CategoriesPage> {
     }
   }
 
+  Future<void> _handleScan(String scanResult) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      if (token == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No token found. Please login again.')),
+        );
+        return;
+      }
+
+      // Fetch product by UPC globally
+      final response = await http.get(
+        Uri.parse('https://admin.theblackforestcakes.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=1'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        final List<dynamic> products = data['docs'] ?? [];
+        if (products.isNotEmpty) {
+          final product = products[0];
+          final cartProvider = Provider.of<CartProvider>(context, listen: false);
+
+          // Get branch-specific price if available (similar to ProductsPage)
+          double price = product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
+          String? _branchId; // Fetch branchId if needed, assume from user data
+          if (_userRole == 'branch') {
+            // Reuse _fetchUserData logic or store globally
+            if (_branchId != null && product['branchOverrides'] != null) {
+              for (var override in product['branchOverrides']) {
+                var branch = override['branch'];
+                String branchOid = branch is Map ? branch[r'$oid'] ?? branch['id'] ?? '' : branch ?? '';
+                if (branchOid == _branchId) {
+                  price = override['price']?.toDouble() ?? price;
+                  break;
+                }
+              }
+            }
+          }
+
+          final item = CartItem.fromProduct(product, 1, branchPrice: price);
+          cartProvider.addOrUpdateItem(item);
+
+          final newQty = cartProvider.cartItems.firstWhere((i) => i.id == item.id).quantity;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('${product['name']} added/updated (Qty: $newQty)')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Product not found')),
+          );
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to fetch product: ${response.statusCode}')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Network error: Check your internet')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     String title;
@@ -134,10 +201,10 @@ class _CategoriesPageState extends State<CategoriesPage> {
       title = 'Billing Categories';
       pageType = PageType.billing;
     }
-
     return CommonScaffold(
       title: title,
       pageType: pageType,
+      onScanCallback: _handleScan, // Add this for global scan from categories
       body: RefreshIndicator(
         onRefresh: _fetchCategories,
         child: _isLoading
@@ -232,12 +299,11 @@ class _CategoriesPageState extends State<CategoriesPage> {
                           child: ClipRRect(
                             borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
                             child: CachedNetworkImage(
-                              imageUrl: imageUrl,
+                              imageUrl: imageUrl!,
                               fit: BoxFit.cover,
                               width: double.infinity,
                               placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
-                              errorWidget: (context, url, error) =>
-                              const Center(child: Text('No Image', style: TextStyle(color: Colors.grey))),
+                              errorWidget: (context, url, error) => const Center(child: Text('No Image', style: TextStyle(color: Colors.grey))),
                             ),
                           ),
                         ),

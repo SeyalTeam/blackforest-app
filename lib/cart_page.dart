@@ -3,6 +3,9 @@ import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:blackforest_app/common_scaffold.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 class CartPage extends StatefulWidget {
   const CartPage({super.key});
@@ -12,11 +15,123 @@ class CartPage extends StatefulWidget {
 }
 
 class _CartPageState extends State<CartPage> {
+  String? _branchId;
+  String? _userRole;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchUserData();
+  }
+
+  Future<void> _fetchUserData() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      if (token == null) return;
+
+      final response = await http.get(
+        Uri.parse('https://admin.theblackforestcakes.com/api/users/me?depth=2'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        final user = data['user'] ?? data;
+        setState(() {
+          _userRole = user['role'];
+          if (user['role'] == 'branch' && user['branch'] != null) {
+            _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
+          }
+        });
+        Provider.of<CartProvider>(context, listen: false).setBranchId(_branchId);
+      }
+    } catch (e) {
+      // Handle error
+    }
+  }
+
+  Future<void> _handleScan(String scanResult) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      if (token == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No token found. Please login again.')),
+        );
+        return;
+      }
+
+      // Fetch product by UPC globally
+      final response = await http.get(
+        Uri.parse('https://admin.theblackforestcakes.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=1'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        final List<dynamic> products = data['docs'] ?? [];
+        if (products.isNotEmpty) {
+          final product = products[0];
+          final cartProvider = Provider.of<CartProvider>(context, listen: false);
+
+          // Get branch-specific price if available
+          double price = product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
+          if (_branchId != null && product['branchOverrides'] != null) {
+            for (var override in product['branchOverrides']) {
+              var branch = override['branch'];
+              String branchOid = branch is Map ? branch[r'$oid'] ?? branch['id'] ?? '' : branch ?? '';
+              if (branchOid == _branchId) {
+                price = override['price']?.toDouble() ?? price;
+                break;
+              }
+            }
+          }
+
+          final item = CartItem.fromProduct(product, 1, branchPrice: price);
+          cartProvider.addOrUpdateItem(item);
+
+          final newQty = cartProvider.cartItems.firstWhere((i) => i.id == item.id).quantity;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('${product['name']} added/updated (Qty: $newQty)')),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Product not found')),
+          );
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to fetch product: ${response.statusCode}')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Network error: Check your internet')),
+      );
+    }
+  }
+
+  Future<void> _submitBilling() async {
+    try {
+      await Provider.of<CartProvider>(context, listen: false).submitBilling(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Billing submitted successfully')),
+      );
+      Navigator.pop(context); // Or navigate to reports/billing list
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return CommonScaffold(
       title: 'Cart',
-      pageType: PageType.cart,  // Ensure PageType.cart is in your enum in common_scaffold.dart
+      pageType: PageType.cart,
+      onScanCallback: _handleScan, // Add this for scanning from CartPage
       body: Consumer<CartProvider>(
         builder: (context, cartProvider, child) {
           if (cartProvider.cartItems.isEmpty) {
@@ -98,7 +213,7 @@ class _CartPageState extends State<CartPage> {
                     ElevatedButton(
                       style: ElevatedButton.styleFrom(backgroundColor: Colors.black, foregroundColor: Colors.white),
                       onPressed: cartProvider.cartItems.isNotEmpty
-                          ? () => cartProvider.submitBilling(context)
+                          ? _submitBilling
                           : null,
                       child: const Text('Proceed to Billing'),
                     ),
