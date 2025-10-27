@@ -99,11 +99,55 @@ class _LoginPageState extends State<LoginPage> {
   bool _isLoading = false;
   bool _obscurePassword = true;
 
+  Future<void> _showIpAlert(String deviceIp, String branchInfo) async {
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('IP Verification'),
+          content: Text(
+            'Fetched Device IP: $deviceIp\n$branchInfo',
+            style: const TextStyle(fontSize: 16),
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('OK'),
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<void> _login() async {
     if (_formKey.currentState!.validate()) {
       setState(() {
         _isLoading = true;
       });
+
+      String? deviceIp;
+      try {
+        // Fetch device public IP address FIRST
+        final ipResponse = await http.get(Uri.parse('https://api.ipify.org?format=json')).timeout(const Duration(seconds: 10));
+        if (ipResponse.statusCode == 200) {
+          final ipData = jsonDecode(ipResponse.body);
+          deviceIp = ipData['ip']?.toString().trim(); // Trim any whitespace
+          debugPrint('Fetched Device IP: $deviceIp'); // Enhanced logging
+        } else {
+          debugPrint('Failed to fetch IP address: ${ipResponse.statusCode}');
+          deviceIp = null;
+        }
+      } on TimeoutException {
+        debugPrint('IP fetch timeout');
+        deviceIp = null;
+      } catch (e) {
+        debugPrint('IP Fetch Error: $e');
+        deviceIp = null;
+      }
 
       try {
         final response = await http.post(
@@ -118,45 +162,155 @@ class _LoginPageState extends State<LoginPage> {
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
           final user = data['user'];
-          final allowedRoles = ['branch', 'kitchen', 'cashier'];
+          final allowedRoles = ['branch', 'kitchen', 'cashier', 'waiter']; // Added 'waiter'
           if (!allowedRoles.contains(user['role'])) {
-            _showError('Access denied: App for branch-related users only (branch, kitchen, cashier)');
+            _showError('Access denied: App for branch-related users only (branch, kitchen, cashier, waiter)');
             setState(() {
               _isLoading = false;
             });
             return;
           }
 
+          dynamic branchRef = user['branch'];
+          String? branchId;
+          if (branchRef is Map) {
+            branchId = branchRef['id']?.toString() ?? branchRef['_id']?.toString();
+          } else {
+            branchId = branchRef?.toString();
+          }
+
+          // For non-waiter roles that depend on branch
+          String? branchIp;
+          if (user['role'] != 'waiter' && branchId != null && branchId.isNotEmpty) {
+            // Fetch branch details using the token (Payload CMS uses Bearer JWT)
+            final branchResponse = await http.get(
+              Uri.parse('https://admin.theblackforestcakes.com/api/branches/$branchId'),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ${data['token']}',
+              },
+            ).timeout(const Duration(seconds: 10));
+
+            if (branchResponse.statusCode == 200) {
+              final branchData = jsonDecode(branchResponse.body);
+              branchIp = branchData['ipAddress']?.toString().trim();
+              debugPrint('Fetched Branch IP: $branchIp');
+            } else {
+              _showError('Failed to fetch branch details: ${branchResponse.statusCode}');
+              setState(() {
+                _isLoading = false;
+              });
+              return;
+            }
+
+            // IP restriction logic for non-waiter (only if branch has ipAddress set)
+            if (branchIp != null && branchIp.isNotEmpty) {
+              if (deviceIp == null) {
+                _showError('Unable to fetch device IP for verification');
+                setState(() {
+                  _isLoading = false;
+                });
+                return;
+              }
+
+              debugPrint('IP Check - Device: "$deviceIp" vs Branch: "$branchIp"');
+              if (deviceIp != branchIp) {
+                _showError('Login restricted: Device IP ($deviceIp) does not match branch IP ($branchIp)');
+                setState(() {
+                  _isLoading = false;
+                });
+                return;
+              }
+
+              // Show alert on successful match for non-waiter
+              debugPrint('IP Match Successful');
+              await _showIpAlert(deviceIp, 'Branch IP: $branchIp (Matched)');
+            } else {
+              debugPrint('No IP restriction set for this branch - proceeding');
+              if (deviceIp != null) {
+                await _showIpAlert(deviceIp, 'Branch IP: Not Set (No Restriction)');
+              }
+            }
+          } else if (user['role'] == 'waiter') {
+            // For waiter: Fetch device IP and check against ALL branches
+            if (deviceIp == null) {
+              _showError('Unable to fetch device IP');
+              setState(() {
+                _isLoading = false;
+              });
+              return;
+            }
+
+            // Fetch all branches
+            final allBranchesResponse = await http.get(
+              Uri.parse('https://admin.theblackforestcakes.com/api/branches'),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ${data['token']}',
+              },
+            ).timeout(const Duration(seconds: 10));
+
+            String branchInfo = 'Matching Branches: None';
+            if (allBranchesResponse.statusCode == 200) {
+              final branchesData = jsonDecode(allBranchesResponse.body);
+              if (branchesData['docs'] != null && branchesData['docs'] is List) {
+                List<String> matchingBranches = [];
+                for (var branch in branchesData['docs']) {
+                  String? bIp = branch['ipAddress']?.toString().trim();
+                  if (bIp != null && bIp == deviceIp) {
+                    matchingBranches.add(branch['name']?.toString() ?? 'Unnamed Branch');
+                  }
+                }
+                if (matchingBranches.isNotEmpty) {
+                  branchInfo = 'Matching Branches: ${matchingBranches.join(', ')}';
+                }
+              }
+            } else {
+              debugPrint('Failed to fetch all branches: ${allBranchesResponse.statusCode}');
+              branchInfo = 'Matching Branches: Unable to fetch';
+            }
+
+            // Show alert for waiter with IP and matching branches
+            await _showIpAlert(deviceIp, branchInfo);
+          }
+
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('token', data['token']);
           await prefs.setString('role', user['role']);
           await prefs.setString('email', _emailController.text); // Store email
-
-          if (user['branch'] != null) {
-            // Assuming branch is an ID string; adjust if it's an object
-            await prefs.setString('branchId', user['branch'].toString());
+          if (branchId != null) {
+            await prefs.setString('branchId', branchId);
+          }
+          if (deviceIp != null) {
+            await prefs.setString('lastLoginIp', deviceIp);
           }
 
           // Navigate to categories page wrapped with idle timeout
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (context) => IdleTimeoutWrapper(
-                child: const CategoriesPage(),
+          if (mounted) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => IdleTimeoutWrapper(
+                  child: const CategoriesPage(),
+                ),
               ),
-            ),
-          );
+            );
+          }
         } else if (response.statusCode == 401) {
           _showError('Invalid credentials');
         } else {
-          _showError('Server error');
+          _showError('Server error: ${response.statusCode}');
         }
+      } on TimeoutException {
+        _showError('Request timeout: Check your internet');
       } catch (e) {
-        _showError('Network error: Check your internet');
+        _showError('Network error: Check your internet - $e');
       } finally {
-        setState(() {
-          _isLoading = false;
-        });
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
       }
     }
   }
@@ -166,6 +320,7 @@ class _LoginPageState extends State<LoginPage> {
       SnackBar(
         content: Text(message),
         backgroundColor: Colors.grey[800],
+        duration: const Duration(seconds: 10),
       ),
     );
   }

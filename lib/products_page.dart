@@ -46,6 +46,8 @@ class _ProductsPageState extends State<ProductsPage> {
           _userRole = user['role'];
           if (user['role'] == 'branch' && user['branch'] != null) {
             _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
+          } else if (user['role'] == 'waiter') {
+            _fetchWaiterBranch(token);
           }
         });
       } else {
@@ -53,6 +55,47 @@ class _ProductsPageState extends State<ProductsPage> {
       }
     } catch (e) {
       // Handle error silently
+    }
+  }
+
+  Future<String?> _fetchDeviceIp() async {
+    try {
+      final ipResponse = await http.get(Uri.parse('https://api.ipify.org?format=json')).timeout(const Duration(seconds: 10));
+      if (ipResponse.statusCode == 200) {
+        final ipData = jsonDecode(ipResponse.body);
+        return ipData['ip']?.toString().trim();
+      }
+    } catch (e) {
+      // Handle silently
+    }
+    return null;
+  }
+
+  Future<void> _fetchWaiterBranch(String token) async {
+    String? deviceIp = await _fetchDeviceIp();
+    if (deviceIp == null) return;
+
+    try {
+      final allBranchesResponse = await http.get(
+        Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (allBranchesResponse.statusCode == 200) {
+        final branchesData = jsonDecode(allBranchesResponse.body);
+        if (branchesData['docs'] != null && branchesData['docs'] is List) {
+          for (var branch in branchesData['docs']) {
+            String? bIp = branch['ipAddress']?.toString().trim();
+            if (bIp == deviceIp) {
+              setState(() {
+                _branchId = branch['id'];
+              });
+              break; // Use the first matching branch
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // Handle silently
     }
   }
 
@@ -73,7 +116,10 @@ class _ProductsPageState extends State<ProductsPage> {
       if (_branchId == null && _userRole == null) {
         await _fetchUserData(token);
       }
-      final url = 'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
+      String url = 'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
+      if (_branchId != null && _userRole != 'superadmin') {
+        url += '&where[branchOverrides.branch][equals]=$_branchId';
+      }
       final response = await http.get(
         Uri.parse(url),
         headers: {'Authorization': 'Bearer $token'},
@@ -101,7 +147,6 @@ class _ProductsPageState extends State<ProductsPage> {
   void _toggleProductSelection(int index) {
     final product = _products[index];
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
-
     // Get branch-specific price if available
     double price = product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
     if (_branchId != null && product['branchOverrides'] != null) {
@@ -114,10 +159,8 @@ class _ProductsPageState extends State<ProductsPage> {
         }
       }
     }
-
     final item = CartItem.fromProduct(product, 1, branchPrice: price);
     cartProvider.addOrUpdateItem(item);
-
     final newQty = cartProvider.cartItems.firstWhere((i) => i.id == item.id).quantity;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('${product['name']} added/updated (Qty: $newQty)')),
@@ -125,7 +168,6 @@ class _ProductsPageState extends State<ProductsPage> {
   }
 
   void _handleScan(String scanResult) {
-    // Search for product with matching 'upc'
     for (int index = 0; index < _products.length; index++) {
       final product = _products[index];
       if (product['upc'] == scanResult) {
@@ -168,17 +210,13 @@ class _ProductsPageState extends State<ProductsPage> {
               final product = _products[index];
               String? imageUrl;
               // Null-safe image handling for images array
-              if (product['images'] != null &&
-                  product['images'].isNotEmpty &&
-                  product['images'][0]['image'] != null &&
-                  product['images'][0]['image']['url'] != null) {
+              if (product['images'] != null && product['images'].isNotEmpty && product['images'][0]['image'] != null && product['images'][0]['image']['url'] != null) {
                 imageUrl = product['images'][0]['image']['url'];
                 if (imageUrl != null && imageUrl.startsWith('/')) {
                   imageUrl = 'https://admin.theblackforestcakes.com$imageUrl';
                 }
               }
               imageUrl ??= 'https://via.placeholder.com/150?text=No+Image';
-
               // Determine price details based on branch override
               dynamic priceDetails = product['defaultPriceDetails'];
               if (_branchId != null && product['branchOverrides'] != null) {
@@ -192,7 +230,6 @@ class _ProductsPageState extends State<ProductsPage> {
                 }
               }
               final price = priceDetails != null ? '₹${priceDetails['price'] ?? 0}' : '₹0'; // Use price from details
-
               return GestureDetector(
                 onTap: () => _toggleProductSelection(index),
                 child: Consumer<CartProvider>(
@@ -202,7 +239,6 @@ class _ProductsPageState extends State<ProductsPage> {
                           (i) => i.id == product['id'],
                       orElse: () => CartItem(id: '', name: '', price: 0, quantity: 0),
                     ).quantity;
-
                     return Container(
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(8),
@@ -225,7 +261,7 @@ class _ProductsPageState extends State<ProductsPage> {
                                 child: ClipRRect(
                                   borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
                                   child: CachedNetworkImage(
-                                    imageUrl: imageUrl!,  // Fixed here with !
+                                    imageUrl: imageUrl!, // Fixed here with !
                                     fit: BoxFit.cover,
                                     width: double.infinity,
                                     placeholder: (context, url) => const Center(child: CircularProgressIndicator()),

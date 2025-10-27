@@ -63,6 +63,51 @@ class _CategoriesPageState extends State<CategoriesPage> {
     }
   }
 
+  Future<String?> _fetchDeviceIp() async {
+    try {
+      final ipResponse = await http.get(Uri.parse('https://api.ipify.org?format=json')).timeout(const Duration(seconds: 10));
+      if (ipResponse.statusCode == 200) {
+        final ipData = jsonDecode(ipResponse.body);
+        return ipData['ip']?.toString().trim();
+      }
+    } catch (e) {
+      // Handle silently
+    }
+    return null;
+  }
+
+  Future<List<String>> _fetchMatchingCompanyIds(String token, String? deviceIp) async {
+    List<String> companyIds = [];
+    if (deviceIp == null) return companyIds;
+
+    try {
+      final allBranchesResponse = await http.get(
+        Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (allBranchesResponse.statusCode == 200) {
+        final branchesData = jsonDecode(allBranchesResponse.body);
+        if (branchesData['docs'] != null && branchesData['docs'] is List) {
+          Set<String> uniqueCompanyIds = {};
+          for (var branch in branchesData['docs']) {
+            String? bIp = branch['ipAddress']?.toString().trim();
+            if (bIp != null && bIp == deviceIp) {
+              var company = branch['company'];
+              String? companyId = company is Map ? company['id'] : company?.toString();
+              if (companyId != null) {
+                uniqueCompanyIds.add(companyId);
+              }
+            }
+          }
+          companyIds = uniqueCompanyIds.toList();
+        }
+      }
+    } catch (e) {
+      // Handle silently
+    }
+    return companyIds;
+  }
+
   Future<void> _fetchCategories() async {
     setState(() {
       _isLoading = true;
@@ -82,16 +127,44 @@ class _CategoriesPageState extends State<CategoriesPage> {
         return;
       }
       // Fetch user data if not already fetched
-      if (_companyId == null && _userRole == null) {
+      if (_userRole == null) {
         await _fetchUserData(token);
       }
       String filterQuery = (widget.isPastryFilter || widget.isStockFilter)
           ? 'where[isStock][equals]=true'
           : 'where[isBilling][equals]=true';
-      // Add company filter if not superadmin and _companyId is available
-      if (_userRole != 'superadmin' && _companyId != null) {
-        filterQuery += '&where[company][contains]=$_companyId';
+
+      // Role-based company filter
+      if (_userRole != 'superadmin') {
+        String? companyFilter;
+        if (_userRole == 'waiter') {
+          String? deviceIp = await _fetchDeviceIp();
+          if (deviceIp != null) {
+            List<String> matchingCompanyIds = await _fetchMatchingCompanyIds(token, deviceIp);
+            if (matchingCompanyIds.isNotEmpty) {
+              companyFilter = '&where[company][in]=${matchingCompanyIds.join(',')}';
+            } else {
+              setState(() {
+                _errorMessage = 'No matching branches for your device IP.';
+                _isLoading = false;
+              });
+              return;
+            }
+          } else {
+            setState(() {
+              _errorMessage = 'Unable to fetch device IP.';
+              _isLoading = false;
+            });
+            return;
+          }
+        } else if (_companyId != null) {
+          companyFilter = '&where[company][contains]=$_companyId';
+        }
+        if (companyFilter != null) {
+          filterQuery += companyFilter;
+        }
       }
+
       final response = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/categories?$filterQuery&limit=100&depth=1'),
         headers: {'Authorization': 'Bearer $token'},

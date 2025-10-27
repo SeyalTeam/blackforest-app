@@ -56,6 +56,8 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
           _userRole = user['role'];
           if (user['role'] == 'branch' && user['branch'] != null) {
             _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
+          } else if (user['role'] == 'waiter') {
+            _fetchWaiterBranch(token);
           }
         });
       } else {
@@ -66,11 +68,51 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
     }
   }
 
+  Future<String?> _fetchDeviceIp() async {
+    try {
+      final ipResponse = await http.get(Uri.parse('https://api.ipify.org?format=json')).timeout(const Duration(seconds: 10));
+      if (ipResponse.statusCode == 200) {
+        final ipData = jsonDecode(ipResponse.body);
+        return ipData['ip']?.toString().trim();
+      }
+    } catch (e) {
+      // Handle silently
+    }
+    return null;
+  }
+
+  Future<void> _fetchWaiterBranch(String token) async {
+    String? deviceIp = await _fetchDeviceIp();
+    if (deviceIp == null) return;
+
+    try {
+      final allBranchesResponse = await http.get(
+        Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (allBranchesResponse.statusCode == 200) {
+        final branchesData = jsonDecode(allBranchesResponse.body);
+        if (branchesData['docs'] != null && branchesData['docs'] is List) {
+          for (var branch in branchesData['docs']) {
+            String? bIp = branch['ipAddress']?.toString().trim();
+            if (bIp == deviceIp) {
+              setState(() {
+                _branchId = branch['id'];
+              });
+              break; // Use the first matching branch
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // Handle silently
+    }
+  }
+
   Future<void> _fetchProducts() async {
     setState(() {
       _isLoading = true;
     });
-
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
@@ -80,19 +122,18 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
         );
         return;
       }
-
       // Fetch user data if not already fetched
       if (_branchId == null && _userRole == null) {
         await _fetchUserData(token);
       }
-
-      final url =
-          'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
+      String url = 'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
+      if (_branchId != null && _userRole != 'superadmin') {
+        url += '&where[branchOverrides.branch][equals]=$_branchId';
+      }
       final response = await http.get(
         Uri.parse(url),
         headers: {'Authorization': 'Bearer $token'},
       );
-
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         setState(() {
@@ -115,7 +156,6 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
         const SnackBar(content: Text('Network error: Check your internet')),
       );
     }
-
     setState(() {
       _isLoading = false;
     });
@@ -160,8 +200,7 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
 
   bool _isProductSelected(int index) {
     // Product is selected if qty >0 and checkbox is checked
-    return (_quantities[index] ?? 0) > 0 &&
-        (_isSelected[index] ?? false);
+    return (_quantities[index] ?? 0) > 0 && (_isSelected[index] ?? false);
   }
 
   @override
@@ -226,12 +265,8 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
                     }
                   }
                 }
-                final price = priceDetails != null
-                    ? '₹${priceDetails['price'] ?? 0}'
-                    : '₹0';
-                final unit = priceDetails != null
-                    ? priceDetails['unit'] ?? 'pcs'
-                    : 'pcs';
+                final price = priceDetails != null ? '₹${priceDetails['price'] ?? 0}' : '₹0';
+                final unit = priceDetails != null ? priceDetails['unit'] ?? 'pcs' : 'pcs';
                 return Container(
                   margin: const EdgeInsets.only(bottom: 12.0),
                   padding: const EdgeInsets.all(10.0),
