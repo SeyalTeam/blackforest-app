@@ -29,12 +29,10 @@ class _CartPageState extends State<CartPage> {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
       if (token == null) return;
-
       final response = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/users/me?depth=2'),
         headers: {'Authorization': 'Bearer $token'},
       );
-
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final user = data['user'] ?? data;
@@ -42,12 +40,56 @@ class _CartPageState extends State<CartPage> {
           _userRole = user['role'];
           if (user['role'] == 'branch' && user['branch'] != null) {
             _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
+          } else if (user['role'] == 'waiter') {
+            _fetchWaiterBranch(token);
           }
         });
         Provider.of<CartProvider>(context, listen: false).setBranchId(_branchId);
       }
     } catch (e) {
       // Handle error
+    }
+  }
+
+  Future<String?> _fetchDeviceIp() async {
+    try {
+      final ipResponse = await http.get(Uri.parse('https://api.ipify.org?format=json')).timeout(const Duration(seconds: 10));
+      if (ipResponse.statusCode == 200) {
+        final ipData = jsonDecode(ipResponse.body);
+        return ipData['ip']?.toString().trim();
+      }
+    } catch (e) {
+      // Handle silently
+    }
+    return null;
+  }
+
+  Future<void> _fetchWaiterBranch(String? token) async {
+    if (token == null) return;
+    String? deviceIp = await _fetchDeviceIp();
+    if (deviceIp == null) return;
+
+    try {
+      final allBranchesResponse = await http.get(
+        Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (allBranchesResponse.statusCode == 200) {
+        final branchesData = jsonDecode(allBranchesResponse.body);
+        if (branchesData['docs'] != null && branchesData['docs'] is List) {
+          for (var branch in branchesData['docs']) {
+            String? bIp = branch['ipAddress']?.toString().trim();
+            if (bIp == deviceIp) {
+              setState(() {
+                _branchId = branch['id'];
+              });
+              break; // Use the first matching branch
+            }
+          }
+        }
+      }
+    } catch (e) {
+      // Handle silently
     }
   }
 
@@ -61,20 +103,17 @@ class _CartPageState extends State<CartPage> {
         );
         return;
       }
-
       // Fetch product by UPC globally
       final response = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
-
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final List<dynamic> products = data['docs'] ?? [];
         if (products.isNotEmpty) {
           final product = products[0];
           final cartProvider = Provider.of<CartProvider>(context, listen: false);
-
           // Get branch-specific price if available
           double price = product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
           if (_branchId != null && product['branchOverrides'] != null) {
@@ -87,10 +126,8 @@ class _CartPageState extends State<CartPage> {
               }
             }
           }
-
           final item = CartItem.fromProduct(product, 1, branchPrice: price);
           cartProvider.addOrUpdateItem(item);
-
           final newQty = cartProvider.cartItems.firstWhere((i) => i.id == item.id).quantity;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('${product['name']} added/updated (Qty: $newQty)')),
@@ -212,9 +249,7 @@ class _CartPageState extends State<CartPage> {
                     const SizedBox(height: 10),
                     ElevatedButton(
                       style: ElevatedButton.styleFrom(backgroundColor: Colors.black, foregroundColor: Colors.white),
-                      onPressed: cartProvider.cartItems.isNotEmpty
-                          ? _submitBilling
-                          : null,
+                      onPressed: cartProvider.cartItems.isNotEmpty ? _submitBilling : null,
                       child: const Text('Proceed to Billing'),
                     ),
                   ],
