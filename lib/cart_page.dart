@@ -17,6 +17,8 @@ class CartPage extends StatefulWidget {
 class _CartPageState extends State<CartPage> {
   String? _branchId;
   String? _userRole;
+  bool _addCustomerDetails = false;
+  String? _selectedPaymentMethod;
 
   @override
   void initState() {
@@ -36,14 +38,13 @@ class _CartPageState extends State<CartPage> {
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final user = data['user'] ?? data;
-        setState(() {
-          _userRole = user['role'];
-          if (user['role'] == 'branch' && user['branch'] != null) {
-            _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
-          } else if (user['role'] == 'waiter') {
-            _fetchWaiterBranch(token);
-          }
-        });
+        _userRole = user['role'];
+        if (user['role'] == 'branch' && user['branch'] != null) {
+          _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
+        } else if (user['role'] == 'waiter') {
+          await _fetchWaiterBranch(token);
+        }
+        setState(() {});
         Provider.of<CartProvider>(context, listen: false).setBranchId(_branchId);
       }
     } catch (e) {
@@ -80,9 +81,7 @@ class _CartPageState extends State<CartPage> {
           for (var branch in branchesData['docs']) {
             String? bIp = branch['ipAddress']?.toString().trim();
             if (bIp == deviceIp) {
-              setState(() {
-                _branchId = branch['id'];
-              });
+              _branchId = branch['id'];
               break; // Use the first matching branch
             }
           }
@@ -150,12 +149,123 @@ class _CartPageState extends State<CartPage> {
   }
 
   Future<void> _submitBilling() async {
-    try {
-      await Provider.of<CartProvider>(context, listen: false).submitBilling(context);
+    final cartProvider = Provider.of<CartProvider>(context, listen: false);
+    if (cartProvider.cartItems.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Billing submitted successfully')),
+        const SnackBar(content: Text('Cart is empty')),
       );
-      Navigator.pop(context); // Or navigate to reports/billing list
+      return;
+    }
+    if (_selectedPaymentMethod == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a payment method')),
+      );
+      return;
+    }
+
+    Map<String, dynamic>? customerDetails;
+    if (_addCustomerDetails) {
+      customerDetails = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) {
+          final nameController = TextEditingController();
+          final phoneController = TextEditingController();
+          final notesController = TextEditingController();
+          return AlertDialog(
+            title: const Text('Customer Details'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(labelText: 'Customer Name'),
+                  ),
+                  TextField(
+                    controller: phoneController,
+                    decoration: const InputDecoration(labelText: 'Phone'),
+                    keyboardType: TextInputType.phone,
+                  ),
+                  TextField(
+                    controller: notesController,
+                    decoration: const InputDecoration(labelText: 'Notes'),
+                    maxLines: 3,
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, {
+                  'name': nameController.text,
+                  'phone': phoneController.text,
+                  'notes': notesController.text,
+                }),
+                child: const Text('Submit'),
+              ),
+            ],
+          );
+        },
+      );
+      if (customerDetails == null) return;
+    } else {
+      customerDetails = {}; // Empty if not added
+    }
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      if (token == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No token found. Please login again.')),
+        );
+        return;
+      }
+
+      final billingData = {
+        'items': cartProvider.cartItems.map((item) => ({
+          'product': item.id,
+          'name': item.name,
+          'quantity': item.quantity,
+          'unitPrice': item.price,
+          'subtotal': item.price * item.quantity,
+          'branchOverride': _branchId != null, // Flag if branch-specific (assume true if _branchId set)
+        })).toList(),
+        'totalAmount': cartProvider.total,
+        'branch': _branchId,
+        'customerDetails': {
+          'name': customerDetails['name'] ?? '',
+          'phone': customerDetails['phone'] ?? '',
+        },
+        'paymentMethod': _selectedPaymentMethod,
+        'notes': customerDetails['notes'] ?? '',
+        'status': 'pending',
+      };
+
+      final response = await http.post(
+        Uri.parse('https://admin.theblackforestcakes.com/api/billings'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode(billingData),
+      );
+
+      if (response.statusCode == 201) {
+        cartProvider.clearCart(); // Clear cart on success
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Billing submitted successfully')),
+        );
+        Navigator.pop(context); // Or navigate to reports
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to submit billing: ${response.statusCode}')),
+        );
+      }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e')),
@@ -242,15 +352,65 @@ class _CartPageState extends State<CartPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Text(
-                      'Total: ₹${cartProvider.total.toStringAsFixed(2)}',
-                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      children: [
+                        Expanded(
+                          flex: 1,
+                          child: ElevatedButton(
+                            onPressed: () => setState(() => _selectedPaymentMethod = 'cash'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _selectedPaymentMethod == 'cash' ? Colors.green : Colors.grey,
+                            ),
+                            child: const Text('Cash'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          flex: 1,
+                          child: ElevatedButton(
+                            onPressed: () => setState(() => _selectedPaymentMethod = 'upi'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _selectedPaymentMethod == 'upi' ? Colors.green : Colors.grey,
+                            ),
+                            child: const Text('UPI'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          flex: 1,
+                          child: ElevatedButton(
+                            onPressed: () => setState(() => _selectedPaymentMethod = 'card'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: _selectedPaymentMethod == 'card' ? Colors.green : Colors.grey,
+                            ),
+                            child: const Text('Card'),
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 10),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.black, foregroundColor: Colors.white),
-                      onPressed: cartProvider.cartItems.isNotEmpty ? _submitBilling : null,
-                      child: const Text('Proceed to Billing'),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Checkbox(
+                          value: _addCustomerDetails,
+                          onChanged: (value) {
+                            setState(() {
+                              _addCustomerDetails = value ?? false;
+                            });
+                          },
+                        ),
+                        Text(
+                          'Total: ₹${cartProvider.total.toStringAsFixed(2)}',
+                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black),
+                        ),
+                        const Spacer(),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                          onPressed: cartProvider.cartItems.isNotEmpty ? _submitBilling : null,
+                          child: const Text('Proceed to Billing'),
+                        ),
+                      ],
                     ),
                   ],
                 ),
