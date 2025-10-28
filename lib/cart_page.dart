@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:blackforest_app/common_scaffold.dart';
+import 'package:blackforest_app/categories_page.dart'; // Add this import
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -170,7 +171,6 @@ class _CartPageState extends State<CartPage> {
         builder: (context) {
           final nameController = TextEditingController();
           final phoneController = TextEditingController();
-          final notesController = TextEditingController();
           return AlertDialog(
             title: const Text('Customer Details'),
             content: SingleChildScrollView(
@@ -186,11 +186,6 @@ class _CartPageState extends State<CartPage> {
                     decoration: const InputDecoration(labelText: 'Phone'),
                     keyboardType: TextInputType.phone,
                   ),
-                  TextField(
-                    controller: notesController,
-                    decoration: const InputDecoration(labelText: 'Notes'),
-                    maxLines: 3,
-                  ),
                 ],
               ),
             ),
@@ -203,7 +198,6 @@ class _CartPageState extends State<CartPage> {
                 onPressed: () => Navigator.pop(context, {
                   'name': nameController.text,
                   'phone': phoneController.text,
-                  'notes': notesController.text,
                 }),
                 child: const Text('Submit'),
               ),
@@ -242,8 +236,8 @@ class _CartPageState extends State<CartPage> {
           'phone': customerDetails['phone'] ?? '',
         },
         'paymentMethod': _selectedPaymentMethod,
-        'notes': customerDetails['notes'] ?? '',
-        'status': 'pending',
+        'notes': '',
+        'status': 'completed',
       };
 
       final response = await http.post(
@@ -260,7 +254,10 @@ class _CartPageState extends State<CartPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Billing submitted successfully')),
         );
-        Navigator.pop(context); // Or navigate to reports
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const CategoriesPage()),
+        );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to submit billing: ${response.statusCode}')),
