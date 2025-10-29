@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/categories_page.dart'; // Assuming this is your main page after login
+import 'package:network_info_plus/network_info_plus.dart';
 
 class IdleTimeoutWrapper extends StatefulWidget {
   final Widget child;
@@ -123,31 +124,29 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
+  int _ipToInt(String ip) {
+    final parts = ip.split('.').map(int.parse).toList();
+    return parts[0] << 24 | parts[1] << 16 | parts[2] << 8 | parts[3];
+  }
+
+  bool _isIpInRange(String deviceIp, String range) {
+    final parts = range.split('-');
+    if (parts.length != 2) return false;
+    final start = _ipToInt(parts[0].trim());
+    final end = _ipToInt(parts[1].trim());
+    final device = _ipToInt(deviceIp);
+    return device >= start && device <= end;
+  }
+
   Future<void> _login() async {
     if (_formKey.currentState!.validate()) {
       setState(() {
         _isLoading = true;
       });
 
-      String? deviceIp;
-      try {
-        // Fetch device public IP address FIRST
-        final ipResponse = await http.get(Uri.parse('https://api.ipify.org?format=json')).timeout(const Duration(seconds: 10));
-        if (ipResponse.statusCode == 200) {
-          final ipData = jsonDecode(ipResponse.body);
-          deviceIp = ipData['ip']?.toString().trim(); // Trim any whitespace
-          debugPrint('Fetched Device IP: $deviceIp'); // Enhanced logging
-        } else {
-          debugPrint('Failed to fetch IP address: ${ipResponse.statusCode}');
-          deviceIp = null;
-        }
-      } on TimeoutException {
-        debugPrint('IP fetch timeout');
-        deviceIp = null;
-      } catch (e) {
-        debugPrint('IP Fetch Error: $e');
-        deviceIp = null;
-      }
+      final info = NetworkInfo();
+      String? deviceIp = await info.getWifiIP();
+      debugPrint('Fetched Device Private IP: $deviceIp');
 
       try {
         final response = await http.post(
@@ -180,7 +179,7 @@ class _LoginPageState extends State<LoginPage> {
           }
 
           // For non-waiter roles that depend on branch
-          String? branchIp;
+          String? branchIpRange;
           String? printerIp;
           if (user['role'] != 'waiter' && branchId != null && branchId.isNotEmpty) {
             // Fetch branch details using the token (Payload CMS uses Bearer JWT)
@@ -194,10 +193,9 @@ class _LoginPageState extends State<LoginPage> {
 
             if (branchResponse.statusCode == 200) {
               final branchData = jsonDecode(branchResponse.body);
-              branchIp = branchData['ipAddress']?.toString().trim();
+              branchIpRange = branchData['ipAddress']?.toString().trim();
               printerIp = branchData['printerIp']?.toString().trim();
-              debugPrint('Fetched Branch IP: $branchIp');
-              debugPrint('Fetched Printer IP: $printerIp');
+              debugPrint('Fetched Branch IP Range: $branchIpRange');
             } else {
               _showError('Failed to fetch branch details: ${branchResponse.statusCode}');
               setState(() {
@@ -207,7 +205,7 @@ class _LoginPageState extends State<LoginPage> {
             }
 
             // IP restriction logic for non-waiter (only if branch has ipAddress set)
-            if (branchIp != null && branchIp.isNotEmpty) {
+            if (branchIpRange != null && branchIpRange.isNotEmpty) {
               if (deviceIp == null) {
                 _showError('Unable to fetch device IP for verification');
                 setState(() {
@@ -216,9 +214,9 @@ class _LoginPageState extends State<LoginPage> {
                 return;
               }
 
-              debugPrint('IP Check - Device: "$deviceIp" vs Branch: "$branchIp"');
-              if (deviceIp != branchIp) {
-                _showError('Login restricted: Device IP ($deviceIp) does not match branch IP ($branchIp)');
+              debugPrint('IP Check - Device: "$deviceIp" vs Branch Range: "$branchIpRange"');
+              if (!_isIpInRange(deviceIp, branchIpRange)) {
+                _showError('Login restricted: Device IP ($deviceIp) does not match branch IP range ($branchIpRange)');
                 setState(() {
                   _isLoading = false;
                 });
@@ -227,7 +225,7 @@ class _LoginPageState extends State<LoginPage> {
 
               // Show alert on successful match for non-waiter
               debugPrint('IP Match Successful');
-              await _showIpAlert(deviceIp, 'Branch IP: $branchIp (Matched)', printerIp);
+              await _showIpAlert(deviceIp, 'Branch IP Range: $branchIpRange (Matched)', printerIp);
             } else {
               debugPrint('No IP restriction set for this branch - proceeding');
               if (deviceIp != null) {
@@ -254,16 +252,15 @@ class _LoginPageState extends State<LoginPage> {
             ).timeout(const Duration(seconds: 10));
 
             String branchInfo = 'Matching Branches: None';
-            String? matchingPrinterIp;
             if (allBranchesResponse.statusCode == 200) {
               final branchesData = jsonDecode(allBranchesResponse.body);
               if (branchesData['docs'] != null && branchesData['docs'] is List) {
                 List<String> matchingBranches = [];
                 for (var branch in branchesData['docs']) {
-                  String? bIp = branch['ipAddress']?.toString().trim();
-                  if (bIp != null && bIp == deviceIp) {
+                  String? bIpRange = branch['ipAddress']?.toString().trim();
+                  if (bIpRange != null && _isIpInRange(deviceIp, bIpRange)) {
                     matchingBranches.add(branch['name']?.toString() ?? 'Unnamed Branch');
-                    matchingPrinterIp = branch['printerIp']?.toString().trim();
+                    printerIp = branch['printerIp']?.toString().trim();
                     branchId = branch['id']; // Store the matching branchId
                   }
                 }
@@ -277,7 +274,7 @@ class _LoginPageState extends State<LoginPage> {
             }
 
             // Show alert for waiter with IP and matching branches
-            await _showIpAlert(deviceIp, branchInfo, matchingPrinterIp);
+            await _showIpAlert(deviceIp, branchInfo, printerIp);
           }
 
           final prefs = await SharedPreferences.getInstance();
@@ -289,6 +286,9 @@ class _LoginPageState extends State<LoginPage> {
           }
           if (deviceIp != null) {
             await prefs.setString('lastLoginIp', deviceIp);
+          }
+          if (printerIp != null) {
+            await prefs.setString('printerIp', printerIp);
           }
 
           // Navigate to categories page wrapped with idle timeout
