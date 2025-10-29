@@ -99,7 +99,7 @@ class _LoginPageState extends State<LoginPage> {
   bool _isLoading = false;
   bool _obscurePassword = true;
 
-  Future<void> _showIpAlert(String deviceIp, String branchInfo) async {
+  Future<void> _showIpAlert(String deviceIp, String branchInfo, String? printerIp) async {
     await showDialog(
       context: context,
       barrierDismissible: false,
@@ -107,7 +107,7 @@ class _LoginPageState extends State<LoginPage> {
         return AlertDialog(
           title: const Text('IP Verification'),
           content: Text(
-            'Fetched Device IP: $deviceIp\n$branchInfo',
+            'Fetched Device IP: $deviceIp\n$branchInfo\nPrinter IP: ${printerIp ?? 'Not Set'}',
             style: const TextStyle(fontSize: 16),
           ),
           actions: <Widget>[
@@ -181,6 +181,7 @@ class _LoginPageState extends State<LoginPage> {
 
           // For non-waiter roles that depend on branch
           String? branchIp;
+          String? printerIp;
           if (user['role'] != 'waiter' && branchId != null && branchId.isNotEmpty) {
             // Fetch branch details using the token (Payload CMS uses Bearer JWT)
             final branchResponse = await http.get(
@@ -194,7 +195,9 @@ class _LoginPageState extends State<LoginPage> {
             if (branchResponse.statusCode == 200) {
               final branchData = jsonDecode(branchResponse.body);
               branchIp = branchData['ipAddress']?.toString().trim();
+              printerIp = branchData['printerIp']?.toString().trim();
               debugPrint('Fetched Branch IP: $branchIp');
+              debugPrint('Fetched Printer IP: $printerIp');
             } else {
               _showError('Failed to fetch branch details: ${branchResponse.statusCode}');
               setState(() {
@@ -224,11 +227,11 @@ class _LoginPageState extends State<LoginPage> {
 
               // Show alert on successful match for non-waiter
               debugPrint('IP Match Successful');
-              await _showIpAlert(deviceIp, 'Branch IP: $branchIp (Matched)');
+              await _showIpAlert(deviceIp, 'Branch IP: $branchIp (Matched)', printerIp);
             } else {
               debugPrint('No IP restriction set for this branch - proceeding');
               if (deviceIp != null) {
-                await _showIpAlert(deviceIp, 'Branch IP: Not Set (No Restriction)');
+                await _showIpAlert(deviceIp, 'Branch IP: Not Set (No Restriction)', printerIp);
               }
             }
           } else if (user['role'] == 'waiter') {
@@ -251,6 +254,7 @@ class _LoginPageState extends State<LoginPage> {
             ).timeout(const Duration(seconds: 10));
 
             String branchInfo = 'Matching Branches: None';
+            String? matchingPrinterIp;
             if (allBranchesResponse.statusCode == 200) {
               final branchesData = jsonDecode(allBranchesResponse.body);
               if (branchesData['docs'] != null && branchesData['docs'] is List) {
@@ -259,6 +263,8 @@ class _LoginPageState extends State<LoginPage> {
                   String? bIp = branch['ipAddress']?.toString().trim();
                   if (bIp != null && bIp == deviceIp) {
                     matchingBranches.add(branch['name']?.toString() ?? 'Unnamed Branch');
+                    matchingPrinterIp = branch['printerIp']?.toString().trim();
+                    branchId = branch['id']; // Store the matching branchId
                   }
                 }
                 if (matchingBranches.isNotEmpty) {
@@ -271,7 +277,7 @@ class _LoginPageState extends State<LoginPage> {
             }
 
             // Show alert for waiter with IP and matching branches
-            await _showIpAlert(deviceIp, branchInfo);
+            await _showIpAlert(deviceIp, branchInfo, matchingPrinterIp);
           }
 
           final prefs = await SharedPreferences.getInstance();
@@ -425,9 +431,7 @@ class _LoginPageState extends State<LoginPage> {
                           minimumSize: const Size(double.infinity, 48),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                         ),
-                        child: _isLoading
-                            ? const CircularProgressIndicator(color: Colors.white)
-                            : const Text('Login', style: TextStyle(fontWeight: FontWeight.bold)),
+                        child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : const Text('Login', style: TextStyle(fontWeight: FontWeight.bold)),
                       ),
                     ],
                   ),
