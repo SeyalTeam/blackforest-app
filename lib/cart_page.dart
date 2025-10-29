@@ -3,10 +3,12 @@ import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:blackforest_app/common_scaffold.dart';
-import 'package:blackforest_app/categories_page.dart'; // Add this import
+import 'package:blackforest_app/categories_page.dart'; // Import for navigation
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:esc_pos_printer/esc_pos_printer.dart';
+import 'package:esc_pos_utils/esc_pos_utils.dart';
 
 class CartPage extends StatefulWidget {
   const CartPage({super.key});
@@ -250,6 +252,8 @@ class _CartPageState extends State<CartPage> {
       );
 
       if (response.statusCode == 201) {
+        final billingResponse = jsonDecode(response.body);
+        await _printReceipt(billingResponse); // Print after submission
         cartProvider.clearCart(); // Clear cart on success
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Billing submitted successfully')),
@@ -266,6 +270,49 @@ class _CartPageState extends State<CartPage> {
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e')),
+      );
+    }
+  }
+
+  Future<void> _printReceipt(Map<String, dynamic> billing) async {
+    final prefs = await SharedPreferences.getInstance();
+    final printerIp = prefs.getString('printerIp'); // Stored during login
+    if (printerIp == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No printer configured')),
+      );
+      return;
+    }
+
+    final PaperSize paper = PaperSize.mm80;
+    final profile = await CapabilityProfile.load(name: 'default');
+    final printer = NetworkPrinter(paper, profile);
+    PosPrintResult res = await printer.connect(printerIp, port: 9100);
+    if (res == PosPrintResult.success) {
+      printer.text('Black Forest Cakes', styles: PosStyles(align: PosAlign.center, bold: true));
+      printer.text('Invoice #: ${billing['invoiceNumber']}', styles: PosStyles(align: PosAlign.center));
+      printer.text('Date: ${DateTime.now().toString()}', styles: PosStyles(align: PosAlign.center));
+      printer.hr();
+      for (var item in billing['items']) {
+        printer.row([
+          PosColumn(text: item['name'], width: 6),
+          PosColumn(text: 'x${item['quantity']}', width: 2),
+          PosColumn(text: '₹${item['subtotal']}', width: 4),
+        ]);
+      }
+      printer.hr();
+      printer.row([
+        PosColumn(text: 'Total', width: 8, styles: PosStyles(bold: true)),
+        PosColumn(text: '₹${billing['totalAmount']}', width: 4, styles: PosStyles(bold: true)),
+      ]);
+      printer.text('Payment: ${billing['paymentMethod']}', styles: PosStyles(align: PosAlign.center));
+      printer.text('Thank You!', styles: PosStyles(align: PosAlign.center));
+      printer.feed(2);
+      printer.cut();
+      printer.disconnect();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Printer connection failed: $res')),
       );
     }
   }
