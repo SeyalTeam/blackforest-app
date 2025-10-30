@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
+import 'package:network_info_plus/network_info_plus.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:blackforest_app/cart_provider.dart';
 
@@ -33,6 +34,7 @@ class _ProductsPageState extends State<ProductsPage> {
     _fetchProducts();
   }
 
+  /// Fetch user data and determine branch or waiter roles
   Future<void> _fetchUserData(String token) async {
     try {
       final response = await http.get(
@@ -41,36 +43,52 @@ class _ProductsPageState extends State<ProductsPage> {
       );
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
-        final user = data['user'] ?? data; // Depending on response structure
+        final user = data['user'] ?? data;
         setState(() {
           _userRole = user['role'];
-          if (user['role'] == 'branch' && user['branch'] != null) {
-            _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
-          } else if (user['role'] == 'waiter') {
-            _fetchWaiterBranch(token);
-          }
         });
-      } else {
-        // Handle error silently
-      }
-    } catch (e) {
-      // Handle error silently
-    }
-  }
-
-  Future<String?> _fetchDeviceIp() async {
-    try {
-      final ipResponse = await http.get(Uri.parse('https://api.ipify.org?format=json')).timeout(const Duration(seconds: 10));
-      if (ipResponse.statusCode == 200) {
-        final ipData = jsonDecode(ipResponse.body);
-        return ipData['ip']?.toString().trim();
+        if (user['role'] == 'branch' && user['branch'] != null) {
+          setState(() {
+            _branchId =
+            (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
+          });
+        } else if (user['role'] == 'waiter') {
+          await _fetchWaiterBranch(token);
+        }
       }
     } catch (e) {
       // Handle silently
     }
-    return null;
   }
 
+  /// Get private device IP (LAN)
+  Future<String?> _fetchDeviceIp() async {
+    try {
+      final info = NetworkInfo();
+      final ip = await info.getWifiIP();
+      return ip?.trim();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /// Convert IP string to int for range comparison
+  int _ipToInt(String ip) {
+    final parts = ip.split('.').map(int.parse).toList();
+    return (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
+  }
+
+  /// Check if an IP falls inside a range "startIP - endIP"
+  bool _isIpInRange(String deviceIp, String range) {
+    final parts = range.split('-');
+    if (parts.length != 2) return false;
+    final startIp = _ipToInt(parts[0].trim());
+    final endIp = _ipToInt(parts[1].trim());
+    final device = _ipToInt(deviceIp);
+    return device >= startIp && device <= endIp;
+  }
+
+  /// Find the waiter's branch by matching device IP to branch IP or range
   Future<void> _fetchWaiterBranch(String token) async {
     String? deviceIp = await _fetchDeviceIp();
     if (deviceIp == null) return;
@@ -84,12 +102,14 @@ class _ProductsPageState extends State<ProductsPage> {
         final branchesData = jsonDecode(allBranchesResponse.body);
         if (branchesData['docs'] != null && branchesData['docs'] is List) {
           for (var branch in branchesData['docs']) {
-            String? bIp = branch['ipAddress']?.toString().trim();
-            if (bIp == deviceIp) {
-              setState(() {
-                _branchId = branch['id'];
-              });
-              break; // Use the first matching branch
+            String? bIpRange = branch['ipAddress']?.toString().trim();
+            if (bIpRange != null) {
+              if (bIpRange == deviceIp || _isIpInRange(deviceIp, bIpRange)) {
+                setState(() {
+                  _branchId = branch['id'];
+                });
+                break;
+              }
             }
           }
         }
@@ -99,6 +119,7 @@ class _ProductsPageState extends State<ProductsPage> {
     }
   }
 
+  /// Fetch all products under a category, filtered by role/branch
   Future<void> _fetchProducts() async {
     setState(() {
       _isLoading = true;
@@ -112,18 +133,22 @@ class _ProductsPageState extends State<ProductsPage> {
         );
         return;
       }
-      // Fetch user data if not already fetched
+
       if (_branchId == null && _userRole == null) {
         await _fetchUserData(token);
       }
-      String url = 'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
+
+      String url =
+          'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
       if (_branchId != null && _userRole != 'superadmin') {
         url += '&where[branchOverrides.branch][equals]=$_branchId';
       }
+
       final response = await http.get(
         Uri.parse(url),
         headers: {'Authorization': 'Bearer $token'},
       );
+
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         setState(() {
@@ -144,29 +169,35 @@ class _ProductsPageState extends State<ProductsPage> {
     });
   }
 
+  /// Add or update product in cart
   void _toggleProductSelection(int index) {
     final product = _products[index];
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
-    // Get branch-specific price if available
     double price = product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
+
     if (_branchId != null && product['branchOverrides'] != null) {
       for (var override in product['branchOverrides']) {
         var branch = override['branch'];
-        String branchOid = branch is Map ? branch[r'$oid'] ?? branch['id'] ?? '' : branch ?? '';
+        String branchOid =
+        branch is Map ? branch[r'$oid'] ?? branch['id'] ?? '' : branch ?? '';
         if (branchOid == _branchId) {
           price = override['price']?.toDouble() ?? price;
           break;
         }
       }
     }
+
     final item = CartItem.fromProduct(product, 1, branchPrice: price);
     cartProvider.addOrUpdateItem(item);
-    final newQty = cartProvider.cartItems.firstWhere((i) => i.id == item.id).quantity;
+    final newQty = cartProvider.cartItems
+        .firstWhere((i) => i.id == item.id)
+        .quantity;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('${product['name']} added/updated (Qty: $newQty)')),
     );
   }
 
+  /// Barcode scan support
   void _handleScan(String scanResult) {
     for (int index = 0; index < _products.length; index++) {
       final product = _products[index];
@@ -187,62 +218,85 @@ class _ProductsPageState extends State<ProductsPage> {
   Widget build(BuildContext context) {
     return CommonScaffold(
       title: 'Products in ${widget.categoryName}',
-      pageType: PageType.billing, // Updated to billing as per context; change if needed
-      onScanCallback: _handleScan, // Pass the scan handler
+      pageType: PageType.billing,
+      onScanCallback: _handleScan,
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(color: Colors.black))
           : _products.isEmpty
-          ? const Center(child: Text('No products found', style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18)))
+          ? const Center(
+          child: Text('No products found',
+              style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18)))
           : LayoutBuilder(
         builder: (context, constraints) {
           final width = constraints.maxWidth;
-          final crossAxisCount = (width > 600) ? 5 : 3; // 3 on phones, 5 on desktop/web/tablets
+          final crossAxisCount = (width > 600) ? 5 : 3;
           return GridView.builder(
             padding: const EdgeInsets.all(10),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            gridDelegate:
+            SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: crossAxisCount,
               crossAxisSpacing: 10,
               mainAxisSpacing: 10,
-              childAspectRatio: 0.75, // Rectangular
+              childAspectRatio: 0.75,
             ),
             itemCount: _products.length,
             itemBuilder: (context, index) {
               final product = _products[index];
               String? imageUrl;
-              // Null-safe image handling for images array
-              if (product['images'] != null && product['images'].isNotEmpty && product['images'][0]['image'] != null && product['images'][0]['image']['url'] != null) {
+
+              if (product['images'] != null &&
+                  product['images'].isNotEmpty &&
+                  product['images'][0]['image'] != null &&
+                  product['images'][0]['image']['url'] != null) {
                 imageUrl = product['images'][0]['image']['url'];
                 if (imageUrl != null && imageUrl.startsWith('/')) {
-                  imageUrl = 'https://admin.theblackforestcakes.com$imageUrl';
+                  imageUrl =
+                  'https://admin.theblackforestcakes.com$imageUrl';
                 }
               }
-              imageUrl ??= 'https://via.placeholder.com/150?text=No+Image';
-              // Determine price details based on branch override
+
+              imageUrl ??=
+              'https://via.placeholder.com/150?text=No+Image';
+
               dynamic priceDetails = product['defaultPriceDetails'];
-              if (_branchId != null && product['branchOverrides'] != null) {
+              if (_branchId != null &&
+                  product['branchOverrides'] != null) {
                 for (var override in product['branchOverrides']) {
                   var branch = override['branch'];
-                  String branchOid = branch is Map ? branch[r'$oid'] ?? branch['id'] ?? '' : branch ?? '';
+                  String branchOid = branch is Map
+                      ? branch[r'$oid'] ??
+                      branch['id'] ??
+                      ''
+                      : branch ?? '';
                   if (branchOid == _branchId) {
                     priceDetails = override;
                     break;
                   }
                 }
               }
-              final price = priceDetails != null ? '₹${priceDetails['price'] ?? 0}' : '₹0'; // Use price from details
+              final price = priceDetails != null
+                  ? '₹${priceDetails['price'] ?? 0}'
+                  : '₹0';
+
               return GestureDetector(
                 onTap: () => _toggleProductSelection(index),
                 child: Consumer<CartProvider>(
                   builder: (context, cartProvider, child) {
-                    final isSelected = cartProvider.cartItems.any((i) => i.id == product['id']);
-                    final qty = cartProvider.cartItems.firstWhere(
+                    final isSelected = cartProvider.cartItems
+                        .any((i) => i.id == product['id']);
+                    final qty = cartProvider.cartItems
+                        .firstWhere(
                           (i) => i.id == product['id'],
-                      orElse: () => CartItem(id: '', name: '', price: 0, quantity: 0),
-                    ).quantity;
+                      orElse: () => CartItem(
+                          id: '', name: '', price: 0, quantity: 0),
+                    )
+                        .quantity;
                     return Container(
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(8),
-                        border: isSelected ? Border.all(color: Colors.green, width: 4) : null,
+                        border: isSelected
+                            ? Border.all(color: Colors.green, width: 4)
+                            : null,
                         boxShadow: [
                           BoxShadow(
                             color: Colors.grey.withOpacity(0.1),
@@ -257,30 +311,45 @@ class _ProductsPageState extends State<ProductsPage> {
                           Column(
                             children: [
                               Expanded(
-                                flex: 8, // 80% image
+                                flex: 8,
                                 child: ClipRRect(
-                                  borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
+                                  borderRadius:
+                                  const BorderRadius.vertical(
+                                      top: Radius.circular(8)),
                                   child: CachedNetworkImage(
-                                    imageUrl: imageUrl!, // Fixed here with !
+                                    imageUrl: imageUrl!,
                                     fit: BoxFit.cover,
                                     width: double.infinity,
-                                    placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
-                                    errorWidget: (context, url, error) => const Center(child: Text('No Image', style: TextStyle(color: Colors.grey))),
+                                    placeholder: (context, url) =>
+                                    const Center(
+                                        child:
+                                        CircularProgressIndicator()),
+                                    errorWidget: (context, url, error) =>
+                                    const Center(
+                                        child: Text('No Image',
+                                            style: TextStyle(
+                                                color:
+                                                Colors.grey))),
                                   ),
                                 ),
                               ),
                               Expanded(
-                                flex: 2, // 20% name
+                                flex: 2,
                                 child: Container(
                                   width: double.infinity,
                                   decoration: const BoxDecoration(
                                     color: Colors.black,
-                                    borderRadius: BorderRadius.vertical(bottom: Radius.circular(8)),
+                                    borderRadius:
+                                    BorderRadius.vertical(
+                                        bottom:
+                                        Radius.circular(8)),
                                   ),
                                   alignment: Alignment.center,
                                   child: Text(
                                     product['name'] ?? 'Unknown',
-                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold),
                                     textAlign: TextAlign.center,
                                     overflow: TextOverflow.ellipsis,
                                   ),
@@ -292,14 +361,18 @@ class _ProductsPageState extends State<ProductsPage> {
                             top: 2,
                             left: 2,
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 4, vertical: 2),
                               decoration: BoxDecoration(
                                 color: Colors.black,
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
                                 price,
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 10),
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 10),
                               ),
                             ),
                           ),
@@ -309,14 +382,21 @@ class _ProductsPageState extends State<ProductsPage> {
                                 alignment: Alignment.center,
                                 child: Container(
                                   decoration: BoxDecoration(
-                                    color: Colors.black.withOpacity(0.7),
-                                    border: Border.all(color: Colors.grey, width: 1),
-                                    borderRadius: BorderRadius.circular(4),
+                                    color: Colors.black
+                                        .withOpacity(0.7),
+                                    border: Border.all(
+                                        color: Colors.grey, width: 1),
+                                    borderRadius:
+                                    BorderRadius.circular(4),
                                   ),
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 8, vertical: 4),
                                   child: Text(
                                     '$qty',
-                                    style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
+                                    style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold),
                                   ),
                                 ),
                               ),

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:network_info_plus/network_info_plus.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 
 class ReturnOrderPage extends StatefulWidget {
@@ -43,6 +44,34 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
     super.dispose();
   }
 
+  // 🧠 Convert IP to integer for range comparison
+  int _ipToInt(String ip) {
+    final parts = ip.split('.').map(int.parse).toList();
+    return (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
+  }
+
+  // ✅ Check if IP is in a range (e.g., 192.168.1.10-192.168.1.50)
+  bool _isIpInRange(String deviceIp, String range) {
+    final parts = range.split('-');
+    if (parts.length != 2) return false;
+    final startIp = _ipToInt(parts[0].trim());
+    final endIp = _ipToInt(parts[1].trim());
+    final device = _ipToInt(deviceIp);
+    return device >= startIp && device <= endIp;
+  }
+
+  // ✅ Get local (private) IP address using network_info_plus
+  Future<String?> _fetchDeviceIp() async {
+    try {
+      final info = NetworkInfo();
+      final ip = await info.getWifiIP();
+      return ip?.trim();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // ✅ Fetch user's branch info
   Future<void> _fetchUserData(String token) async {
     try {
       final response = await http.get(
@@ -51,56 +80,52 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
       );
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
-        final user = data['user'] ?? data; // Depending on response structure
+        final user = data['user'] ?? data;
+
         setState(() {
           _userRole = user['role'];
-          if (user['role'] == 'branch' && user['branch'] != null) {
-            _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
-          } else if (user['role'] == 'waiter') {
-            _fetchWaiterBranch(token);
-          }
         });
-      } else {
-        // Handle error silently
-      }
-    } catch (e) {
-      // Handle error silently
-    }
-  }
 
-  Future<String?> _fetchDeviceIp() async {
-    try {
-      final ipResponse = await http.get(Uri.parse('https://api.ipify.org?format=json')).timeout(const Duration(seconds: 10));
-      if (ipResponse.statusCode == 200) {
-        final ipData = jsonDecode(ipResponse.body);
-        return ipData['ip']?.toString().trim();
+        if (user['role'] == 'branch' && user['branch'] != null) {
+          setState(() {
+            _branchId = (user['branch'] is Map)
+                ? user['branch']['id']
+                : user['branch'];
+          });
+        } else if (user['role'] == 'waiter') {
+          await _fetchWaiterBranch(token);
+        }
       }
     } catch (e) {
       // Handle silently
     }
-    return null;
   }
 
+  // ✅ Fetch branch based on private IP
   Future<void> _fetchWaiterBranch(String token) async {
     String? deviceIp = await _fetchDeviceIp();
     if (deviceIp == null) return;
 
     try {
-      final allBranchesResponse = await http.get(
+      final response = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
-      if (allBranchesResponse.statusCode == 200) {
-        final branchesData = jsonDecode(allBranchesResponse.body);
-        if (branchesData['docs'] != null && branchesData['docs'] is List) {
-          for (var branch in branchesData['docs']) {
-            String? bIp = branch['ipAddress']?.toString().trim();
-            if (bIp == deviceIp) {
-              setState(() {
-                _branchId = branch['id'];
-              });
-              break; // Use the first matching branch
-            }
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final branches = data['docs'] ?? [];
+
+        for (var branch in branches) {
+          String? branchIp = branch['ipAddress']?.toString().trim();
+          if (branchIp == null) continue;
+
+          // Match exact or IP range
+          if (branchIp == deviceIp || _isIpInRange(deviceIp, branchIp)) {
+            setState(() {
+              _branchId = branch['id'];
+            });
+            break;
           }
         }
       }
@@ -109,10 +134,9 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
     }
   }
 
+  // ✅ Fetch product list with branch-specific filtering
   Future<void> _fetchProducts() async {
-    setState(() {
-      _isLoading = true;
-    });
+    setState(() => _isLoading = true);
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
@@ -122,27 +146,32 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
         );
         return;
       }
+
       // Fetch user data if not already fetched
       if (_branchId == null && _userRole == null) {
         await _fetchUserData(token);
       }
-      String url = 'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
+
+      String url =
+          'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
+
       if (_branchId != null && _userRole != 'superadmin') {
         url += '&where[branchOverrides.branch][equals]=$_branchId';
       }
+
       final response = await http.get(
         Uri.parse(url),
         headers: {'Authorization': 'Bearer $token'},
       );
+
       if (response.statusCode == 200) {
-        final Map<String, dynamic> data = jsonDecode(response.body);
+        final data = jsonDecode(response.body);
         setState(() {
           _products = data['docs'] ?? [];
           _filteredProducts = _products;
-          // Initialize quantities and controllers
           for (int i = 0; i < _products.length; i++) {
-            _quantities[i] = null; // No default for Qty
-            _isSelected[i] = false; // Default unchecked
+            _quantities[i] = null;
+            _isSelected[i] = false;
             _qtyControllers[i] = TextEditingController(text: '');
           }
         });
@@ -156,36 +185,29 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
         const SnackBar(content: Text('Network error: Check your internet')),
       );
     }
-    setState(() {
-      _isLoading = false;
-    });
+
+    setState(() => _isLoading = false);
   }
 
+  // ✅ Search Filter
   void _filterProducts() {
     final query = _searchController.text.toLowerCase();
     setState(() {
-      _filteredProducts = _products.where((product) {
-        return product['name'].toString().toLowerCase().contains(query);
-      }).toList();
-      // Update controllers for filtered products
-      final newQtyControllers = <int, TextEditingController>{};
-      for (int i = 0; i < _filteredProducts.length; i++) {
-        final index = _products.indexOf(_filteredProducts[i]);
-        newQtyControllers[i] = _qtyControllers[index] ?? TextEditingController(text: '');
-      }
-      _qtyControllers = newQtyControllers;
+      _filteredProducts = _products
+          .where((p) => p['name'].toString().toLowerCase().contains(query))
+          .toList();
     });
   }
 
+  // ✅ Barcode/QR scan handler
   void _handleScan(String scanResult) {
-    // Search for product with matching 'upc'
-    for (int index = 0; index < _filteredProducts.length; index++) {
-      final product = _filteredProducts[index];
+    for (int i = 0; i < _filteredProducts.length; i++) {
+      final product = _filteredProducts[i];
       if (product['upc'] == scanResult) {
         setState(() {
-          _quantities[index] = (_quantities[index] ?? 0) + 1;
-          _isSelected[index] = true;
-          _qtyControllers[index]?.text = _quantities[index].toString();
+          _quantities[i] = (_quantities[i] ?? 0) + 1;
+          _isSelected[i] = true;
+          _qtyControllers[i]?.text = _quantities[i].toString();
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Product selected from scan: ${product['name']}')),
@@ -199,7 +221,6 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
   }
 
   bool _isProductSelected(int index) {
-    // Product is selected if qty >0 and checkbox is checked
     return (_quantities[index] ?? 0) > 0 && (_isSelected[index] ?? false);
   }
 
@@ -207,7 +228,7 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
   Widget build(BuildContext context) {
     return CommonScaffold(
       title: 'Return Order Products',
-      pageType: PageType.stock, // Use stock type or create new if needed
+      pageType: PageType.stock,
       onScanCallback: _handleScan,
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(color: Colors.black))
@@ -215,7 +236,7 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
         children: [
           // Search bar
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Container(
               decoration: BoxDecoration(
                 color: Colors.white,
@@ -247,34 +268,47 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
           // Product list
           Expanded(
             child: _filteredProducts.isEmpty
-                ? const Center(child: Text('No products found', style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18)))
+                ? const Center(
+              child: Text('No products found',
+                  style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18)),
+            )
                 : ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               itemCount: _filteredProducts.length,
               itemBuilder: (context, index) {
                 final product = _filteredProducts[index];
-                // Determine price details based on branch override
+
                 dynamic priceDetails = product['defaultPriceDetails'];
                 if (_branchId != null && product['branchOverrides'] != null) {
                   for (var override in product['branchOverrides']) {
                     var branch = override['branch'];
-                    String branchOid = branch is Map ? branch[r'$oid'] ?? branch['id'] ?? '' : branch ?? '';
+                    String branchOid = branch is Map
+                        ? branch[r'$oid'] ?? branch['id'] ?? ''
+                        : branch ?? '';
                     if (branchOid == _branchId) {
                       priceDetails = override;
                       break;
                     }
                   }
                 }
-                final price = priceDetails != null ? '₹${priceDetails['price'] ?? 0}' : '₹0';
-                final unit = priceDetails != null ? priceDetails['unit'] ?? 'pcs' : 'pcs';
+
+                final price = priceDetails != null
+                    ? '₹${priceDetails['price'] ?? 0}'
+                    : '₹0';
+                final unit = priceDetails != null
+                    ? priceDetails['unit'] ?? 'pcs'
+                    : 'pcs';
+
                 return Container(
-                  margin: const EdgeInsets.only(bottom: 12.0),
-                  padding: const EdgeInsets.all(10.0),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFFF0F0), // Light pink background
+                    color: const Color(0xFFFFF0F0),
                     borderRadius: BorderRadius.circular(15),
                     border: Border.all(
-                      color: _isProductSelected(index) ? Colors.green : Colors.pink.shade300,
+                      color: _isProductSelected(index)
+                          ? Colors.green
+                          : Colors.pink.shade300,
                       width: _isProductSelected(index) ? 4 : 1,
                     ),
                     boxShadow: [
@@ -289,40 +323,31 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      // Name, Price, Unit
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              product['name'] ?? 'Unknown',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                            ),
+                            Text(product['name'] ?? 'Unknown',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold, fontSize: 16)),
                             const SizedBox(height: 4),
-                            Text(
-                              '$price / $unit',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                                color: Colors.black54,
-                              ),
-                            ),
+                            Text('$price / $unit',
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 14,
+                                    color: Colors.black54)),
                           ],
                         ),
                       ),
-                      // Quantity, Checkbox
                       Row(
                         children: [
-                          // Quantity input
                           Column(
                             children: [
-                              const Text(
-                                'Return Qty',
-                                style: TextStyle(color: Colors.blue, fontSize: 12, fontWeight: FontWeight.bold),
-                              ),
+                              const Text('Return Qty',
+                                  style: TextStyle(
+                                      color: Colors.blue,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.bold)),
                               const SizedBox(height: 4),
                               Container(
                                 width: 48,
@@ -334,14 +359,16 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
                                 child: TextField(
                                   keyboardType: TextInputType.number,
                                   textAlign: TextAlign.center,
+                                  controller: _qtyControllers[index],
                                   decoration: const InputDecoration(
                                     border: InputBorder.none,
-                                    contentPadding: EdgeInsets.symmetric(vertical: 8),
+                                    contentPadding:
+                                    EdgeInsets.symmetric(vertical: 8),
                                   ),
-                                  controller: _qtyControllers[index],
                                   onChanged: (value) {
                                     setState(() {
-                                      _quantities[index] = int.tryParse(value);
+                                      _quantities[index] =
+                                          int.tryParse(value);
                                     });
                                   },
                                 ),
@@ -357,7 +384,7 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
                                 _isSelected[index] = value ?? false;
                               });
                             }
-                                : null, // Disable if qty <=0
+                                : null,
                           ),
                         ],
                       ),

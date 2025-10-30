@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:network_info_plus/network_info_plus.dart'; // ✅ Added
 import 'package:blackforest_app/common_scaffold.dart';
 
 class StockOrderPage extends StatefulWidget {
@@ -21,11 +22,11 @@ class StockOrderPage extends StatefulWidget {
 class _StockOrderPageState extends State<StockOrderPage> {
   List<dynamic> _products = [];
   bool _isLoading = true;
-  Map<int, int?> _quantities = {}; // Track qty (nullable for empty)
-  Map<int, int?> _inStockQuantities = {}; // Track inStock qty (nullable for empty)
-  Map<int, bool> _isSelected = {}; // Track checkbox selection
-  Map<int, TextEditingController> _inStockControllers = {}; // Persistent controllers
-  Map<int, TextEditingController> _qtyControllers = {}; // Persistent controllers
+  Map<int, int?> _quantities = {};
+  Map<int, int?> _inStockQuantities = {};
+  Map<int, bool> _isSelected = {};
+  Map<int, TextEditingController> _inStockControllers = {};
+  Map<int, TextEditingController> _qtyControllers = {};
   TextEditingController _searchController = TextEditingController();
   List<dynamic> _filteredProducts = [];
   String? _branchId;
@@ -41,47 +42,34 @@ class _StockOrderPageState extends State<StockOrderPage> {
   @override
   void dispose() {
     _searchController.dispose();
-    _inStockControllers.forEach((_, controller) => controller.dispose());
-    _qtyControllers.forEach((_, controller) => controller.dispose());
+    _inStockControllers.forEach((_, c) => c.dispose());
+    _qtyControllers.forEach((_, c) => c.dispose());
     super.dispose();
   }
 
-  Future<void> _fetchUserData(String token) async {
+  // ✅ Fetch private (LAN) IP instead of public IP
+  Future<String?> _fetchDeviceIp() async {
     try {
-      final response = await http.get(
-        Uri.parse('https://admin.theblackforestcakes.com/api/users/me?depth=2'),
-        headers: {'Authorization': 'Bearer $token'},
-      );
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> data = jsonDecode(response.body);
-        final user = data['user'] ?? data; // Depending on response structure
-        setState(() {
-          _userRole = user['role'];
-          if (user['role'] == 'branch' && user['branch'] != null) {
-            _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
-          } else if (user['role'] == 'waiter') {
-            _fetchWaiterBranch(token);
-          }
-        });
-      } else {
-        // Handle error silently
-      }
+      final info = NetworkInfo();
+      final ip = await info.getWifiIP();
+      return ip?.trim();
     } catch (e) {
-      // Handle error silently
+      return null;
     }
   }
 
-  Future<String?> _fetchDeviceIp() async {
-    try {
-      final ipResponse = await http.get(Uri.parse('https://api.ipify.org?format=json')).timeout(const Duration(seconds: 10));
-      if (ipResponse.statusCode == 200) {
-        final ipData = jsonDecode(ipResponse.body);
-        return ipData['ip']?.toString().trim();
-      }
-    } catch (e) {
-      // Handle silently
-    }
-    return null;
+  int _ipToInt(String ip) {
+    final parts = ip.split('.').map(int.parse).toList();
+    return (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
+  }
+
+  bool _isIpInRange(String deviceIp, String range) {
+    final parts = range.split('-');
+    if (parts.length != 2) return false;
+    final startIp = _ipToInt(parts[0].trim());
+    final endIp = _ipToInt(parts[1].trim());
+    final device = _ipToInt(deviceIp);
+    return device >= startIp && device <= endIp;
   }
 
   Future<void> _fetchWaiterBranch(String token) async {
@@ -93,16 +81,19 @@ class _StockOrderPageState extends State<StockOrderPage> {
         Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
+
       if (allBranchesResponse.statusCode == 200) {
         final branchesData = jsonDecode(allBranchesResponse.body);
         if (branchesData['docs'] != null && branchesData['docs'] is List) {
           for (var branch in branchesData['docs']) {
-            String? bIp = branch['ipAddress']?.toString().trim();
-            if (bIp == deviceIp) {
-              setState(() {
-                _branchId = branch['id'];
-              });
-              break; // Use the first matching branch
+            String? bIpRange = branch['ipAddress']?.toString().trim();
+            if (bIpRange != null) {
+              if (bIpRange == deviceIp || _isIpInRange(deviceIp, bIpRange)) {
+                setState(() {
+                  _branchId = branch['id'];
+                });
+                break;
+              }
             }
           }
         }
@@ -112,48 +103,79 @@ class _StockOrderPageState extends State<StockOrderPage> {
     }
   }
 
+  Future<void> _fetchUserData(String token) async {
+    try {
+      final response = await http.get(
+        Uri.parse('https://admin.theblackforestcakes.com/api/users/me?depth=2'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+        final user = data['user'] ?? data;
+
+        setState(() {
+          _userRole = user['role'];
+        });
+
+        if (user['role'] == 'branch' && user['branch'] != null) {
+          _branchId =
+          (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
+        } else if (user['role'] == 'waiter') {
+          await _fetchWaiterBranch(token);
+        }
+      }
+    } catch (e) {
+      // Handle silently
+    }
+  }
+
   Future<void> _fetchProducts() async {
-    setState(() {
-      _isLoading = true;
-    });
+    setState(() => _isLoading = true);
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
+
       if (token == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('No token found. Please login again.')),
         );
         return;
       }
-      // Fetch user data if not already fetched
+
       if (_branchId == null && _userRole == null) {
         await _fetchUserData(token);
       }
-      String url = 'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
+
+      String url =
+          'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
       if (_branchId != null && _userRole != 'superadmin') {
         url += '&where[branchOverrides.branch][equals]=$_branchId';
       }
+
       final response = await http.get(
         Uri.parse(url),
         headers: {'Authorization': 'Bearer $token'},
       );
+
       if (response.statusCode == 200) {
-        final Map<String, dynamic> data = jsonDecode(response.body);
+        final data = jsonDecode(response.body);
         setState(() {
           _products = data['docs'] ?? [];
           _filteredProducts = _products;
-          // Initialize quantities, inStock, and controllers
           for (int i = 0; i < _products.length; i++) {
             _quantities[i] = null;
             _inStockQuantities[i] = null;
             _isSelected[i] = false;
-            _inStockControllers[i] = TextEditingController(text: '');
-            _qtyControllers[i] = TextEditingController(text: '');
+            _inStockControllers[i] = TextEditingController();
+            _qtyControllers[i] = TextEditingController();
           }
         });
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to fetch products: ${response.statusCode}')),
+          SnackBar(
+              content: Text(
+                  'Failed to fetch products: ${response.statusCode}')),
         );
       }
     } catch (e) {
@@ -161,32 +183,19 @@ class _StockOrderPageState extends State<StockOrderPage> {
         const SnackBar(content: Text('Network error: Check your internet')),
       );
     }
-    setState(() {
-      _isLoading = false;
-    });
+    setState(() => _isLoading = false);
   }
 
   void _filterProducts() {
     final query = _searchController.text.toLowerCase();
     setState(() {
-      _filteredProducts = _products.where((product) {
-        return product['name'].toString().toLowerCase().contains(query);
-      }).toList();
-      // Update controllers for filtered products
-      final newInStockControllers = <int, TextEditingController>{};
-      final newQtyControllers = <int, TextEditingController>{};
-      for (int i = 0; i < _filteredProducts.length; i++) {
-        final index = _products.indexOf(_filteredProducts[i]);
-        newInStockControllers[i] = _inStockControllers[index] ?? TextEditingController(text: '');
-        newQtyControllers[i] = _qtyControllers[index] ?? TextEditingController(text: '');
-      }
-      _inStockControllers = newInStockControllers;
-      _qtyControllers = newQtyControllers;
+      _filteredProducts = _products
+          .where((p) => p['name'].toString().toLowerCase().contains(query))
+          .toList();
     });
   }
 
   void _handleScan(String scanResult) {
-    // Search for product with matching 'upc'
     for (int index = 0; index < _filteredProducts.length; index++) {
       final product = _filteredProducts[index];
       if (product['upc'] == scanResult) {
@@ -195,10 +204,12 @@ class _StockOrderPageState extends State<StockOrderPage> {
           _inStockQuantities[index] = (_inStockQuantities[index] ?? 0) + 1;
           _isSelected[index] = true;
           _qtyControllers[index]?.text = _quantities[index].toString();
-          _inStockControllers[index]?.text = _inStockQuantities[index].toString();
+          _inStockControllers[index]?.text =
+              _inStockQuantities[index].toString();
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Product selected from scan: ${product['name']}')),
+          SnackBar(
+              content: Text('Product selected from scan: ${product['name']}')),
         );
         return;
       }
@@ -209,8 +220,9 @@ class _StockOrderPageState extends State<StockOrderPage> {
   }
 
   bool _isProductSelected(int index) {
-    // Product is selected if both fields are non-zero and checkbox is checked
-    return (_quantities[index] ?? 0) > 0 && _inStockQuantities[index] != null && (_isSelected[index] ?? false);
+    return (_quantities[index] ?? 0) > 0 &&
+        _inStockQuantities[index] != null &&
+        (_isSelected[index] ?? false);
   }
 
   @override
@@ -223,73 +235,76 @@ class _StockOrderPageState extends State<StockOrderPage> {
           ? const Center(child: CircularProgressIndicator(color: Colors.black))
           : Column(
         children: [
-          // Search bar
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(10),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.withOpacity(0.3),
-                    spreadRadius: 2,
-                    blurRadius: 5,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: TextField(
-                controller: _searchController,
-                decoration: InputDecoration(
-                  hintText: 'Search products...',
-                  prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                  border: OutlineInputBorder(
+            padding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Search products...',
+                prefixIcon:
+                const Icon(Icons.search, color: Colors.grey),
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide.none,
-                  ),
-                  filled: true,
-                  fillColor: Colors.white,
-                ),
+                    borderSide: BorderSide.none),
               ),
             ),
           ),
-          // Product list
           Expanded(
             child: _filteredProducts.isEmpty
-                ? const Center(child: Text('No products found', style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18)))
+                ? const Center(
+                child: Text('No products found',
+                    style: TextStyle(
+                        color: Color(0xFF4A4A4A), fontSize: 18)))
                 : ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+              padding: const EdgeInsets.all(16),
               itemCount: _filteredProducts.length,
               itemBuilder: (context, index) {
                 final product = _filteredProducts[index];
-                // Determine price details based on branch override
-                dynamic priceDetails = product['defaultPriceDetails'];
-                if (_branchId != null && product['branchOverrides'] != null) {
-                  for (var override in product['branchOverrides']) {
+                dynamic priceDetails =
+                product['defaultPriceDetails'];
+                if (_branchId != null &&
+                    product['branchOverrides'] != null) {
+                  for (var override
+                  in product['branchOverrides']) {
                     var branch = override['branch'];
-                    String branchOid = branch is Map ? branch[r'$oid'] ?? branch['id'] ?? '' : branch ?? '';
+                    String branchOid = branch is Map
+                        ? branch[r'$oid'] ??
+                        branch['id'] ??
+                        ''
+                        : branch ?? '';
                     if (branchOid == _branchId) {
                       priceDetails = override;
                       break;
                     }
                   }
                 }
-                final price = priceDetails != null ? '₹${priceDetails['price'] ?? 0}' : '₹0';
-                final unit = priceDetails != null ? priceDetails['unit'] ?? 'pcs' : 'pcs';
+                final price = priceDetails != null
+                    ? '₹${priceDetails['price'] ?? 0}'
+                    : '₹0';
+                final unit = priceDetails?['unit'] ?? 'pcs';
+
                 return Container(
-                  margin: const EdgeInsets.only(bottom: 12.0),
-                  padding: const EdgeInsets.all(10.0),
+                  margin:
+                  const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFFF0F0), // Light pink background
+                    color: const Color(0xFFFFF0F0),
                     borderRadius: BorderRadius.circular(15),
                     border: Border.all(
-                      color: _isProductSelected(index) ? Colors.green : Colors.pink.shade300,
-                      width: _isProductSelected(index) ? 4 : 1,
+                      color: _isProductSelected(index)
+                          ? Colors.green
+                          : Colors.pink.shade300,
+                      width: _isProductSelected(index)
+                          ? 4
+                          : 1,
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.grey.withOpacity(0.3),
+                        color:
+                        Colors.grey.withOpacity(0.3),
                         spreadRadius: 2,
                         blurRadius: 5,
                         offset: const Offset(0, 2),
@@ -297,110 +312,57 @@ class _StockOrderPageState extends State<StockOrderPage> {
                     ],
                   ),
                   child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    mainAxisAlignment:
+                    MainAxisAlignment.spaceBetween,
                     children: [
-                      // Name, Price, Unit
                       Expanded(
                         child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
+                          crossAxisAlignment:
+                          CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              product['name'] ?? 'Unknown',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                            ),
+                            Text(product['name'] ?? 'Unknown',
+                                style: const TextStyle(
+                                    fontWeight:
+                                    FontWeight.bold,
+                                    fontSize: 16)),
                             const SizedBox(height: 4),
-                            Text(
-                              '$price / $unit',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 14,
-                                color: Colors.black54,
-                              ),
-                            ),
+                            Text('$price / $unit',
+                                style: const TextStyle(
+                                    fontWeight:
+                                    FontWeight.bold,
+                                    color: Colors.black54)),
                           ],
                         ),
                       ),
-                      // In Stock, Quantity, Checkbox
                       Row(
                         children: [
-                          // In Stock input
-                          Column(
-                            children: [
-                              const Text(
-                                'In Stock',
-                                style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold),
-                              ),
-                              const SizedBox(height: 4),
-                              Container(
-                                width: 48,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: Colors.grey),
-                                ),
-                                child: TextField(
-                                  keyboardType: TextInputType.number,
-                                  textAlign: TextAlign.center,
-                                  decoration: const InputDecoration(
-                                    border: InputBorder.none,
-                                    contentPadding: EdgeInsets.symmetric(vertical: 8),
-                                  ),
-                                  controller: _inStockControllers[index],
-                                  onChanged: (value) {
-                                    setState(() {
-                                      _inStockQuantities[index] = int.tryParse(value);
-                                    });
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
+                          _buildInputField(
+                              'In Stock',
+                              _inStockControllers[index]!,
+                              Colors.red, (v) {
+                            _inStockQuantities[index] =
+                                int.tryParse(v);
+                          }),
                           const SizedBox(width: 8),
-                          // Quantity input
-                          Column(
-                            children: [
-                              const Text(
-                                'Qty',
-                                style: TextStyle(color: Colors.green, fontSize: 12, fontWeight: FontWeight.bold),
-                              ),
-                              const SizedBox(height: 4),
-                              Container(
-                                width: 48,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: Colors.grey),
-                                ),
-                                child: TextField(
-                                  keyboardType: TextInputType.number,
-                                  textAlign: TextAlign.center,
-                                  decoration: const InputDecoration(
-                                    border: InputBorder.none,
-                                    contentPadding: EdgeInsets.symmetric(vertical: 8),
-                                  ),
-                                  controller: _qtyControllers[index],
-                                  onChanged: (value) {
-                                    setState(() {
-                                      _quantities[index] = int.tryParse(value);
-                                    });
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
+                          _buildInputField('Qty',
+                              _qtyControllers[index]!,
+                              Colors.green, (v) {
+                                _quantities[index] =
+                                    int.tryParse(v);
+                              }),
                           const SizedBox(width: 8),
                           Checkbox(
                             value: _isSelected[index] ?? false,
-                            onChanged: _inStockQuantities[index] != null
+                            onChanged:
+                            _inStockQuantities[index] !=
+                                null
                                 ? (value) {
                               setState(() {
-                                _isSelected[index] = value ?? false;
+                                _isSelected[index] =
+                                    value ?? false;
                               });
                             }
-                                : null, // Disable if In Stock is null
+                                : null,
                           ),
                         ],
                       ),
@@ -412,6 +374,36 @@ class _StockOrderPageState extends State<StockOrderPage> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildInputField(String label,
+      TextEditingController controller, Color color, Function(String) onChange) {
+    return Column(
+      children: [
+        Text(label,
+            style: TextStyle(
+                color: color, fontSize: 12, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 4),
+        Container(
+          width: 48,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.grey),
+          ),
+          child: TextField(
+            controller: controller,
+            keyboardType: TextInputType.number,
+            textAlign: TextAlign.center,
+            decoration: const InputDecoration(
+              border: InputBorder.none,
+              contentPadding: EdgeInsets.symmetric(vertical: 8),
+            ),
+            onChanged: onChange,
+          ),
+        ),
+      ],
     );
   }
 }

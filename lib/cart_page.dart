@@ -3,12 +3,11 @@ import 'package:provider/provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:blackforest_app/common_scaffold.dart';
-import 'package:blackforest_app/categories_page.dart'; // Import for navigation
+import 'package:blackforest_app/categories_page.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:esc_pos_printer/esc_pos_printer.dart';
-import 'package:esc_pos_utils/esc_pos_utils.dart';
+import 'package:network_info_plus/network_info_plus.dart'; // ✅ Keep for IP detection
 
 class CartPage extends StatefulWidget {
   const CartPage({super.key});
@@ -29,47 +28,70 @@ class _CartPageState extends State<CartPage> {
     _fetchUserData();
   }
 
+  // ✅ Fetch user data + branch based on private IP
   Future<void> _fetchUserData() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
       if (token == null) return;
+
       final response = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/users/me?depth=2'),
         headers: {'Authorization': 'Bearer $token'},
       );
+
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final user = data['user'] ?? data;
         _userRole = user['role'];
+
         if (user['role'] == 'branch' && user['branch'] != null) {
-          _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
+          _branchId = (user['branch'] is Map)
+              ? user['branch']['id']
+              : user['branch'];
         } else if (user['role'] == 'waiter') {
           await _fetchWaiterBranch(token);
         }
-        setState(() {});
-        Provider.of<CartProvider>(context, listen: false).setBranchId(_branchId);
-      }
-    } catch (e) {
-      // Handle error
-    }
-  }
 
-  Future<String?> _fetchDeviceIp() async {
-    try {
-      final ipResponse = await http.get(Uri.parse('https://api.ipify.org?format=json')).timeout(const Duration(seconds: 10));
-      if (ipResponse.statusCode == 200) {
-        final ipData = jsonDecode(ipResponse.body);
-        return ipData['ip']?.toString().trim();
+        setState(() {});
+        Provider.of<CartProvider>(context, listen: false)
+            .setBranchId(_branchId);
       }
     } catch (e) {
       // Handle silently
     }
-    return null;
   }
 
-  Future<void> _fetchWaiterBranch(String? token) async {
-    if (token == null) return;
+  // ✅ Private IP fetching
+  Future<String?> _fetchDeviceIp() async {
+    try {
+      final info = NetworkInfo();
+      final ip = await info.getWifiIP();
+      return ip?.trim();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  int _ipToInt(String ip) {
+    final parts = ip.split('.').map(int.parse).toList();
+    return (parts[0] << 24) |
+    (parts[1] << 16) |
+    (parts[2] << 8) |
+    parts[3];
+  }
+
+  bool _isIpInRange(String deviceIp, String range) {
+    final parts = range.split('-');
+    if (parts.length != 2) return false;
+    final startIp = _ipToInt(parts[0].trim());
+    final endIp = _ipToInt(parts[1].trim());
+    final device = _ipToInt(deviceIp);
+    return device >= startIp && device <= endIp;
+  }
+
+  // ✅ Updated waiter branch detection using local IP + range
+  Future<void> _fetchWaiterBranch(String token) async {
     String? deviceIp = await _fetchDeviceIp();
     if (deviceIp == null) return;
 
@@ -78,14 +100,18 @@ class _CartPageState extends State<CartPage> {
         Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
+
       if (allBranchesResponse.statusCode == 200) {
         final branchesData = jsonDecode(allBranchesResponse.body);
         if (branchesData['docs'] != null && branchesData['docs'] is List) {
           for (var branch in branchesData['docs']) {
-            String? bIp = branch['ipAddress']?.toString().trim();
-            if (bIp == deviceIp) {
-              _branchId = branch['id'];
-              break; // Use the first matching branch
+            String? bIpRange = branch['ipAddress']?.toString().trim();
+            if (bIpRange != null) {
+              if (bIpRange == deviceIp ||
+                  _isIpInRange(deviceIp, bIpRange)) {
+                _branchId = branch['id'];
+                break;
+              }
             }
           }
         }
@@ -95,6 +121,7 @@ class _CartPageState extends State<CartPage> {
     }
   }
 
+  // ✅ Product Scan Handler
   Future<void> _handleScan(String scanResult) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -105,44 +132,53 @@ class _CartPageState extends State<CartPage> {
         );
         return;
       }
-      // Fetch product by UPC globally
+
       final response = await http.get(
-        Uri.parse('https://admin.theblackforestcakes.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=1'),
+        Uri.parse(
+            'https://admin.theblackforestcakes.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
+
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final List<dynamic> products = data['docs'] ?? [];
         if (products.isNotEmpty) {
           final product = products[0];
-          final cartProvider = Provider.of<CartProvider>(context, listen: false);
-          // Get branch-specific price if available
-          double price = product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
+          final cartProvider =
+          Provider.of<CartProvider>(context, listen: false);
+
+          double price =
+              product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
+
           if (_branchId != null && product['branchOverrides'] != null) {
             for (var override in product['branchOverrides']) {
               var branch = override['branch'];
-              String branchOid = branch is Map ? branch[r'$oid'] ?? branch['id'] ?? '' : branch ?? '';
+              String branchOid = branch is Map
+                  ? branch[r'$oid'] ?? branch['id'] ?? ''
+                  : branch ?? '';
               if (branchOid == _branchId) {
                 price = override['price']?.toDouble() ?? price;
                 break;
               }
             }
           }
-          final item = CartItem.fromProduct(product, 1, branchPrice: price);
+
+          final item =
+          CartItem.fromProduct(product, 1, branchPrice: price);
           cartProvider.addOrUpdateItem(item);
-          final newQty = cartProvider.cartItems.firstWhere((i) => i.id == item.id).quantity;
+          final newQty = cartProvider.cartItems
+              .firstWhere((i) => i.id == item.id)
+              .quantity;
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('${product['name']} added/updated (Qty: $newQty)')),
+            SnackBar(
+                content:
+                Text('${product['name']} added/updated (Qty: $newQty)')),
           );
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Product not found')),
           );
         }
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to fetch product: ${response.statusCode}')),
-        );
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -151,6 +187,7 @@ class _CartPageState extends State<CartPage> {
     }
   }
 
+  // ✅ Submit Billing (Printer Removed)
   Future<void> _submitBilling() async {
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
     if (cartProvider.cartItems.isEmpty) {
@@ -181,7 +218,8 @@ class _CartPageState extends State<CartPage> {
                 children: [
                   TextField(
                     controller: nameController,
-                    decoration: const InputDecoration(labelText: 'Customer Name'),
+                    decoration:
+                    const InputDecoration(labelText: 'Customer Name'),
                   ),
                   TextField(
                     controller: phoneController,
@@ -209,28 +247,25 @@ class _CartPageState extends State<CartPage> {
       );
       if (customerDetails == null) return;
     } else {
-      customerDetails = {}; // Empty if not added
+      customerDetails = {};
     }
 
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
-      if (token == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No token found. Please login again.')),
-        );
-        return;
-      }
+      if (token == null) return;
 
       final billingData = {
-        'items': cartProvider.cartItems.map((item) => ({
+        'items': cartProvider.cartItems
+            .map((item) => ({
           'product': item.id,
           'name': item.name,
           'quantity': item.quantity,
           'unitPrice': item.price,
           'subtotal': item.price * item.quantity,
-          'branchOverride': _branchId != null, // Flag if branch-specific (assume true if _branchId set)
-        })).toList(),
+          'branchOverride': _branchId != null,
+        }))
+            .toList(),
         'totalAmount': cartProvider.total,
         'branch': _branchId,
         'customerDetails': {
@@ -252,9 +287,8 @@ class _CartPageState extends State<CartPage> {
       );
 
       if (response.statusCode == 201) {
-        final billingResponse = jsonDecode(response.body);
-        await _printReceipt(billingResponse); // Print after submission
-        cartProvider.clearCart(); // Clear cart on success
+        // 🧾 Removed printing; now only clear cart and navigate
+        cartProvider.clearCart();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Billing submitted successfully')),
         );
@@ -264,56 +298,14 @@ class _CartPageState extends State<CartPage> {
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to submit billing: ${response.statusCode}')),
+          SnackBar(
+              content:
+              Text('Failed to submit billing: ${response.statusCode}')),
         );
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $e')),
-      );
-    }
-  }
-
-  Future<void> _printReceipt(Map<String, dynamic> billing) async {
-    final prefs = await SharedPreferences.getInstance();
-    final printerIp = prefs.getString('printerIp'); // Stored during login
-    if (printerIp == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No printer configured')),
-      );
-      return;
-    }
-
-    final PaperSize paper = PaperSize.mm80;
-    final profile = await CapabilityProfile.load(name: 'default');
-    final printer = NetworkPrinter(paper, profile);
-    PosPrintResult res = await printer.connect(printerIp, port: 9100);
-    if (res == PosPrintResult.success) {
-      printer.text('Black Forest Cakes', styles: PosStyles(align: PosAlign.center, bold: true));
-      printer.text('Invoice #: ${billing['invoiceNumber']}', styles: PosStyles(align: PosAlign.center));
-      printer.text('Date: ${DateTime.now().toString()}', styles: PosStyles(align: PosAlign.center));
-      printer.hr();
-      for (var item in billing['items']) {
-        printer.row([
-          PosColumn(text: item['name'], width: 6),
-          PosColumn(text: 'x${item['quantity']}', width: 2),
-          PosColumn(text: '₹${item['subtotal']}', width: 4),
-        ]);
-      }
-      printer.hr();
-      printer.row([
-        PosColumn(text: 'Total', width: 8, styles: PosStyles(bold: true)),
-        PosColumn(text: '₹${billing['totalAmount']}', width: 4, styles: PosStyles(bold: true)),
-      ]);
-      printer.text('Payment: ${billing['paymentMethod']}', styles: PosStyles(align: PosAlign.center));
-      printer.text('Thank You!', styles: PosStyles(align: PosAlign.center));
-      printer.feed(2);
-      printer.cut();
-      printer.disconnect();
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Printer connection failed: $res')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Error: $e')));
     }
   }
 
@@ -322,7 +314,7 @@ class _CartPageState extends State<CartPage> {
     return CommonScaffold(
       title: 'Cart',
       pageType: PageType.cart,
-      onScanCallback: _handleScan, // Add this for scanning from CartPage
+      onScanCallback: _handleScan,
       body: Consumer<CartProvider>(
         builder: (context, cartProvider, child) {
           if (cartProvider.cartItems.isEmpty) {
@@ -330,16 +322,19 @@ class _CartPageState extends State<CartPage> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.shopping_cart_outlined, size: 100, color: Colors.grey),
+                  Icon(Icons.shopping_cart_outlined,
+                      size: 100, color: Colors.grey),
                   SizedBox(height: 20),
                   Text(
                     'Your cart is empty. Add products from categories!',
-                    style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18),
+                    style:
+                    TextStyle(color: Color(0xFF4A4A4A), fontSize: 18),
                   ),
                 ],
               ),
             );
           }
+
           return Column(
             children: [
               Expanded(
@@ -350,7 +345,8 @@ class _CartPageState extends State<CartPage> {
                     final item = cartProvider.cartItems[index];
                     return Card(
                       elevation: 2,
-                      margin: const EdgeInsets.symmetric(vertical: 5),
+                      margin:
+                      const EdgeInsets.symmetric(vertical: 5),
                       child: ListTile(
                         leading: item.imageUrl != null
                             ? CachedNetworkImage(
@@ -358,27 +354,41 @@ class _CartPageState extends State<CartPage> {
                           width: 60,
                           height: 60,
                           fit: BoxFit.cover,
-                          placeholder: (context, url) => const CircularProgressIndicator(),
-                          errorWidget: (context, url, error) => const Icon(Icons.error),
+                          placeholder: (context, url) =>
+                          const CircularProgressIndicator(),
+                          errorWidget: (context, url, error) =>
+                          const Icon(Icons.error),
                         )
-                            : const Icon(Icons.image_not_supported, size: 60),
+                            : const Icon(Icons.image_not_supported,
+                            size: 60),
                         title: Text(item.name),
-                        subtitle: Text('₹${item.price.toStringAsFixed(2)} x ${item.quantity} = ₹${(item.price * item.quantity).toStringAsFixed(2)}'),
+                        subtitle: Text(
+                            '₹${item.price.toStringAsFixed(2)} x ${item.quantity} = ₹${(item.price * item.quantity).toStringAsFixed(2)}'),
                         trailing: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             IconButton(
-                              icon: const Icon(Icons.remove_circle_outline),
-                              onPressed: () => cartProvider.updateQuantity(item.id, item.quantity - 1),
+                              icon: const Icon(
+                                  Icons.remove_circle_outline),
+                              onPressed: () =>
+                                  cartProvider.updateQuantity(
+                                      item.id, item.quantity - 1),
                             ),
-                            Text('${item.quantity}', style: const TextStyle(fontSize: 16)),
+                            Text('${item.quantity}',
+                                style: const TextStyle(fontSize: 16)),
                             IconButton(
-                              icon: const Icon(Icons.add_circle_outline),
-                              onPressed: () => cartProvider.updateQuantity(item.id, item.quantity + 1),
+                              icon: const Icon(
+                                  Icons.add_circle_outline),
+                              onPressed: () =>
+                                  cartProvider.updateQuantity(
+                                      item.id, item.quantity + 1),
                             ),
                             IconButton(
-                              icon: const Icon(Icons.delete_outline, color: Colors.red),
-                              onPressed: () => cartProvider.removeItem(item.id),
+                              icon: const Icon(
+                                  Icons.delete_outline,
+                                  color: Colors.red),
+                              onPressed: () =>
+                                  cartProvider.removeItem(item.id),
                             ),
                           ],
                         ),
@@ -391,46 +401,40 @@ class _CartPageState extends State<CartPage> {
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.2), blurRadius: 5)],
+                  boxShadow: [
+                    BoxShadow(
+                        color: Colors.grey.withOpacity(0.2),
+                        blurRadius: 5)
+                  ],
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                      mainAxisAlignment:
+                      MainAxisAlignment.spaceEvenly,
                       children: [
-                        Expanded(
-                          flex: 1,
-                          child: ElevatedButton(
-                            onPressed: () => setState(() => _selectedPaymentMethod = 'cash'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _selectedPaymentMethod == 'cash' ? Colors.green : Colors.grey,
+                        for (final method in ['cash', 'upi', 'card'])
+                          Expanded(
+                            flex: 1,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 4),
+                              child: ElevatedButton(
+                                onPressed: () => setState(() =>
+                                _selectedPaymentMethod =
+                                    method),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor:
+                                  _selectedPaymentMethod ==
+                                      method
+                                      ? Colors.green
+                                      : Colors.grey,
+                                ),
+                                child: Text(method.toUpperCase()),
+                              ),
                             ),
-                            child: const Text('Cash'),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          flex: 1,
-                          child: ElevatedButton(
-                            onPressed: () => setState(() => _selectedPaymentMethod = 'upi'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _selectedPaymentMethod == 'upi' ? Colors.green : Colors.grey,
-                            ),
-                            child: const Text('UPI'),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          flex: 1,
-                          child: ElevatedButton(
-                            onPressed: () => setState(() => _selectedPaymentMethod = 'card'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _selectedPaymentMethod == 'card' ? Colors.green : Colors.grey,
-                            ),
-                            child: const Text('Card'),
-                          ),
-                        ),
                       ],
                     ),
                     const SizedBox(height: 16),
@@ -440,19 +444,29 @@ class _CartPageState extends State<CartPage> {
                           value: _addCustomerDetails,
                           onChanged: (value) {
                             setState(() {
-                              _addCustomerDetails = value ?? false;
+                              _addCustomerDetails =
+                                  value ?? false;
                             });
                           },
                         ),
                         Text(
                           'Total: ₹${cartProvider.total.toStringAsFixed(2)}',
-                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black),
+                          style: const TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black),
                         ),
                         const Spacer(),
                         ElevatedButton(
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-                          onPressed: cartProvider.cartItems.isNotEmpty ? _submitBilling : null,
-                          child: const Text('Proceed to Billing'),
+                          style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                              foregroundColor: Colors.white),
+                          onPressed: cartProvider
+                              .cartItems.isNotEmpty
+                              ? _submitBilling
+                              : null,
+                          child:
+                          const Text('Proceed to Billing'),
                         ),
                       ],
                     ),

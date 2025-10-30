@@ -9,9 +9,8 @@ import 'package:blackforest_app/home.dart'; // Import HomePage
 import 'package:blackforest_app/cake.dart'; // Import CakePage
 import 'package:blackforest_app/cart_page.dart'; // Import CartPage
 import 'package:blackforest_app/cart_provider.dart'; // Import CartProvider
-import 'package:blackforest_app/table_page.dart'; // Import TablePage
 
-enum PageType { home, billing, pastry, cart, stock, cake, barcode, table } // Added barcode and table to enum
+enum PageType { home, billing, pastry, cart, stock, cake } // Added cake to enum
 
 class CommonScaffold extends StatefulWidget {
   final String title; // Custom title for the page
@@ -81,6 +80,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
       _showMessage('Scanner not supported on this platform');
       return;
     }
+
     // Show full-screen dialog for scanner
     final result = await showGeneralDialog<String>(
       context: context,
@@ -91,6 +91,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
         return FadeTransition(opacity: anim1, child: child);
       },
     );
+
     if (result != null) {
       if (widget.onScanCallback != null) {
         widget.onScanCallback!(result); // Call page-specific handler
@@ -113,8 +114,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      // Detect taps to reset timer
+    return GestureDetector( // Detect taps to reset timer
       onTap: _resetTimer,
       child: Scaffold(
         appBar: AppBar(
@@ -122,6 +122,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
           backgroundColor: Colors.black,
           iconTheme: const IconThemeData(color: Colors.white), // White menu icon
           actions: [
+            IconButton(
+              icon: const Icon(Icons.qr_code_scanner_outlined, color: Colors.white), // Scan icon, white, line style
+              onPressed: _scanBarcode,
+            ),
             Consumer<CartProvider>( // Wrap cart icon with Consumer for badge
               builder: (context, cartProvider, child) {
                 final int itemCount = cartProvider.cartItems.fold(0, (sum, item) => sum + item.quantity); // Total quantity
@@ -319,56 +323,6 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                 GestureDetector(
                   onTap: () {
                     _resetTimer(); // Reset timer on tap
-                    _scanBarcode();
-                  },
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.qr_code_scanner_outlined,
-                        color: widget.pageType == PageType.barcode ? Colors.blue : Colors.black,
-                        size: 32,
-                      ),
-                      Text(
-                        'Barcode',
-                        style: TextStyle(
-                          color: widget.pageType == PageType.barcode ? Colors.blue : Colors.black,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                GestureDetector(
-                  onTap: () {
-                    _resetTimer(); // Reset timer on tap
-                    Navigator.pushAndRemoveUntil(
-                      context,
-                      _createRoute(const TablePage()),
-                          (route) => false, // Clear stack
-                    );
-                  },
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.table_restaurant_outlined,
-                        color: widget.pageType == PageType.table ? Colors.blue : Colors.black,
-                        size: 32,
-                      ),
-                      Text(
-                        'Table',
-                        style: TextStyle(
-                          color: widget.pageType == PageType.table ? Colors.blue : Colors.black,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                GestureDetector(
-                  onTap: () {
-                    _resetTimer(); // Reset timer on tap
                     Navigator.pushAndRemoveUntil(
                       context,
                       _createRoute(const CakePage()),
@@ -387,6 +341,60 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                         'Cake',
                         style: TextStyle(
                           color: widget.pageType == PageType.cake ? Colors.blue : Colors.black,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () {
+                    _resetTimer(); // Reset timer on tap
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      _createRoute(const CategoriesPage(isStockFilter: true)),
+                          (route) => false, // Clear stack
+                    );
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.inventory_outlined,
+                        color: widget.pageType == PageType.stock ? Colors.blue : Colors.black,
+                        size: 32,
+                      ),
+                      Text(
+                        'Return',
+                        style: TextStyle(
+                          color: widget.pageType == PageType.stock ? Colors.blue : Colors.black,
+                          fontSize: 10,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                GestureDetector(
+                  onTap: () {
+                    _resetTimer(); // Reset timer on tap
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      _createRoute(const CategoriesPage(isPastryFilter: true)),
+                          (route) => false, // Clear stack
+                    );
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.description_outlined,
+                        color: widget.pageType == PageType.pastry ? Colors.blue : Colors.black,
+                        size: 32,
+                      ),
+                      Text(
+                        'Stock',
+                        style: TextStyle(
+                          color: widget.pageType == PageType.pastry ? Colors.blue : Colors.black,
                           fontSize: 10,
                         ),
                       ),

@@ -9,6 +9,7 @@ import 'package:blackforest_app/return_order_page.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
 import 'package:blackforest_app/cart_provider.dart';
+import 'package:network_info_plus/network_info_plus.dart';
 
 class CategoriesPage extends StatefulWidget {
   final bool isPastryFilter;
@@ -65,15 +66,26 @@ class _CategoriesPageState extends State<CategoriesPage> {
 
   Future<String?> _fetchDeviceIp() async {
     try {
-      final ipResponse = await http.get(Uri.parse('https://api.ipify.org?format=json')).timeout(const Duration(seconds: 10));
-      if (ipResponse.statusCode == 200) {
-        final ipData = jsonDecode(ipResponse.body);
-        return ipData['ip']?.toString().trim();
-      }
+      final info = NetworkInfo();
+      final ip = await info.getWifiIP();
+      return ip?.trim();
     } catch (e) {
-      // Handle silently
+      return null;
     }
-    return null;
+  }
+
+  int _ipToInt(String ip) {
+    final parts = ip.split('.').map(int.parse).toList();
+    return (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
+  }
+
+  bool _isIpInRange(String deviceIp, String range) {
+    final parts = range.split('-');
+    if (parts.length != 2) return false;
+    final startIp = _ipToInt(parts[0].trim());
+    final endIp = _ipToInt(parts[1].trim());
+    final device = _ipToInt(deviceIp);
+    return device >= startIp && device <= endIp;
   }
 
   Future<List<String>> _fetchMatchingCompanyIds(String token, String? deviceIp) async {
@@ -90,8 +102,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
         if (branchesData['docs'] != null && branchesData['docs'] is List) {
           Set<String> uniqueCompanyIds = {};
           for (var branch in branchesData['docs']) {
-            String? bIp = branch['ipAddress']?.toString().trim();
-            if (bIp != null && bIp == deviceIp) {
+            String? bIpRange = branch['ipAddress']?.toString().trim();
+            if (bIpRange != null && _isIpInRange(deviceIp, bIpRange)) {
               var company = branch['company'];
               String? companyId = company is Map ? company['id'] : company?.toString();
               if (companyId != null) {
@@ -205,7 +217,6 @@ class _CategoriesPageState extends State<CategoriesPage> {
         );
         return;
       }
-
       // Fetch product by UPC globally
       final response = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=1'),
@@ -218,7 +229,6 @@ class _CategoriesPageState extends State<CategoriesPage> {
         if (products.isNotEmpty) {
           final product = products[0];
           final cartProvider = Provider.of<CartProvider>(context, listen: false);
-
           // Get branch-specific price if available (similar to ProductsPage)
           double price = product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
           String? _branchId; // Fetch branchId if needed, assume from user data
@@ -235,10 +245,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
               }
             }
           }
-
           final item = CartItem.fromProduct(product, 1, branchPrice: price);
           cartProvider.addOrUpdateItem(item);
-
           final newQty = cartProvider.cartItems.firstWhere((i) => i.id == item.id).quantity;
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('${product['name']} added/updated (Qty: $newQty)')),
