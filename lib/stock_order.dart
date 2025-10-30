@@ -75,13 +75,11 @@ class _StockOrderPageState extends State<StockOrderPage> {
   Future<void> _fetchWaiterBranch(String token) async {
     String? deviceIp = await _fetchDeviceIp();
     if (deviceIp == null) return;
-
     try {
       final allBranchesResponse = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
-
       if (allBranchesResponse.statusCode == 200) {
         final branchesData = jsonDecode(allBranchesResponse.body);
         if (branchesData['docs'] != null && branchesData['docs'] is List) {
@@ -109,18 +107,14 @@ class _StockOrderPageState extends State<StockOrderPage> {
         Uri.parse('https://admin.theblackforestcakes.com/api/users/me?depth=2'),
         headers: {'Authorization': 'Bearer $token'},
       );
-
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final user = data['user'] ?? data;
-
         setState(() {
           _userRole = user['role'];
         });
-
         if (user['role'] == 'branch' && user['branch'] != null) {
-          _branchId =
-          (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
+          _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
         } else if (user['role'] == 'waiter') {
           await _fetchWaiterBranch(token);
         }
@@ -135,29 +129,21 @@ class _StockOrderPageState extends State<StockOrderPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
-
       if (token == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('No token found. Please login again.')),
         );
         return;
       }
-
       if (_branchId == null && _userRole == null) {
         await _fetchUserData(token);
       }
-
-      String url =
-          'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
-      if (_branchId != null && _userRole != 'superadmin') {
-        url += '&where[branchOverrides.branch][equals]=$_branchId';
-      }
-
+      // Updated: Fetch all products in the category without restricting to branch overrides
+      String url = 'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
       final response = await http.get(
         Uri.parse(url),
         headers: {'Authorization': 'Bearer $token'},
       );
-
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         setState(() {
@@ -174,8 +160,8 @@ class _StockOrderPageState extends State<StockOrderPage> {
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text(
-                  'Failed to fetch products: ${response.statusCode}')),
+            content: Text('Failed to fetch products: ${response.statusCode}'),
+          ),
         );
       }
     } catch (e) {
@@ -204,12 +190,12 @@ class _StockOrderPageState extends State<StockOrderPage> {
           _inStockQuantities[index] = (_inStockQuantities[index] ?? 0) + 1;
           _isSelected[index] = true;
           _qtyControllers[index]?.text = _quantities[index].toString();
-          _inStockControllers[index]?.text =
-              _inStockQuantities[index].toString();
+          _inStockControllers[index]?.text = _inStockQuantities[index].toString();
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-              content: Text('Product selected from scan: ${product['name']}')),
+            content: Text('Product selected from scan: ${product['name']}'),
+          ),
         );
         return;
       }
@@ -236,19 +222,18 @@ class _StockOrderPageState extends State<StockOrderPage> {
           : Column(
         children: [
           Padding(
-            padding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
                 hintText: 'Search products...',
-                prefixIcon:
-                const Icon(Icons.search, color: Colors.grey),
+                prefixIcon: const Icon(Icons.search, color: Colors.grey),
                 filled: true,
                 fillColor: Colors.white,
                 border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide.none),
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide.none,
+                ),
               ),
             ),
           ),
@@ -256,24 +241,18 @@ class _StockOrderPageState extends State<StockOrderPage> {
             child: _filteredProducts.isEmpty
                 ? const Center(
                 child: Text('No products found',
-                    style: TextStyle(
-                        color: Color(0xFF4A4A4A), fontSize: 18)))
+                    style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18)))
                 : ListView.builder(
               padding: const EdgeInsets.all(16),
               itemCount: _filteredProducts.length,
               itemBuilder: (context, index) {
                 final product = _filteredProducts[index];
-                dynamic priceDetails =
-                product['defaultPriceDetails'];
-                if (_branchId != null &&
-                    product['branchOverrides'] != null) {
-                  for (var override
-                  in product['branchOverrides']) {
+                dynamic priceDetails = product['defaultPriceDetails'];
+                if (_branchId != null && product['branchOverrides'] != null) {
+                  for (var override in product['branchOverrides']) {
                     var branch = override['branch'];
                     String branchOid = branch is Map
-                        ? branch[r'$oid'] ??
-                        branch['id'] ??
-                        ''
+                        ? branch[r'$oid'] ?? branch['id'] ?? ''
                         : branch ?? '';
                     if (branchOid == _branchId) {
                       priceDetails = override;
@@ -281,14 +260,11 @@ class _StockOrderPageState extends State<StockOrderPage> {
                     }
                   }
                 }
-                final price = priceDetails != null
-                    ? '₹${priceDetails['price'] ?? 0}'
-                    : '₹0';
+                final price =
+                priceDetails != null ? '₹${priceDetails['price'] ?? 0}' : '₹0';
                 final unit = priceDetails?['unit'] ?? 'pcs';
-
                 return Container(
-                  margin:
-                  const EdgeInsets.only(bottom: 12),
+                  margin: const EdgeInsets.only(bottom: 12),
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
                     color: const Color(0xFFFFF0F0),
@@ -297,14 +273,11 @@ class _StockOrderPageState extends State<StockOrderPage> {
                       color: _isProductSelected(index)
                           ? Colors.green
                           : Colors.pink.shade300,
-                      width: _isProductSelected(index)
-                          ? 4
-                          : 1,
+                      width: _isProductSelected(index) ? 4 : 1,
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color:
-                        Colors.grey.withOpacity(0.3),
+                        color: Colors.grey.withOpacity(0.3),
                         spreadRadius: 2,
                         blurRadius: 5,
                         offset: const Offset(0, 2),
@@ -312,54 +285,48 @@ class _StockOrderPageState extends State<StockOrderPage> {
                     ],
                   ),
                   child: Row(
-                    mainAxisAlignment:
-                    MainAxisAlignment.spaceBetween,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Expanded(
                         child: Column(
-                          crossAxisAlignment:
-                          CrossAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(product['name'] ?? 'Unknown',
                                 style: const TextStyle(
-                                    fontWeight:
-                                    FontWeight.bold,
-                                    fontSize: 16)),
+                                    fontWeight: FontWeight.bold, fontSize: 16)),
                             const SizedBox(height: 4),
                             Text('$price / $unit',
                                 style: const TextStyle(
-                                    fontWeight:
-                                    FontWeight.bold,
-                                    color: Colors.black54)),
+                                    fontWeight: FontWeight.bold, color: Colors.black54)),
                           ],
                         ),
                       ),
                       Row(
                         children: [
                           _buildInputField(
-                              'In Stock',
-                              _inStockControllers[index]!,
-                              Colors.red, (v) {
-                            _inStockQuantities[index] =
-                                int.tryParse(v);
-                          }),
+                            'In Stock',
+                            _inStockControllers[index]!,
+                            Colors.red,
+                                (v) {
+                              _inStockQuantities[index] = int.tryParse(v);
+                            },
+                          ),
                           const SizedBox(width: 8),
-                          _buildInputField('Qty',
-                              _qtyControllers[index]!,
-                              Colors.green, (v) {
-                                _quantities[index] =
-                                    int.tryParse(v);
-                              }),
+                          _buildInputField(
+                            'Qty',
+                            _qtyControllers[index]!,
+                            Colors.green,
+                                (v) {
+                              _quantities[index] = int.tryParse(v);
+                            },
+                          ),
                           const SizedBox(width: 8),
                           Checkbox(
                             value: _isSelected[index] ?? false,
-                            onChanged:
-                            _inStockQuantities[index] !=
-                                null
+                            onChanged: _inStockQuantities[index] != null
                                 ? (value) {
                               setState(() {
-                                _isSelected[index] =
-                                    value ?? false;
+                                _isSelected[index] = value ?? false;
                               });
                             }
                                 : null,
@@ -377,13 +344,12 @@ class _StockOrderPageState extends State<StockOrderPage> {
     );
   }
 
-  Widget _buildInputField(String label,
-      TextEditingController controller, Color color, Function(String) onChange) {
+  Widget _buildInputField(
+      String label, TextEditingController controller, Color color, Function(String) onChange) {
     return Column(
       children: [
         Text(label,
-            style: TextStyle(
-                color: color, fontSize: 12, fontWeight: FontWeight.bold)),
+            style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.bold)),
         const SizedBox(height: 4),
         Container(
           width: 48,

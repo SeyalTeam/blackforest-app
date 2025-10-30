@@ -7,7 +7,7 @@ import 'package:blackforest_app/categories_page.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:network_info_plus/network_info_plus.dart'; // ✅ Keep for IP detection
+import 'package:network_info_plus/network_info_plus.dart'; // ✅ Added
 
 class CartPage extends StatefulWidget {
   const CartPage({super.key});
@@ -34,28 +34,21 @@ class _CartPageState extends State<CartPage> {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
       if (token == null) return;
-
       final response = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/users/me?depth=2'),
         headers: {'Authorization': 'Bearer $token'},
       );
-
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final user = data['user'] ?? data;
         _userRole = user['role'];
-
         if (user['role'] == 'branch' && user['branch'] != null) {
-          _branchId = (user['branch'] is Map)
-              ? user['branch']['id']
-              : user['branch'];
+          _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
         } else if (user['role'] == 'waiter') {
           await _fetchWaiterBranch(token);
         }
-
         setState(() {});
-        Provider.of<CartProvider>(context, listen: false)
-            .setBranchId(_branchId);
+        Provider.of<CartProvider>(context, listen: false).setBranchId(_branchId);
       }
     } catch (e) {
       // Handle silently
@@ -66,7 +59,7 @@ class _CartPageState extends State<CartPage> {
   Future<String?> _fetchDeviceIp() async {
     try {
       final info = NetworkInfo();
-      final ip = await info.getWifiIP();
+      final ip = await info.getWifiIP(); // Gets private IP like 192.168.x.x
       return ip?.trim();
     } catch (e) {
       return null;
@@ -75,10 +68,7 @@ class _CartPageState extends State<CartPage> {
 
   int _ipToInt(String ip) {
     final parts = ip.split('.').map(int.parse).toList();
-    return (parts[0] << 24) |
-    (parts[1] << 16) |
-    (parts[2] << 8) |
-    parts[3];
+    return (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
   }
 
   bool _isIpInRange(String deviceIp, String range) {
@@ -94,21 +84,18 @@ class _CartPageState extends State<CartPage> {
   Future<void> _fetchWaiterBranch(String token) async {
     String? deviceIp = await _fetchDeviceIp();
     if (deviceIp == null) return;
-
     try {
       final allBranchesResponse = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
-
       if (allBranchesResponse.statusCode == 200) {
         final branchesData = jsonDecode(allBranchesResponse.body);
         if (branchesData['docs'] != null && branchesData['docs'] is List) {
           for (var branch in branchesData['docs']) {
             String? bIpRange = branch['ipAddress']?.toString().trim();
             if (bIpRange != null) {
-              if (bIpRange == deviceIp ||
-                  _isIpInRange(deviceIp, bIpRange)) {
+              if (bIpRange == deviceIp || _isIpInRange(deviceIp, bIpRange)) {
                 _branchId = branch['id'];
                 break;
               }
@@ -121,7 +108,9 @@ class _CartPageState extends State<CartPage> {
     }
   }
 
-  // ✅ Product Scan Handler
+  // ----------------------------------------
+  // ✅ Scan & Billing (printing removed)
+  // ----------------------------------------
   Future<void> _handleScan(String scanResult) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -132,47 +121,33 @@ class _CartPageState extends State<CartPage> {
         );
         return;
       }
-
       final response = await http.get(
         Uri.parse(
             'https://admin.theblackforestcakes.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
-
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final List<dynamic> products = data['docs'] ?? [];
         if (products.isNotEmpty) {
           final product = products[0];
-          final cartProvider =
-          Provider.of<CartProvider>(context, listen: false);
-
-          double price =
-              product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
-
+          final cartProvider = Provider.of<CartProvider>(context, listen: false);
+          double price = product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
           if (_branchId != null && product['branchOverrides'] != null) {
             for (var override in product['branchOverrides']) {
               var branch = override['branch'];
-              String branchOid = branch is Map
-                  ? branch[r'$oid'] ?? branch['id'] ?? ''
-                  : branch ?? '';
+              String branchOid = branch is Map ? branch[r'$oid'] ?? branch['id'] ?? '' : branch ?? '';
               if (branchOid == _branchId) {
                 price = override['price']?.toDouble() ?? price;
                 break;
               }
             }
           }
-
-          final item =
-          CartItem.fromProduct(product, 1, branchPrice: price);
+          final item = CartItem.fromProduct(product, 1, branchPrice: price);
           cartProvider.addOrUpdateItem(item);
-          final newQty = cartProvider.cartItems
-              .firstWhere((i) => i.id == item.id)
-              .quantity;
+          final newQty = cartProvider.cartItems.firstWhere((i) => i.id == item.id).quantity;
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-                content:
-                Text('${product['name']} added/updated (Qty: $newQty)')),
+            SnackBar(content: Text('${product['name']} added/updated (Qty: $newQty)')),
           );
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -187,7 +162,6 @@ class _CartPageState extends State<CartPage> {
     }
   }
 
-  // ✅ Submit Billing (Printer Removed)
   Future<void> _submitBilling() async {
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
     if (cartProvider.cartItems.isEmpty) {
@@ -202,7 +176,6 @@ class _CartPageState extends State<CartPage> {
       );
       return;
     }
-
     Map<String, dynamic>? customerDetails;
     if (_addCustomerDetails) {
       customerDetails = await showDialog<Map<String, dynamic>>(
@@ -218,8 +191,7 @@ class _CartPageState extends State<CartPage> {
                 children: [
                   TextField(
                     controller: nameController,
-                    decoration:
-                    const InputDecoration(labelText: 'Customer Name'),
+                    decoration: const InputDecoration(labelText: 'Customer Name'),
                   ),
                   TextField(
                     controller: phoneController,
@@ -249,12 +221,10 @@ class _CartPageState extends State<CartPage> {
     } else {
       customerDetails = {};
     }
-
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
       if (token == null) return;
-
       final billingData = {
         'items': cartProvider.cartItems
             .map((item) => ({
@@ -276,7 +246,6 @@ class _CartPageState extends State<CartPage> {
         'notes': '',
         'status': 'completed',
       };
-
       final response = await http.post(
         Uri.parse('https://admin.theblackforestcakes.com/api/billings'),
         headers: {
@@ -285,9 +254,7 @@ class _CartPageState extends State<CartPage> {
         },
         body: jsonEncode(billingData),
       );
-
       if (response.statusCode == 201) {
-        // 🧾 Removed printing; now only clear cart and navigate
         cartProvider.clearCart();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Billing submitted successfully')),
@@ -298,14 +265,11 @@ class _CartPageState extends State<CartPage> {
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content:
-              Text('Failed to submit billing: ${response.statusCode}')),
+          SnackBar(content: Text('Failed to submit billing: ${response.statusCode}')),
         );
       }
     } catch (e) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Error: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
     }
   }
 
@@ -322,19 +286,16 @@ class _CartPageState extends State<CartPage> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.shopping_cart_outlined,
-                      size: 100, color: Colors.grey),
+                  Icon(Icons.shopping_cart_outlined, size: 100, color: Colors.grey),
                   SizedBox(height: 20),
                   Text(
                     'Your cart is empty. Add products from categories!',
-                    style:
-                    TextStyle(color: Color(0xFF4A4A4A), fontSize: 18),
+                    style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18),
                   ),
                 ],
               ),
             );
           }
-
           return Column(
             children: [
               Expanded(
@@ -345,8 +306,7 @@ class _CartPageState extends State<CartPage> {
                     final item = cartProvider.cartItems[index];
                     return Card(
                       elevation: 2,
-                      margin:
-                      const EdgeInsets.symmetric(vertical: 5),
+                      margin: const EdgeInsets.symmetric(vertical: 5),
                       child: ListTile(
                         leading: item.imageUrl != null
                             ? CachedNetworkImage(
@@ -354,13 +314,10 @@ class _CartPageState extends State<CartPage> {
                           width: 60,
                           height: 60,
                           fit: BoxFit.cover,
-                          placeholder: (context, url) =>
-                          const CircularProgressIndicator(),
-                          errorWidget: (context, url, error) =>
-                          const Icon(Icons.error),
+                          placeholder: (context, url) => const CircularProgressIndicator(),
+                          errorWidget: (context, url, error) => const Icon(Icons.error),
                         )
-                            : const Icon(Icons.image_not_supported,
-                            size: 60),
+                            : const Icon(Icons.image_not_supported, size: 60),
                         title: Text(item.name),
                         subtitle: Text(
                             '₹${item.price.toStringAsFixed(2)} x ${item.quantity} = ₹${(item.price * item.quantity).toStringAsFixed(2)}'),
@@ -368,27 +325,17 @@ class _CartPageState extends State<CartPage> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             IconButton(
-                              icon: const Icon(
-                                  Icons.remove_circle_outline),
-                              onPressed: () =>
-                                  cartProvider.updateQuantity(
-                                      item.id, item.quantity - 1),
+                              icon: const Icon(Icons.remove_circle_outline),
+                              onPressed: () => cartProvider.updateQuantity(item.id, item.quantity - 1),
                             ),
-                            Text('${item.quantity}',
-                                style: const TextStyle(fontSize: 16)),
+                            Text('${item.quantity}', style: const TextStyle(fontSize: 16)),
                             IconButton(
-                              icon: const Icon(
-                                  Icons.add_circle_outline),
-                              onPressed: () =>
-                                  cartProvider.updateQuantity(
-                                      item.id, item.quantity + 1),
+                              icon: const Icon(Icons.add_circle_outline),
+                              onPressed: () => cartProvider.updateQuantity(item.id, item.quantity + 1),
                             ),
                             IconButton(
-                              icon: const Icon(
-                                  Icons.delete_outline,
-                                  color: Colors.red),
-                              onPressed: () =>
-                                  cartProvider.removeItem(item.id),
+                              icon: const Icon(Icons.delete_outline, color: Colors.red),
+                              onPressed: () => cartProvider.removeItem(item.id),
                             ),
                           ],
                         ),
@@ -401,35 +348,23 @@ class _CartPageState extends State<CartPage> {
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                        color: Colors.grey.withOpacity(0.2),
-                        blurRadius: 5)
-                  ],
+                  boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.2), blurRadius: 5)],
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Row(
-                      mainAxisAlignment:
-                      MainAxisAlignment.spaceEvenly,
+                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
                         for (final method in ['cash', 'upi', 'card'])
                           Expanded(
                             flex: 1,
                             child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 4),
+                              padding: const EdgeInsets.symmetric(horizontal: 4),
                               child: ElevatedButton(
-                                onPressed: () => setState(() =>
-                                _selectedPaymentMethod =
-                                    method),
+                                onPressed: () => setState(() => _selectedPaymentMethod = method),
                                 style: ElevatedButton.styleFrom(
-                                  backgroundColor:
-                                  _selectedPaymentMethod ==
-                                      method
-                                      ? Colors.green
-                                      : Colors.grey,
+                                  backgroundColor: _selectedPaymentMethod == method ? Colors.green : Colors.grey,
                                 ),
                                 child: Text(method.toUpperCase()),
                               ),
@@ -444,29 +379,19 @@ class _CartPageState extends State<CartPage> {
                           value: _addCustomerDetails,
                           onChanged: (value) {
                             setState(() {
-                              _addCustomerDetails =
-                                  value ?? false;
+                              _addCustomerDetails = value ?? false;
                             });
                           },
                         ),
                         Text(
                           'Total: ₹${cartProvider.total.toStringAsFixed(2)}',
-                          style: const TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black),
+                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black),
                         ),
                         const Spacer(),
                         ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.red,
-                              foregroundColor: Colors.white),
-                          onPressed: cartProvider
-                              .cartItems.isNotEmpty
-                              ? _submitBilling
-                              : null,
-                          child:
-                          const Text('Proceed to Billing'),
+                          style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                          onPressed: cartProvider.cartItems.isNotEmpty ? _submitBilling : null,
+                          child: const Text('Proceed to Billing'),
                         ),
                       ],
                     ),

@@ -16,6 +16,8 @@ dependencies:
   provider: ^6.1.2
   mobile_scanner: ^5.1.1
   cached_network_image: ^3.4.1
+  esc_pos_printer: ^4.1.0
+  esc_pos_utils: ^1.1.0
   network_info_plus: ^4.0.2
 
 
@@ -27,6 +29,5 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-
 
 

@@ -81,16 +81,12 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final user = data['user'] ?? data;
-
         setState(() {
           _userRole = user['role'];
         });
-
         if (user['role'] == 'branch' && user['branch'] != null) {
           setState(() {
-            _branchId = (user['branch'] is Map)
-                ? user['branch']['id']
-                : user['branch'];
+            _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
           });
         } else if (user['role'] == 'waiter') {
           await _fetchWaiterBranch(token);
@@ -105,21 +101,17 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
   Future<void> _fetchWaiterBranch(String token) async {
     String? deviceIp = await _fetchDeviceIp();
     if (deviceIp == null) return;
-
     try {
       final response = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
-
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final branches = data['docs'] ?? [];
-
         for (var branch in branches) {
           String? branchIp = branch['ipAddress']?.toString().trim();
           if (branchIp == null) continue;
-
           // Match exact or IP range
           if (branchIp == deviceIp || _isIpInRange(deviceIp, branchIp)) {
             setState(() {
@@ -146,24 +138,16 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
         );
         return;
       }
-
       // Fetch user data if not already fetched
       if (_branchId == null && _userRole == null) {
         await _fetchUserData(token);
       }
-
-      String url =
-          'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
-
-      if (_branchId != null && _userRole != 'superadmin') {
-        url += '&where[branchOverrides.branch][equals]=$_branchId';
-      }
-
+      // Updated: Fetch all products in the category without restricting to branch overrides
+      String url = 'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
       final response = await http.get(
         Uri.parse(url),
         headers: {'Authorization': 'Bearer $token'},
       );
-
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         setState(() {
@@ -185,7 +169,6 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
         const SnackBar(content: Text('Network error: Check your internet')),
       );
     }
-
     setState(() => _isLoading = false);
   }
 
@@ -277,7 +260,6 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
               itemCount: _filteredProducts.length,
               itemBuilder: (context, index) {
                 final product = _filteredProducts[index];
-
                 dynamic priceDetails = product['defaultPriceDetails'];
                 if (_branchId != null && product['branchOverrides'] != null) {
                   for (var override in product['branchOverrides']) {
@@ -291,14 +273,10 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
                     }
                   }
                 }
-
-                final price = priceDetails != null
-                    ? '₹${priceDetails['price'] ?? 0}'
-                    : '₹0';
-                final unit = priceDetails != null
-                    ? priceDetails['unit'] ?? 'pcs'
-                    : 'pcs';
-
+                final price =
+                priceDetails != null ? '₹${priceDetails['price'] ?? 0}' : '₹0';
+                final unit =
+                priceDetails != null ? priceDetails['unit'] ?? 'pcs' : 'pcs';
                 return Container(
                   margin: const EdgeInsets.only(bottom: 12),
                   padding: const EdgeInsets.all(10),
@@ -367,8 +345,7 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
                                   ),
                                   onChanged: (value) {
                                     setState(() {
-                                      _quantities[index] =
-                                          int.tryParse(value);
+                                      _quantities[index] = int.tryParse(value);
                                     });
                                   },
                                 ),
