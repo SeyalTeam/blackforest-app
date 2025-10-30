@@ -109,7 +109,7 @@ class _CartPageState extends State<CartPage> {
   }
 
   // ----------------------------------------
-  // ✅ Scan & Billing (printing removed)
+  // ✅ Scan, Billing (printing removed)
   // ----------------------------------------
   Future<void> _handleScan(String scanResult) async {
     try {

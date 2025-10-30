@@ -1,9 +1,12 @@
+// The updated ReturnOrderPage.dart
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:blackforest_app/common_scaffold.dart';
+import 'package:provider/provider.dart';
+import 'package:blackforest_app/return_provider.dart'; // Add this import
 
 class ReturnOrderPage extends StatefulWidget {
   final String categoryId;
@@ -22,9 +25,7 @@ class ReturnOrderPage extends StatefulWidget {
 class _ReturnOrderPageState extends State<ReturnOrderPage> {
   List<dynamic> _products = [];
   bool _isLoading = true;
-  Map<int, int?> _quantities = {}; // Track qty (nullable for empty)
-  Map<int, bool> _isSelected = {}; // Track checkbox selection
-  Map<int, TextEditingController> _qtyControllers = {}; // Persistent controllers
+  Map<String, TextEditingController> _qtyControllers = {}; // Keyed by product ID
   TextEditingController _searchController = TextEditingController();
   List<dynamic> _filteredProducts = [];
   String? _branchId;
@@ -126,7 +127,7 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
     }
   }
 
-  // ✅ Fetch product list with branch-specific filtering
+  // ✅ Fetch product list
   Future<void> _fetchProducts() async {
     setState(() => _isLoading = true);
     try {
@@ -142,8 +143,8 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
       if (_branchId == null && _userRole == null) {
         await _fetchUserData(token);
       }
-      // Updated: Fetch all products in the category without restricting to branch overrides
-      String url = 'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
+      String url =
+          'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
       final response = await http.get(
         Uri.parse(url),
         headers: {'Authorization': 'Bearer $token'},
@@ -153,10 +154,10 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
         setState(() {
           _products = data['docs'] ?? [];
           _filteredProducts = _products;
-          for (int i = 0; i < _products.length; i++) {
-            _quantities[i] = null;
-            _isSelected[i] = false;
-            _qtyControllers[i] = TextEditingController(text: '');
+          _qtyControllers = {};
+          for (var product in _products) {
+            final id = product['id'];
+            _qtyControllers[id] = TextEditingController();
           }
         });
       } else {
@@ -184,16 +185,27 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
 
   // ✅ Barcode/QR scan handler
   void _handleScan(String scanResult) {
-    for (int i = 0; i < _filteredProducts.length; i++) {
-      final product = _filteredProducts[i];
+    final provider = Provider.of<ReturnProvider>(context, listen: false);
+    for (var product in _filteredProducts) {
       if (product['upc'] == scanResult) {
-        setState(() {
-          _quantities[i] = (_quantities[i] ?? 0) + 1;
-          _isSelected[i] = true;
-          _qtyControllers[i]?.text = _quantities[i].toString();
-        });
+        dynamic priceDetails = product['defaultPriceDetails'];
+        if (_branchId != null && product['branchOverrides'] != null) {
+          for (var override in product['branchOverrides']) {
+            var branch = override['branch'];
+            String branchOid = branch is Map ? branch[r'$oid'] ?? branch['id'] ?? '' : branch ?? '';
+            if (branchOid == _branchId) {
+              priceDetails = override;
+              break;
+            }
+          }
+        }
+        final price = priceDetails != null ? (priceDetails['price']?.toDouble() ?? 0.0) : 0.0;
+        final matching = provider.returnItems.where((item) => item.id == product['id']).toList();
+        final currentQty = matching.isNotEmpty ? matching.first.quantity : 0;
+        final newQty = currentQty + 1;
+        provider.addOrUpdateItem(product['id'], product['name'], newQty, price);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Product selected from scan: ${product['name']}')),
+          SnackBar(content: Text('Product selected from scan: ${product['name']} (Qty: $newQty)')),
         );
         return;
       }
@@ -203,8 +215,15 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
     );
   }
 
-  bool _isProductSelected(int index) {
-    return (_quantities[index] ?? 0) > 0 && (_isSelected[index] ?? false);
+  // ✅ Submit selected return orders using provider
+  Future<void> _submitReturnOrders() async {
+    final provider = Provider.of<ReturnProvider>(context, listen: false);
+    await provider.submitReturn(context, _branchId);
+  }
+
+  bool _isProductSelected(int index, ReturnProvider provider) {
+    final id = _filteredProducts[index]['id'];
+    return provider.returnItems.any((i) => i.id == id);
   }
 
   @override
@@ -217,156 +236,216 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
           ? const Center(child: CircularProgressIndicator(color: Colors.black))
           : Column(
         children: [
-          // Search bar
+          // Updated: Search (60% width) + Confirm button (40% width, red with white text and shadow)
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(10),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.withOpacity(0.3),
-                    spreadRadius: 2,
-                    blurRadius: 5,
-                    offset: const Offset(0, 2),
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 3, // 60%
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.grey.withOpacity(0.3),
+                          spreadRadius: 2,
+                          blurRadius: 5,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: InputDecoration(
+                        hintText: 'Search products...',
+                        prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: BorderSide.none,
+                        ),
+                        filled: true,
+                        fillColor: Colors.white,
+                      ),
+                    ),
                   ),
-                ],
-              ),
-              child: TextField(
-                controller: _searchController,
-                decoration: InputDecoration(
-                  hintText: 'Search products...',
-                  prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(10),
-                    borderSide: BorderSide.none,
-                  ),
-                  filled: true,
-                  fillColor: Colors.white,
                 ),
-              ),
+                const SizedBox(width: 16), // Spacing between search and button
+                Expanded(
+                  flex: 2, // 40%
+                  child: GestureDetector(
+                    onTap: _submitReturnOrders,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(10),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.grey.withOpacity(0.3),
+                            spreadRadius: 2,
+                            blurRadius: 5,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: const Center(
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(vertical: 16),
+                          child: Text(
+                            'Confirm',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           // Product list
           Expanded(
             child: _filteredProducts.isEmpty
                 ? const Center(
-              child: Text('No products found',
-                  style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18)),
+              child: Text('No products found', style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18)),
             )
-                : ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              itemCount: _filteredProducts.length,
-              itemBuilder: (context, index) {
-                final product = _filteredProducts[index];
-                dynamic priceDetails = product['defaultPriceDetails'];
-                if (_branchId != null && product['branchOverrides'] != null) {
-                  for (var override in product['branchOverrides']) {
-                    var branch = override['branch'];
-                    String branchOid = branch is Map
-                        ? branch[r'$oid'] ?? branch['id'] ?? ''
-                        : branch ?? '';
-                    if (branchOid == _branchId) {
-                      priceDetails = override;
-                      break;
+                : Consumer<ReturnProvider>(
+              builder: (context, provider, child) {
+                // Sync controllers with provider data
+                for (int index = 0; index < _filteredProducts.length; index++) {
+                  final product = _filteredProducts[index];
+                  final String id = product['id'];
+                  final matching = provider.returnItems.where((i) => i.id == id).toList();
+                  final ReturnItem? item = matching.isNotEmpty ? matching.first : null;
+                  if (item != null) {
+                    if (_qtyControllers[id]!.text != item.quantity.toString()) {
+                      _qtyControllers[id]!.text = item.quantity.toString();
                     }
+                  } else if (_qtyControllers[id]!.text != '') {
+                    _qtyControllers[id]!.text = '';
                   }
                 }
-                final price =
-                priceDetails != null ? '₹${priceDetails['price'] ?? 0}' : '₹0';
-                final unit =
-                priceDetails != null ? priceDetails['unit'] ?? 'pcs' : 'pcs';
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFF0F0),
-                    borderRadius: BorderRadius.circular(15),
-                    border: Border.all(
-                      color: _isProductSelected(index)
-                          ? Colors.green
-                          : Colors.pink.shade300,
-                      width: _isProductSelected(index) ? 4 : 1,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.grey.withOpacity(0.3),
-                        spreadRadius: 2,
-                        blurRadius: 5,
-                        offset: const Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(product['name'] ?? 'Unknown',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold, fontSize: 16)),
-                            const SizedBox(height: 4),
-                            Text('$price / $unit',
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 14,
-                                    color: Colors.black54)),
-                          ],
+
+                return ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  itemCount: _filteredProducts.length,
+                  itemBuilder: (context, index) {
+                    final product = _filteredProducts[index];
+                    final String id = product['id'];
+                    dynamic priceDetails = product['defaultPriceDetails'];
+                    if (_branchId != null && product['branchOverrides'] != null) {
+                      for (var override in product['branchOverrides']) {
+                        var branch = override['branch'];
+                        String branchOid =
+                        branch is Map ? branch[r'$oid'] ?? branch['id'] ?? '' : branch ?? '';
+                        if (branchOid == _branchId) {
+                          priceDetails = override;
+                          break;
+                        }
+                      }
+                    }
+                    final double price = priceDetails != null ? (priceDetails['price']?.toDouble() ?? 0.0) : 0.0;
+                    final String priceStr = priceDetails != null ? '₹${priceDetails['price'] ?? 0}' : '₹0';
+                    final String unit = priceDetails != null ? priceDetails['unit'] ?? 'pcs' : 'pcs';
+
+                    final matching = provider.returnItems.where((i) => i.id == id).toList();
+                    final ReturnItem? item = matching.isNotEmpty ? matching.first : null;
+                    final bool isSelected = item != null;
+
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 12),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF0F0),
+                        borderRadius: BorderRadius.circular(15),
+                        border: Border.all(
+                          color: isSelected ? Colors.green : Colors.pink.shade300,
+                          width: isSelected ? 4 : 1,
                         ),
-                      ),
-                      Row(
-                        children: [
-                          Column(
-                            children: [
-                              const Text('Return Qty',
-                                  style: TextStyle(
-                                      color: Colors.blue,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 4),
-                              Container(
-                                width: 48,
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: Colors.grey),
-                                ),
-                                child: TextField(
-                                  keyboardType: TextInputType.number,
-                                  textAlign: TextAlign.center,
-                                  controller: _qtyControllers[index],
-                                  decoration: const InputDecoration(
-                                    border: InputBorder.none,
-                                    contentPadding:
-                                    EdgeInsets.symmetric(vertical: 8),
-                                  ),
-                                  onChanged: (value) {
-                                    setState(() {
-                                      _quantities[index] = int.tryParse(value);
-                                    });
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(width: 8),
-                          Checkbox(
-                            value: _isSelected[index] ?? false,
-                            onChanged: (_quantities[index] ?? 0) > 0
-                                ? (value) {
-                              setState(() {
-                                _isSelected[index] = value ?? false;
-                              });
-                            }
-                                : null,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.grey.withOpacity(0.3),
+                            spreadRadius: 2,
+                            blurRadius: 5,
+                            offset: const Offset(0, 2),
                           ),
                         ],
                       ),
-                    ],
-                  ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(product['name'] ?? 'Unknown',
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                                const SizedBox(height: 4),
+                                Text('$priceStr / $unit',
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black54)),
+                              ],
+                            ),
+                          ),
+                          Row(
+                            children: [
+                              Column(
+                                children: [
+                                  const Text('Return Qty',
+                                      style: TextStyle(
+                                          color: Colors.blue, fontSize: 12, fontWeight: FontWeight.bold)),
+                                  const SizedBox(height: 4),
+                                  Container(
+                                    width: 48,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(color: Colors.grey),
+                                    ),
+                                    child: TextField(
+                                      keyboardType: TextInputType.number,
+                                      textAlign: TextAlign.center,
+                                      controller: _qtyControllers[id],
+                                      decoration: const InputDecoration(
+                                        border: InputBorder.none,
+                                        contentPadding: EdgeInsets.symmetric(vertical: 8),
+                                      ),
+                                      onChanged: (value) {
+                                        final int qty = int.tryParse(value) ?? 0;
+                                        provider.addOrUpdateItem(id, product['name'], qty, price);
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(width: 8),
+                              Checkbox(
+                                value: isSelected,
+                                onChanged: (bool? value) {
+                                  if (value == true) {
+                                    int qty = int.tryParse(_qtyControllers[id]!.text) ?? 0;
+                                    if (qty <= 0) {
+                                      qty = 1;
+                                      _qtyControllers[id]!.text = '1';
+                                    }
+                                    provider.addOrUpdateItem(id, product['name'], qty, price);
+                                  } else {
+                                    provider.removeItem(id);
+                                    _qtyControllers[id]!.text = '';
+                                  }
+                                },
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    );
+                  },
                 );
               },
             ),

@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:blackforest_app/cart_provider.dart';
+import 'package:blackforest_app/return_provider.dart'; // Add this import
 import 'package:blackforest_app/login_page.dart'; // Replace with your project name if different
 
 void main() {
   runApp(
-    ChangeNotifierProvider(
-      create: (context) => CartProvider(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (context) => CartProvider()),
+        ChangeNotifierProvider(create: (context) => ReturnProvider()),
+      ],
       child: const MyApp(),
     ),
   );
