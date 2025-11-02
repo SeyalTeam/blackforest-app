@@ -1,4 +1,3 @@
-// lib/return_provider.dart
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -10,12 +9,14 @@ class ReturnItem {
   final double price;
   final int quantity;
   final double subtotal;
+  final String? proofPhoto;
 
   ReturnItem({
     required this.id,
     required this.name,
     required this.price,
     required this.quantity,
+    this.proofPhoto,
   }) : subtotal = price * quantity;
 }
 
@@ -26,7 +27,7 @@ class ReturnProvider with ChangeNotifier {
 
   double get total => _items.fold(0.0, (sum, item) => sum + item.subtotal);
 
-  void addOrUpdateItem(String id, String name, int quantity, double price) {
+  void addOrUpdateItem(String id, String name, int quantity, double price, {String? proofPhoto}) {
     if (quantity <= 0) {
       removeItem(id);
       return;
@@ -34,9 +35,9 @@ class ReturnProvider with ChangeNotifier {
 
     final index = _items.indexWhere((item) => item.id == id);
     if (index != -1) {
-      _items[index] = ReturnItem(id: id, name: name, price: price, quantity: quantity);
+      _items[index] = ReturnItem(id: id, name: name, price: price, quantity: quantity, proofPhoto: proofPhoto ?? _items[index].proofPhoto);
     } else {
-      _items.add(ReturnItem(id: id, name: name, price: price, quantity: quantity));
+      _items.add(ReturnItem(id: id, name: name, price: price, quantity: quantity, proofPhoto: proofPhoto));
     }
     notifyListeners();
   }
@@ -51,7 +52,7 @@ class ReturnProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> submitReturn(BuildContext context, String? branchId) async {
+  Future<void> submitReturn(BuildContext context, String? branchId, Map<String, String> photos) async {
     if (_items.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No items selected for return')),
@@ -77,6 +78,7 @@ class ReturnProvider with ChangeNotifier {
           'quantity': item.quantity,
           'unitPrice': item.price,
           'subtotal': item.subtotal,
+          'proofPhoto': photos[item.id] ?? '',
         })
             .toList(),
         'totalAmount': total,
