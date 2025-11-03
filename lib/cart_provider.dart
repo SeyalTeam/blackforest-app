@@ -40,9 +40,15 @@ class CartItem {
 class CartProvider extends ChangeNotifier {
   List<CartItem> _cartItems = [];
   String? _branchId;
+  String? _printerIp;
+  int _printerPort = 9100;
+  String? _printerProtocol = 'esc_pos';  // New: Default to esc_pos for Shreyans and most thermal printers
 
   List<CartItem> get cartItems => _cartItems;
   double get total => _cartItems.fold(0.0, (sum, item) => sum + (item.price * item.quantity));
+  String? get printerIp => _printerIp;
+  int get printerPort => _printerPort;
+  String? get printerProtocol => _printerProtocol;  // New: Public getter for protocol
 
   void addOrUpdateItem(CartItem item) {
     final index = _cartItems.indexWhere((i) => i.id == item.id);
@@ -90,6 +96,18 @@ class CartProvider extends ChangeNotifier {
     _branchId = branchId;
   }
 
+  // Updated: Set printer details including protocol
+  void setPrinterDetails(String? printerIp, int? printerPort, String? printerProtocol) {
+    _printerIp = printerIp;
+    if (printerPort != null) {
+      _printerPort = printerPort;
+    }
+    if (printerProtocol != null && printerProtocol.isNotEmpty) {
+      _printerProtocol = printerProtocol;
+    }
+    notifyListeners();
+  }
+
   Future<void> submitBilling(BuildContext context) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -97,20 +115,17 @@ class CartProvider extends ChangeNotifier {
       if (token == null) {
         throw Exception('No token found. Please login again.');
       }
-
       final items = _cartItems.map((item) => {
         'product': item.id,
         'quantity': item.quantity,
         'price': item.price,
       }).toList();
-
       final body = jsonEncode({
         'branch': _branchId,
         'items': items,
         'total': total,
         // Add more fields if your API needs (e.g., 'customerName', 'paymentMethod' from admin panel schema)
       });
-
       final response = await http.post(
         Uri.parse('https://admin.theblackforestcakes.com/api/billings'),
         headers: {
@@ -119,7 +134,6 @@ class CartProvider extends ChangeNotifier {
         },
         body: body,
       );
-
       if (response.statusCode == 201 || response.statusCode == 200) {
         clearCart();
         ScaffoldMessenger.of(context).showSnackBar(

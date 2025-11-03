@@ -7,11 +7,13 @@ import 'package:blackforest_app/categories_page.dart';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:network_info_plus/network_info_plus.dart'; // ✅ Added
+import 'package:network_info_plus/network_info_plus.dart';
+// New import for printing (ESC/POS base; add others if needed)
+import 'package:esc_pos_printer/esc_pos_printer.dart';
+import 'package:esc_pos_utils/esc_pos_utils.dart';
 
 class CartPage extends StatefulWidget {
   const CartPage({super.key});
-
   @override
   _CartPageState createState() => _CartPageState();
 }
@@ -28,25 +30,31 @@ class _CartPageState extends State<CartPage> {
     _fetchUserData();
   }
 
-  // ✅ Fetch user data + branch based on private IP
+  // Updated to set printer details if branch role
   Future<void> _fetchUserData() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
       if (token == null) return;
+
       final response = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/users/me?depth=2'),
         headers: {'Authorization': 'Bearer $token'},
       );
+
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final user = data['user'] ?? data;
         _userRole = user['role'];
+
         if (user['role'] == 'branch' && user['branch'] != null) {
           _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
+          // Updated: Fetch branch details to get printer IP/port/protocol
+          await _fetchBranchDetails(token, _branchId!);
         } else if (user['role'] == 'waiter') {
           await _fetchWaiterBranch(token);
         }
+
         setState(() {});
         Provider.of<CartProvider>(context, listen: false).setBranchId(_branchId);
       }
@@ -55,7 +63,27 @@ class _CartPageState extends State<CartPage> {
     }
   }
 
-  // ✅ Private IP fetching
+  // Updated helper to fetch specific branch details including printer protocol
+  Future<void> _fetchBranchDetails(String token, String branchId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('https://admin.theblackforestcakes.com/api/branches/$branchId?depth=1'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode == 200) {
+        final branch = jsonDecode(response.body);
+        final cartProvider = Provider.of<CartProvider>(context, listen: false);
+        cartProvider.setPrinterDetails(
+          branch['printerIp'],
+          branch['printerPort'],
+          branch['printerProtocol'],  // New: Fetch protocol from API
+        );
+      }
+    } catch (e) {
+      // Handle silently
+    }
+  }
+
   Future<String?> _fetchDeviceIp() async {
     try {
       final info = NetworkInfo();
@@ -80,15 +108,17 @@ class _CartPageState extends State<CartPage> {
     return device >= startIp && device <= endIp;
   }
 
-  // ✅ Updated waiter branch detection using local IP + range
+  // Updated to set printer details when matching branch
   Future<void> _fetchWaiterBranch(String token) async {
     String? deviceIp = await _fetchDeviceIp();
     if (deviceIp == null) return;
+
     try {
       final allBranchesResponse = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
+
       if (allBranchesResponse.statusCode == 200) {
         final branchesData = jsonDecode(allBranchesResponse.body);
         if (branchesData['docs'] != null && branchesData['docs'] is List) {
@@ -97,6 +127,13 @@ class _CartPageState extends State<CartPage> {
             if (bIpRange != null) {
               if (bIpRange == deviceIp || _isIpInRange(deviceIp, bIpRange)) {
                 _branchId = branch['id'];
+                // Updated: Set printer details including protocol
+                final cartProvider = Provider.of<CartProvider>(context, listen: false);
+                cartProvider.setPrinterDetails(
+                  branch['printerIp'],
+                  branch['printerPort'],
+                  branch['printerProtocol'],
+                );
                 break;
               }
             }
@@ -108,9 +145,6 @@ class _CartPageState extends State<CartPage> {
     }
   }
 
-  // ----------------------------------------
-  // ✅ Scan, Billing (printing removed)
-  // ----------------------------------------
   Future<void> _handleScan(String scanResult) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -162,6 +196,7 @@ class _CartPageState extends State<CartPage> {
     }
   }
 
+  // Updated to call print after success
   Future<void> _submitBilling() async {
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
     if (cartProvider.cartItems.isEmpty) {
@@ -176,6 +211,7 @@ class _CartPageState extends State<CartPage> {
       );
       return;
     }
+
     Map<String, dynamic>? customerDetails;
     if (_addCustomerDetails) {
       customerDetails = await showDialog<Map<String, dynamic>>(
@@ -221,10 +257,12 @@ class _CartPageState extends State<CartPage> {
     } else {
       customerDetails = {};
     }
+
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
       if (token == null) return;
+
       final billingData = {
         'items': cartProvider.cartItems
             .map((item) => ({
@@ -246,6 +284,7 @@ class _CartPageState extends State<CartPage> {
         'notes': '',
         'status': 'completed',
       };
+
       final response = await http.post(
         Uri.parse('https://admin.theblackforestcakes.com/api/billings'),
         headers: {
@@ -254,8 +293,14 @@ class _CartPageState extends State<CartPage> {
         },
         body: jsonEncode(billingData),
       );
+
       if (response.statusCode == 201) {
+        final billingResponse = jsonDecode(response.body);
         cartProvider.clearCart();
+
+        // Updated: Print receipt if printer is configured
+        await _printReceipt(cartProvider, billingResponse, customerDetails, _selectedPaymentMethod!);
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Billing submitted successfully')),
         );
@@ -270,6 +315,91 @@ class _CartPageState extends State<CartPage> {
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+    }
+  }
+
+  // Updated: Function to print receipt with protocol handling
+  Future<void> _printReceipt(
+      CartProvider cartProvider,
+      Map<String, dynamic> billingResponse,
+      Map<String, dynamic> customerDetails,
+      String paymentMethod,
+      ) async {
+    final printerIp = cartProvider.printerIp;
+    final printerPort = cartProvider.printerPort;
+    final printerProtocol = cartProvider.printerProtocol;
+
+    if (printerIp == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No printer configured for this branch')),
+      );
+      return;
+    }
+
+    if (printerProtocol == null || printerProtocol != 'esc_pos') {
+      // Fallback for other protocols (add support here if switching printers)
+      // E.g., for 'zpl': Use zpl package - add to pubspec.yaml: zpl: ^latest
+      // Then: import 'package:zpl/zpl.dart'; and build/send ZPL commands via socket.
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Unsupported printer protocol: $printerProtocol. Update app for support.')),
+      );
+      return;
+    }
+
+    try {
+      // ESC/POS handling (works for Shreyans and most brands)
+      const PaperSize paper = PaperSize.mm80; // Adjust to mm58 if needed for your printers
+      final profile = await CapabilityProfile.load();
+      final printer = NetworkPrinter(paper, profile);
+
+      final PosPrintResult res = await printer.connect(printerIp, port: printerPort);
+
+      if (res == PosPrintResult.success) {
+        // Build receipt with 'Rs ' instead of ₹ for compatibility
+        printer.text('Black Forest Cakes', styles: const PosStyles(align: PosAlign.center, bold: true));
+        printer.text('Branch: $_branchId', styles: const PosStyles(align: PosAlign.center));
+        printer.text('Bill ID: ${billingResponse['id'] ?? 'N/A'}', styles: const PosStyles(align: PosAlign.center));
+        printer.text('Date: ${DateTime.now().toString()}', styles: const PosStyles(align: PosAlign.center));
+        printer.hr();
+
+        // Items from cart
+        for (var item in cartProvider.cartItems) {
+          printer.row([
+            PosColumn(text: item.name, width: 6),
+            PosColumn(text: 'x${item.quantity}', width: 2),
+            PosColumn(text: 'Rs ${(item.price * item.quantity).toStringAsFixed(2)}', width: 4, styles: const PosStyles(align: PosAlign.right)),
+          ]);
+        }
+
+        printer.hr();
+        printer.row([
+          PosColumn(text: 'Total', width: 8, styles: const PosStyles(bold: true)),
+          PosColumn(text: 'Rs ${cartProvider.total.toStringAsFixed(2)}', width: 4, styles: const PosStyles(align: PosAlign.right, bold: true)),
+        ]);
+        printer.text('Paid by: ${paymentMethod.toUpperCase()}');
+
+        if (customerDetails['name']?.isNotEmpty == true || customerDetails['phone']?.isNotEmpty == true) {
+          printer.hr();
+          printer.text('Customer: ${customerDetails['name'] ?? ''}');
+          printer.text('Phone: ${customerDetails['phone'] ?? ''}');
+        }
+
+        printer.hr();
+        printer.text('Thank you! Visit again.', styles: const PosStyles(align: PosAlign.center));
+        printer.feed(2);
+        printer.cut();
+        printer.disconnect();
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Receipt printed successfully')),
+        );
+      } else {
+        throw Exception(res.msg);
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Print failed: Check printer connection ($e)')),
+      );
     }
   }
 
