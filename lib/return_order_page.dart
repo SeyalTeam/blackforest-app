@@ -410,6 +410,26 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
     }
   }
 
+  Future<void> _unselectProduct(String productId) async {
+    final provider = Provider.of<ReturnProvider>(context, listen: false);
+    provider.removeItem(productId);
+    // Clear photo data
+    setState(() {
+      _productPhotos.remove(productId);
+      _photoUrls.remove(productId);
+    });
+    final file = _tempPhotos.remove(productId);
+    if (file != null && await file.exists()) {
+      await file.delete();
+    }
+    // Clear pending if exists
+    final prefs = await SharedPreferences.getInstance();
+    prefs.remove('pending_photo_$productId');
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Product unselected and photo removed')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return CommonScaffold(
@@ -541,18 +561,21 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
                                 Positioned(
                                   top: 2,
                                   left: 2,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black,
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      price,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 10,
+                                  child: GestureDetector(
+                                    onTap: () => _unselectProduct(id),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: Colors.black,
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Text(
+                                        price,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 10,
+                                        ),
                                       ),
                                     ),
                                   ),
