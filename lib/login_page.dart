@@ -9,7 +9,6 @@ import 'package:network_info_plus/network_info_plus.dart';
 class IdleTimeoutWrapper extends StatefulWidget {
   final Widget child;
   final Duration timeout;
-
   const IdleTimeoutWrapper({
     super.key,
     required this.child,
@@ -100,6 +99,43 @@ class _LoginPageState extends State<LoginPage> {
   bool _isLoading = false;
   bool _obscurePassword = true;
 
+  @override
+  void initState() {
+    super.initState();
+    _checkExistingSession(); // New: Check for saved token on init
+  }
+
+  Future<void> _checkExistingSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    if (token != null) {
+      // Optional: Validate token with backend (recommended for security)
+      try {
+        final response = await http.get(
+          Uri.parse('https://admin.theblackforestcakes.com/api/users/me'),
+          headers: {'Authorization': 'Bearer $token'},
+        );
+        if (response.statusCode == 200) {
+          // Token valid: Auto-nav to CategoriesPage
+          if (mounted) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => IdleTimeoutWrapper(
+                  child: const CategoriesPage(),
+                ),
+              ),
+            );
+          }
+          return;
+        }
+      } catch (_) {}
+      // If invalid/expired, clear prefs and stay on login
+      await prefs.clear();
+    }
+    // No valid token: Show login form
+  }
+
   Future<void> _showIpAlert(String deviceIp, String branchInfo, String? printerIp) async {
     await showDialog(
       context: context,
@@ -143,11 +179,9 @@ class _LoginPageState extends State<LoginPage> {
       setState(() {
         _isLoading = true;
       });
-
       final info = NetworkInfo();
       String? deviceIp = await info.getWifiIP();
       debugPrint('Fetched Device Private IP: $deviceIp');
-
       try {
         final response = await http.post(
           Uri.parse('https://admin.theblackforestcakes.com/api/users/login'),
@@ -157,7 +191,6 @@ class _LoginPageState extends State<LoginPage> {
             'password': _passwordController.text,
           }),
         );
-
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
           final user = data['user'];
@@ -169,7 +202,6 @@ class _LoginPageState extends State<LoginPage> {
             });
             return;
           }
-
           dynamic branchRef = user['branch'];
           String? branchId;
           if (branchRef is Map) {
@@ -177,7 +209,6 @@ class _LoginPageState extends State<LoginPage> {
           } else {
             branchId = branchRef?.toString();
           }
-
           // For non-waiter roles that depend on branch
           String? branchIpRange;
           String? printerIp;
@@ -190,7 +221,6 @@ class _LoginPageState extends State<LoginPage> {
                 'Authorization': 'Bearer ${data['token']}',
               },
             ).timeout(const Duration(seconds: 10));
-
             if (branchResponse.statusCode == 200) {
               final branchData = jsonDecode(branchResponse.body);
               branchIpRange = branchData['ipAddress']?.toString().trim();
@@ -203,7 +233,6 @@ class _LoginPageState extends State<LoginPage> {
               });
               return;
             }
-
             // IP restriction logic for non-waiter (only if branch has ipAddress set)
             if (branchIpRange != null && branchIpRange.isNotEmpty) {
               if (deviceIp == null) {
@@ -213,7 +242,6 @@ class _LoginPageState extends State<LoginPage> {
                 });
                 return;
               }
-
               debugPrint('IP Check - Device: "$deviceIp" vs Branch Range: "$branchIpRange"');
               if (!_isIpInRange(deviceIp, branchIpRange)) {
                 _showError('Login restricted: Device IP ($deviceIp) does not match branch IP range ($branchIpRange)');
@@ -222,7 +250,6 @@ class _LoginPageState extends State<LoginPage> {
                 });
                 return;
               }
-
               // Show alert on successful match for non-waiter
               debugPrint('IP Match Successful');
               await _showIpAlert(deviceIp, 'Branch IP Range: $branchIpRange (Matched)', printerIp);
@@ -241,7 +268,6 @@ class _LoginPageState extends State<LoginPage> {
               });
               return;
             }
-
             // Fetch all branches
             final allBranchesResponse = await http.get(
               Uri.parse('https://admin.theblackforestcakes.com/api/branches'),
@@ -250,7 +276,6 @@ class _LoginPageState extends State<LoginPage> {
                 'Authorization': 'Bearer ${data['token']}',
               },
             ).timeout(const Duration(seconds: 10));
-
             String branchInfo = 'Matching Branches: None';
             if (allBranchesResponse.statusCode == 200) {
               final branchesData = jsonDecode(allBranchesResponse.body);
@@ -272,11 +297,9 @@ class _LoginPageState extends State<LoginPage> {
               debugPrint('Failed to fetch all branches: ${allBranchesResponse.statusCode}');
               branchInfo = 'Matching Branches: Unable to fetch';
             }
-
             // Show alert for waiter with IP and matching branches
             await _showIpAlert(deviceIp, branchInfo, printerIp);
           }
-
           final prefs = await SharedPreferences.getInstance();
           await prefs.setString('token', data['token']);
           await prefs.setString('role', user['role']);
@@ -290,16 +313,13 @@ class _LoginPageState extends State<LoginPage> {
           if (printerIp != null) {
             await prefs.setString('printerIp', printerIp);
           }
-
           // Navigate to categories page wrapped with idle timeout
           if (mounted) {
             Navigator.pushReplacement(
               context,
-              MaterialPageRoute(
-                builder: (context) => IdleTimeoutWrapper(
-                  child: const CategoriesPage(),
-                ),
-              ),
+              MaterialPageRoute(builder: (context) => IdleTimeoutWrapper(
+                child: const CategoriesPage(),
+              )),
             );
           }
         } else if (response.statusCode == 401) {
