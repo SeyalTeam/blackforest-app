@@ -8,7 +8,6 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:network_info_plus/network_info_plus.dart';
-// New import for printing (ESC/POS base; add others if needed)
 import 'package:esc_pos_printer/esc_pos_printer.dart';
 import 'package:esc_pos_utils/esc_pos_utils.dart';
 
@@ -20,9 +19,9 @@ class CartPage extends StatefulWidget {
 
 class _CartPageState extends State<CartPage> {
   String? _branchId;
-  String? _branchName;  // New: To store branch name
-  String? _branchGst;   // New: To store branch GST
-  String? _companyName; // New: To store company name
+  String? _branchName;
+  String? _branchGst;
+  String? _companyName;
   String? _userRole;
   bool _addCustomerDetails = false;
   String? _selectedPaymentMethod;
@@ -33,7 +32,6 @@ class _CartPageState extends State<CartPage> {
     _fetchUserData();
   }
 
-  // Updated to set printer details if branch role
   Future<void> _fetchUserData() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -52,9 +50,7 @@ class _CartPageState extends State<CartPage> {
 
         if (user['role'] == 'branch' && user['branch'] != null) {
           _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
-          // Set branch name if available in user data
           _branchName = (user['branch'] is Map) ? user['branch']['name'] : null;
-          // Updated: Fetch branch details to get printer IP/port/protocol and confirm name
           await _fetchBranchDetails(token, _branchId!);
         } else if (user['role'] == 'waiter') {
           await _fetchWaiterBranch(token);
@@ -63,12 +59,9 @@ class _CartPageState extends State<CartPage> {
         setState(() {});
         Provider.of<CartProvider>(context, listen: false).setBranchId(_branchId);
       }
-    } catch (e) {
-      // Handle silently
-    }
+    } catch (_) {}
   }
 
-  // Updated helper to fetch specific branch details including printer protocol, name, and GST
   Future<void> _fetchBranchDetails(String token, String branchId) async {
     try {
       final response = await http.get(
@@ -77,28 +70,23 @@ class _CartPageState extends State<CartPage> {
       );
       if (response.statusCode == 200) {
         final branch = jsonDecode(response.body);
-        _branchName = branch['name'] ?? _branchName;  // Set or update branch name
-        _branchGst = branch['gst'];  // New: Set branch GST
-        // New: Extract company name if populated (assuming depth=1 includes company relation)
+        _branchName = branch['name'] ?? _branchName;
+        _branchGst = branch['gst'];
         if (branch['company'] != null && branch['company'] is Map) {
           _companyName = branch['company']['name'];
         } else if (branch['company'] != null) {
-          // If company is just ID, fetch company details
           await _fetchCompanyDetails(token, branch['company'].toString());
         }
         final cartProvider = Provider.of<CartProvider>(context, listen: false);
         cartProvider.setPrinterDetails(
           branch['printerIp'],
           branch['printerPort'],
-          branch['printerProtocol'],  // New: Fetch protocol from API
+          branch['printerProtocol'],
         );
       }
-    } catch (e) {
-      // Handle silently
-    }
+    } catch (_) {}
   }
 
-  // New: Helper to fetch company details if needed
   Future<void> _fetchCompanyDetails(String token, String companyId) async {
     try {
       final response = await http.get(
@@ -109,17 +97,15 @@ class _CartPageState extends State<CartPage> {
         final company = jsonDecode(response.body);
         _companyName = company['name'] ?? 'Unknown Company';
       }
-    } catch (e) {
-      // Handle silently
-    }
+    } catch (_) {}
   }
 
   Future<String?> _fetchDeviceIp() async {
     try {
       final info = NetworkInfo();
-      final ip = await info.getWifiIP(); // Gets private IP like 192.168.x.x
+      final ip = await info.getWifiIP();
       return ip?.trim();
-    } catch (e) {
+    } catch (_) {
       return null;
     }
   }
@@ -138,7 +124,6 @@ class _CartPageState extends State<CartPage> {
     return device >= startIp && device <= endIp;
   }
 
-  // Updated to set printer details and branch name when matching branch
   Future<void> _fetchWaiterBranch(String token) async {
     String? deviceIp = await _fetchDeviceIp();
     if (deviceIp == null) return;
@@ -157,15 +142,13 @@ class _CartPageState extends State<CartPage> {
             if (bIpRange != null) {
               if (bIpRange == deviceIp || _isIpInRange(deviceIp, bIpRange)) {
                 _branchId = branch['id'];
-                _branchName = branch['name'];  // New: Set branch name
-                _branchGst = branch['gst'];    // New: Set branch GST
-                // New: Set company name
+                _branchName = branch['name'];
+                _branchGst = branch['gst'];
                 if (branch['company'] != null && branch['company'] is Map) {
                   _companyName = branch['company']['name'];
                 } else if (branch['company'] != null) {
                   await _fetchCompanyDetails(token, branch['company'].toString());
                 }
-                // Updated: Set printer details including protocol
                 final cartProvider = Provider.of<CartProvider>(context, listen: false);
                 cartProvider.setPrinterDetails(
                   branch['printerIp'],
@@ -178,9 +161,7 @@ class _CartPageState extends State<CartPage> {
           }
         }
       }
-    } catch (e) {
-      // Handle silently
-    }
+    } catch (_) {}
   }
 
   Future<void> _handleScan(String scanResult) async {
@@ -227,14 +208,13 @@ class _CartPageState extends State<CartPage> {
           );
         }
       }
-    } catch (e) {
+    } catch (_) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Network error: Check your internet')),
       );
     }
   }
 
-  // Updated to call print after success
   Future<void> _submitBilling() async {
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
     if (cartProvider.cartItems.isEmpty) {
@@ -263,30 +243,14 @@ class _CartPageState extends State<CartPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextField(
-                    controller: nameController,
-                    decoration: const InputDecoration(labelText: 'Customer Name'),
-                  ),
-                  TextField(
-                    controller: phoneController,
-                    decoration: const InputDecoration(labelText: 'Phone'),
-                    keyboardType: TextInputType.phone,
-                  ),
+                  TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Customer Name')),
+                  TextField(controller: phoneController, decoration: const InputDecoration(labelText: 'Phone'), keyboardType: TextInputType.phone),
                 ],
               ),
             ),
             actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(context, {
-                  'name': nameController.text,
-                  'phone': phoneController.text,
-                }),
-                child: const Text('Submit'),
-              ),
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+              TextButton(onPressed: () => Navigator.pop(context, {'name': nameController.text, 'phone': phoneController.text}), child: const Text('Submit')),
             ],
           );
         },
@@ -314,10 +278,7 @@ class _CartPageState extends State<CartPage> {
             .toList(),
         'totalAmount': cartProvider.total,
         'branch': _branchId,
-        'customerDetails': {
-          'name': customerDetails['name'] ?? '',
-          'phone': customerDetails['phone'] ?? '',
-        },
+        'customerDetails': {'name': customerDetails['name'] ?? '', 'phone': customerDetails['phone'] ?? ''},
         'paymentMethod': _selectedPaymentMethod,
         'notes': '',
         'status': 'completed',
@@ -325,37 +286,27 @@ class _CartPageState extends State<CartPage> {
 
       final response = await http.post(
         Uri.parse('https://admin.theblackforestcakes.com/api/billings'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token',
-        },
+        headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
         body: jsonEncode(billingData),
       );
 
+      final billingResponse = jsonDecode(response.body);
+      print('📦 BILL RESPONSE: $billingResponse'); // Debugging line
+
       if (response.statusCode == 201) {
-        final billingResponse = jsonDecode(response.body);
-        // Print before clearing cart
         await _printReceipt(cartProvider, billingResponse, customerDetails, _selectedPaymentMethod!);
         cartProvider.clearCart();
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Billing submitted successfully')),
-        );
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const CategoriesPage()),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Billing submitted successfully')));
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const CategoriesPage()));
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to submit billing: ${response.statusCode}')),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: ${response.statusCode}')));
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
     }
   }
 
-  // Updated: Function to print receipt with protocol handling
   Future<void> _printReceipt(
       CartProvider cartProvider,
       Map<String, dynamic> billingResponse,
@@ -374,36 +325,46 @@ class _CartPageState extends State<CartPage> {
     }
 
     if (printerProtocol == null || printerProtocol != 'esc_pos') {
-      // Fallback for other protocols (add support here if switching printers)
-      // E.g., for 'zpl': Use zpl package - add to pubspec.yaml: zpl: ^latest
-      // Then: import 'package:zpl/zpl.dart'; and build/send ZPL commands via socket.
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Unsupported printer protocol: $printerProtocol. Update app for support.')),
+        SnackBar(content: Text('Unsupported printer protocol: $printerProtocol')),
       );
       return;
     }
 
     try {
-      // ESC/POS handling (works for Shreyans and most brands)
-      const PaperSize paper = PaperSize.mm80; // Adjust to mm58 if needed for your printers
+      const PaperSize paper = PaperSize.mm80;
       final profile = await CapabilityProfile.load();
       final printer = NetworkPrinter(paper, profile);
-
       final PosPrintResult res = await printer.connect(printerIp, port: printerPort);
 
       if (res == PosPrintResult.success) {
-        // Build receipt with 'Rs ' instead of ₹ for compatibility
-        // Replaced fixed company name with fetched (assuming it's branch-related; adjust if separate API)
-        printer.text(_companyName ?? 'Black Forest Cakes', styles: const PosStyles(align: PosAlign.center, bold: true));  // Keep as fixed or fetch if available
-        printer.text('Branch: ${_branchName ?? _branchId}', styles: const PosStyles(align: PosAlign.center));
+        // Extract invoice number
+        String invoiceNumber =
+            billingResponse['invoiceNumber'] ??
+                billingResponse['doc']?['invoiceNumber'] ??
+                'N/A';
+
+        // Extract only last 3 digits (001 part)
+        final regex = RegExp(r'INV-\d{8}-(\d+)$');
+        final match = regex.firstMatch(invoiceNumber);
+        String billNo = match != null ? match.group(1)! : invoiceNumber;
+        billNo = billNo.padLeft(3, '0'); // Always 3 digits
+
+        printer.text(_companyName ?? 'Black Forest Cakes',
+            styles: const PosStyles(align: PosAlign.center, bold: true));
+        printer.text('Branch: ${_branchName ?? _branchId}',
+            styles: const PosStyles(align: PosAlign.center));
         if (_branchGst != null) {
-          printer.text('GST: $_branchGst', styles: const PosStyles(align: PosAlign.center));
+          printer.text('GST: $_branchGst',
+              styles: const PosStyles(align: PosAlign.center));
         }
-        printer.text('Bill ID: ${billingResponse['id'] ?? 'N/A'}', styles: const PosStyles(align: PosAlign.center));
-        printer.text('Date: ${DateTime.now().toString()}', styles: const PosStyles(align: PosAlign.center));
+
+        printer.hr();
+        printer.text('BILL NO - $billNo',
+            styles: const PosStyles(align: PosAlign.center, bold: true));
         printer.hr();
 
-        // Header for items
+        // Item list header
         printer.row([
           PosColumn(text: 'Item', width: 5, styles: const PosStyles(bold: true)),
           PosColumn(text: 'Qty', width: 2, styles: const PosStyles(bold: true, align: PosAlign.center)),
@@ -412,31 +373,38 @@ class _CartPageState extends State<CartPage> {
         ]);
         printer.hr(ch: '-');
 
-        // Items from cart
+        // Items
         for (var item in cartProvider.cartItems) {
           printer.row([
             PosColumn(text: item.name, width: 5),
             PosColumn(text: '${item.quantity}', width: 2, styles: const PosStyles(align: PosAlign.center)),
-            PosColumn(text: 'Rs ${item.price.toStringAsFixed(2)}', width: 2, styles: const PosStyles(align: PosAlign.right)),
-            PosColumn(text: 'Rs ${(item.price * item.quantity).toStringAsFixed(2)}', width: 3, styles: const PosStyles(align: PosAlign.right)),
+            PosColumn(text: item.price.toStringAsFixed(2), width: 2, styles: const PosStyles(align: PosAlign.right)),
+            PosColumn(text: (item.price * item.quantity).toStringAsFixed(2), width: 3, styles: const PosStyles(align: PosAlign.right)),
           ]);
         }
 
         printer.hr();
         printer.row([
-          PosColumn(text: 'Total', width: 8, styles: const PosStyles(bold: true)),
-          PosColumn(text: 'Rs ${cartProvider.total.toStringAsFixed(2)}', width: 4, styles: const PosStyles(align: PosAlign.right, bold: true)),
+          PosColumn(text: 'Total RS', width: 8, styles: const PosStyles(bold: true)),
+          PosColumn(
+            text: cartProvider.total.toStringAsFixed(2),
+            width: 4,
+            styles: const PosStyles(align: PosAlign.right, bold: true),
+          ),
         ]);
+
         printer.text('Paid by: ${paymentMethod.toUpperCase()}');
 
-        if (customerDetails['name']?.isNotEmpty == true || customerDetails['phone']?.isNotEmpty == true) {
+        if (customerDetails['name']?.isNotEmpty == true ||
+            customerDetails['phone']?.isNotEmpty == true) {
           printer.hr();
           printer.text('Customer: ${customerDetails['name'] ?? ''}');
           printer.text('Phone: ${customerDetails['phone'] ?? ''}');
         }
 
         printer.hr();
-        printer.text('Thank you! Visit again.', styles: const PosStyles(align: PosAlign.center));
+        printer.text('Thank you! Visit again.',
+            styles: const PosStyles(align: PosAlign.center));
         printer.feed(2);
         printer.cut();
         printer.disconnect();
@@ -449,10 +417,11 @@ class _CartPageState extends State<CartPage> {
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Print failed: Check printer connection ($e)')),
+        SnackBar(content: Text('Print failed: $e')),
       );
     }
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -464,123 +433,84 @@ class _CartPageState extends State<CartPage> {
         builder: (context, cartProvider, child) {
           if (cartProvider.cartItems.isEmpty) {
             return const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.shopping_cart_outlined, size: 100, color: Colors.grey),
-                  SizedBox(height: 20),
-                  Text(
-                    'Your cart is empty. Add products from categories!',
-                    style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18),
-                  ),
-                ],
-              ),
+              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon(Icons.shopping_cart_outlined, size: 100, color: Colors.grey),
+                SizedBox(height: 20),
+                Text('Your cart is empty. Add products from categories!',
+                    style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18)),
+              ]),
             );
           }
-          return Column(
-            children: [
-              Expanded(
-                child: ListView.builder(
-                  padding: const EdgeInsets.all(10),
-                  itemCount: cartProvider.cartItems.length,
-                  itemBuilder: (context, index) {
-                    final item = cartProvider.cartItems[index];
-                    return Card(
-                      elevation: 2,
-                      margin: const EdgeInsets.symmetric(vertical: 5),
-                      child: ListTile(
-                        leading: item.imageUrl != null
-                            ? CachedNetworkImage(
-                          imageUrl: item.imageUrl!,
-                          width: 60,
-                          height: 60,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) => const CircularProgressIndicator(),
-                          errorWidget: (context, url, error) => const Icon(Icons.error),
-                        )
-                            : const Icon(Icons.image_not_supported, size: 60),
-                        title: Text(item.name),
-                        subtitle: Text(
-                            '₹${item.price.toStringAsFixed(2)} x ${item.quantity} = ₹${(item.price * item.quantity).toStringAsFixed(2)}'),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.remove_circle_outline),
-                              onPressed: () => cartProvider.updateQuantity(item.id, item.quantity - 1),
-                            ),
-                            Text('${item.quantity}', style: const TextStyle(fontSize: 16)),
-                            IconButton(
-                              icon: const Icon(Icons.add_circle_outline),
-                              onPressed: () => cartProvider.updateQuantity(item.id, item.quantity + 1),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.delete_outline, color: Colors.red),
-                              onPressed: () => cartProvider.removeItem(item.id),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
+          return Column(children: [
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.all(10),
+                itemCount: cartProvider.cartItems.length,
+                itemBuilder: (context, index) {
+                  final item = cartProvider.cartItems[index];
+                  return Card(
+                    elevation: 2,
+                    margin: const EdgeInsets.symmetric(vertical: 5),
+                    child: ListTile(
+                      leading: item.imageUrl != null
+                          ? CachedNetworkImage(
+                        imageUrl: item.imageUrl!,
+                        width: 60,
+                        height: 60,
+                        fit: BoxFit.cover,
+                        placeholder: (context, url) => const CircularProgressIndicator(),
+                        errorWidget: (context, url, error) => const Icon(Icons.error),
+                      )
+                          : const Icon(Icons.image_not_supported, size: 60),
+                      title: Text(item.name),
+                      subtitle: Text('₹${item.price.toStringAsFixed(2)} x ${item.quantity} = ₹${(item.price * item.quantity).toStringAsFixed(2)}'),
+                      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                        IconButton(icon: const Icon(Icons.remove_circle_outline), onPressed: () => cartProvider.updateQuantity(item.id, item.quantity - 1)),
+                        Text('${item.quantity}', style: const TextStyle(fontSize: 16)),
+                        IconButton(icon: const Icon(Icons.add_circle_outline), onPressed: () => cartProvider.updateQuantity(item.id, item.quantity + 1)),
+                        IconButton(icon: const Icon(Icons.delete_outline, color: Colors.red), onPressed: () => cartProvider.removeItem(item.id)),
+                      ]),
+                    ),
+                  );
+                },
               ),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.2), blurRadius: 5)],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        for (final method in ['cash', 'upi', 'card'])
-                          Expanded(
-                            flex: 1,
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 4),
-                              child: ElevatedButton(
-                                onPressed: () => setState(() => _selectedPaymentMethod = method),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: _selectedPaymentMethod == method ? Colors.green : Colors.grey,
-                                ),
-                                child: Text(method.toUpperCase()),
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Checkbox(
-                          value: _addCustomerDetails,
-                          onChanged: (value) {
-                            setState(() {
-                              _addCustomerDetails = value ?? false;
-                            });
-                          },
-                        ),
-                        Text(
-                          'Total: ₹${cartProvider.total.toStringAsFixed(2)}',
-                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.black),
-                        ),
-                        const Spacer(),
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-                          onPressed: cartProvider.cartItems.isNotEmpty ? _submitBilling : null,
-                          child: const Text('Proceed to Billing'),
-                        ),
-                      ],
-                    ),
+            ),
+            Container(
+              color: Colors.grey.shade200,
+              padding: const EdgeInsets.all(15),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  const Text('Total:', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  Text('₹${cartProvider.total.toStringAsFixed(2)}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                ]),
+                const SizedBox(height: 10),
+                Row(children: [
+                  const Text('Add Customer Details'),
+                  Switch(value: _addCustomerDetails, onChanged: (v) => setState(() => _addCustomerDetails = v)),
+                ]),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  value: _selectedPaymentMethod,
+                  decoration: const InputDecoration(labelText: 'Payment Method', border: OutlineInputBorder()),
+                  items: const [
+                    DropdownMenuItem(value: 'cash', child: Text('Cash')),
+                    DropdownMenuItem(value: 'upi', child: Text('UPI')),
+                    DropdownMenuItem(value: 'card', child: Text('Card')),
                   ],
+                  onChanged: (v) => setState(() => _selectedPaymentMethod = v),
                 ),
-              ),
-            ],
-          );
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: _submitBilling,
+                    icon: const Icon(Icons.receipt_long),
+                    label: const Text('Generate Invoice', style: TextStyle(fontSize: 18)),
+                  ),
+                ),
+              ]),
+            ),
+          ]);
         },
       ),
     );
