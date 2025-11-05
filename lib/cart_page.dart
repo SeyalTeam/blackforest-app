@@ -460,18 +460,7 @@ class _CartPageState extends State<CartPage> {
                         errorWidget: (context, url, error) => const Icon(Icons.error),
                       )
                           : const Icon(Icons.image_not_supported, size: 60),
-                      title: Expanded(
-                        child: Text(
-                          item.name,
-                          softWrap: false,
-                          overflow: TextOverflow.visible,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
-                        ),
-                      ),
-
+                      title: Text(item.name),
                       subtitle: Text('₹${item.price.toStringAsFixed(2)} x ${item.quantity} = ₹${(item.price * item.quantity).toStringAsFixed(2)}'),
                       trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                         IconButton(icon: const Icon(Icons.remove_circle_outline), onPressed: () => cartProvider.updateQuantity(item.id, item.quantity - 1)),
@@ -544,14 +533,13 @@ class _CartPageState extends State<CartPage> {
                   children: [
                     Switch(value: _addCustomerDetails, onChanged: (v) => setState(() => _addCustomerDetails = v)),
                     const SizedBox(width: 10),
-                    Expanded(
-                      child: SizedBox(
-                        height: 40,
-                        child: ElevatedButton.icon(
-                          onPressed: _submitBilling,
-                          icon: const Icon(Icons.receipt_long),
-                          label: const Text('Generate Invoice', style: TextStyle(fontSize: 18)),
-                        ),
+                    SizedBox(
+                      width: 200, // Reduced width for Generate Invoice button
+                      height: 40,
+                      child: ElevatedButton.icon(
+                        onPressed: _submitBilling,
+                        icon: const Icon(Icons.receipt_long),
+                        label: const Text('Generate Invoice', style: TextStyle(fontSize: 18)),
                       ),
                     ),
                   ],
