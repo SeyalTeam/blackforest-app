@@ -20,6 +20,9 @@ class CartPage extends StatefulWidget {
 
 class _CartPageState extends State<CartPage> {
   String? _branchId;
+  String? _branchName;  // New: To store branch name
+  String? _branchGst;   // New: To store branch GST
+  String? _companyName; // New: To store company name
   String? _userRole;
   bool _addCustomerDetails = false;
   String? _selectedPaymentMethod;
@@ -49,7 +52,9 @@ class _CartPageState extends State<CartPage> {
 
         if (user['role'] == 'branch' && user['branch'] != null) {
           _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
-          // Updated: Fetch branch details to get printer IP/port/protocol
+          // Set branch name if available in user data
+          _branchName = (user['branch'] is Map) ? user['branch']['name'] : null;
+          // Updated: Fetch branch details to get printer IP/port/protocol and confirm name
           await _fetchBranchDetails(token, _branchId!);
         } else if (user['role'] == 'waiter') {
           await _fetchWaiterBranch(token);
@@ -63,7 +68,7 @@ class _CartPageState extends State<CartPage> {
     }
   }
 
-  // Updated helper to fetch specific branch details including printer protocol
+  // Updated helper to fetch specific branch details including printer protocol, name, and GST
   Future<void> _fetchBranchDetails(String token, String branchId) async {
     try {
       final response = await http.get(
@@ -72,12 +77,37 @@ class _CartPageState extends State<CartPage> {
       );
       if (response.statusCode == 200) {
         final branch = jsonDecode(response.body);
+        _branchName = branch['name'] ?? _branchName;  // Set or update branch name
+        _branchGst = branch['gst'];  // New: Set branch GST
+        // New: Extract company name if populated (assuming depth=1 includes company relation)
+        if (branch['company'] != null && branch['company'] is Map) {
+          _companyName = branch['company']['name'];
+        } else if (branch['company'] != null) {
+          // If company is just ID, fetch company details
+          await _fetchCompanyDetails(token, branch['company'].toString());
+        }
         final cartProvider = Provider.of<CartProvider>(context, listen: false);
         cartProvider.setPrinterDetails(
           branch['printerIp'],
           branch['printerPort'],
           branch['printerProtocol'],  // New: Fetch protocol from API
         );
+      }
+    } catch (e) {
+      // Handle silently
+    }
+  }
+
+  // New: Helper to fetch company details if needed
+  Future<void> _fetchCompanyDetails(String token, String companyId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('https://admin.theblackforestcakes.com/api/companies/$companyId?depth=1'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode == 200) {
+        final company = jsonDecode(response.body);
+        _companyName = company['name'] ?? 'Unknown Company';
       }
     } catch (e) {
       // Handle silently
@@ -108,7 +138,7 @@ class _CartPageState extends State<CartPage> {
     return device >= startIp && device <= endIp;
   }
 
-  // Updated to set printer details when matching branch
+  // Updated to set printer details and branch name when matching branch
   Future<void> _fetchWaiterBranch(String token) async {
     String? deviceIp = await _fetchDeviceIp();
     if (deviceIp == null) return;
@@ -127,6 +157,14 @@ class _CartPageState extends State<CartPage> {
             if (bIpRange != null) {
               if (bIpRange == deviceIp || _isIpInRange(deviceIp, bIpRange)) {
                 _branchId = branch['id'];
+                _branchName = branch['name'];  // New: Set branch name
+                _branchGst = branch['gst'];    // New: Set branch GST
+                // New: Set company name
+                if (branch['company'] != null && branch['company'] is Map) {
+                  _companyName = branch['company']['name'];
+                } else if (branch['company'] != null) {
+                  await _fetchCompanyDetails(token, branch['company'].toString());
+                }
                 // Updated: Set printer details including protocol
                 final cartProvider = Provider.of<CartProvider>(context, listen: false);
                 cartProvider.setPrinterDetails(
@@ -296,10 +334,9 @@ class _CartPageState extends State<CartPage> {
 
       if (response.statusCode == 201) {
         final billingResponse = jsonDecode(response.body);
-        cartProvider.clearCart();
-
-        // Updated: Print receipt if printer is configured
+        // Print before clearing cart
         await _printReceipt(cartProvider, billingResponse, customerDetails, _selectedPaymentMethod!);
+        cartProvider.clearCart();
 
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Billing submitted successfully')),
@@ -356,18 +393,32 @@ class _CartPageState extends State<CartPage> {
 
       if (res == PosPrintResult.success) {
         // Build receipt with 'Rs ' instead of ₹ for compatibility
-        printer.text('Black Forest Cakes', styles: const PosStyles(align: PosAlign.center, bold: true));
-        printer.text('Branch: $_branchId', styles: const PosStyles(align: PosAlign.center));
+        // Replaced fixed company name with fetched (assuming it's branch-related; adjust if separate API)
+        printer.text(_companyName ?? 'Black Forest Cakes', styles: const PosStyles(align: PosAlign.center, bold: true));  // Keep as fixed or fetch if available
+        printer.text('Branch: ${_branchName ?? _branchId}', styles: const PosStyles(align: PosAlign.center));
+        if (_branchGst != null) {
+          printer.text('GST: $_branchGst', styles: const PosStyles(align: PosAlign.center));
+        }
         printer.text('Bill ID: ${billingResponse['id'] ?? 'N/A'}', styles: const PosStyles(align: PosAlign.center));
         printer.text('Date: ${DateTime.now().toString()}', styles: const PosStyles(align: PosAlign.center));
         printer.hr();
 
+        // Header for items
+        printer.row([
+          PosColumn(text: 'Item', width: 5, styles: const PosStyles(bold: true)),
+          PosColumn(text: 'Qty', width: 2, styles: const PosStyles(bold: true, align: PosAlign.center)),
+          PosColumn(text: 'Price', width: 2, styles: const PosStyles(bold: true, align: PosAlign.right)),
+          PosColumn(text: 'Amount', width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
+        ]);
+        printer.hr(ch: '-');
+
         // Items from cart
         for (var item in cartProvider.cartItems) {
           printer.row([
-            PosColumn(text: item.name, width: 6),
-            PosColumn(text: 'x${item.quantity}', width: 2),
-            PosColumn(text: 'Rs ${(item.price * item.quantity).toStringAsFixed(2)}', width: 4, styles: const PosStyles(align: PosAlign.right)),
+            PosColumn(text: item.name, width: 5),
+            PosColumn(text: '${item.quantity}', width: 2, styles: const PosStyles(align: PosAlign.center)),
+            PosColumn(text: 'Rs ${item.price.toStringAsFixed(2)}', width: 2, styles: const PosStyles(align: PosAlign.right)),
+            PosColumn(text: 'Rs ${(item.price * item.quantity).toStringAsFixed(2)}', width: 3, styles: const PosStyles(align: PosAlign.right)),
           ]);
         }
 
