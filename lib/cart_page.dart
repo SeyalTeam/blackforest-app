@@ -338,38 +338,62 @@ class _CartPageState extends State<CartPage> {
       final PosPrintResult res = await printer.connect(printerIp, port: printerPort);
 
       if (res == PosPrintResult.success) {
-        // Extract invoice number
-        String invoiceNumber =
-            billingResponse['invoiceNumber'] ??
-                billingResponse['doc']?['invoiceNumber'] ??
-                'N/A';
+        String invoiceNumber = billingResponse['invoiceNumber'] ??
+            billingResponse['doc']?['invoiceNumber'] ??
+            'N/A';
 
-        // Extract only last 3 digits (001 part)
+        // Extract numeric part from invoice like INV-YYYYMMDD-013 → 013
         final regex = RegExp(r'INV-\d{8}-(\d+)$');
         final match = regex.firstMatch(invoiceNumber);
         String billNo = match != null ? match.group(1)! : invoiceNumber;
-        billNo = billNo.padLeft(3, '0'); // Always 3 digits
+        billNo = billNo.padLeft(3, '0');
 
-        printer.text(_companyName ?? 'Black Forest Cakes',
+        // Date
+        String dateStr = DateTime.now().toString().substring(0, 16).replaceAll('T', ' ');
+
+        // Header
+        printer.text(_companyName ?? 'BLACK FOREST CAKES',
             styles: const PosStyles(align: PosAlign.center, bold: true));
         printer.text('Branch: ${_branchName ?? _branchId}',
             styles: const PosStyles(align: PosAlign.center));
-        if (_branchGst != null) {
-          printer.text('GST: $_branchGst',
-              styles: const PosStyles(align: PosAlign.center));
-        }
 
-        printer.hr();
-        printer.text('BILL NO - $billNo',
-            styles: const PosStyles(align: PosAlign.center, bold: true));
-        printer.hr();
+        printer.text('Mobile: 9876543210',
+            styles: const PosStyles(align: PosAlign.center));
 
-        // Item list header
+        // Double bold separator line before date and bill no
+        printer.hr(ch: '=');
+
+        // Date + Bill No in same row
+        printer.row([
+          PosColumn(
+            text: 'Date: $dateStr',
+            width: 6,
+            styles: const PosStyles(align: PosAlign.left),
+          ),
+          PosColumn(
+            text: 'BILL NO - $billNo',
+            width: 6,
+            styles: const PosStyles(align: PosAlign.right, bold: true),
+          ),
+        ]);
+
+        printer.hr(ch: '=');
+
+        // Item Table Header
         printer.row([
           PosColumn(text: 'Item', width: 5, styles: const PosStyles(bold: true)),
-          PosColumn(text: 'Qty', width: 2, styles: const PosStyles(bold: true, align: PosAlign.center)),
-          PosColumn(text: 'Price', width: 2, styles: const PosStyles(bold: true, align: PosAlign.right)),
-          PosColumn(text: 'Amount', width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
+          PosColumn(
+              text: 'Qty',
+              width: 2,
+              styles: const PosStyles(bold: true, align: PosAlign.center)),
+          PosColumn(
+              text: 'Price',
+              width: 2,
+              styles: const PosStyles(bold: true, align: PosAlign.right)),
+          PosColumn(
+              text: 'Amount',
+              width: 3,
+              styles: const PosStyles(bold: true, align: PosAlign.right)),
         ]);
         printer.hr(ch: '-');
 
@@ -377,15 +401,29 @@ class _CartPageState extends State<CartPage> {
         for (var item in cartProvider.cartItems) {
           printer.row([
             PosColumn(text: item.name, width: 5),
-            PosColumn(text: '${item.quantity}', width: 2, styles: const PosStyles(align: PosAlign.center)),
-            PosColumn(text: item.price.toStringAsFixed(2), width: 2, styles: const PosStyles(align: PosAlign.right)),
-            PosColumn(text: (item.price * item.quantity).toStringAsFixed(2), width: 3, styles: const PosStyles(align: PosAlign.right)),
+            PosColumn(
+                text: '${item.quantity}',
+                width: 2,
+                styles: const PosStyles(align: PosAlign.center)),
+            PosColumn(
+                text: item.price.toStringAsFixed(2),
+                width: 2,
+                styles: const PosStyles(align: PosAlign.right)),
+            PosColumn(
+                text: (item.price * item.quantity).toStringAsFixed(2),
+                width: 3,
+                styles: const PosStyles(align: PosAlign.right)),
           ]);
         }
 
-        printer.hr();
+        printer.hr(ch: '-');
+
+        // Total only (no GST)
         printer.row([
-          PosColumn(text: 'Total RS', width: 8, styles: const PosStyles(bold: true)),
+          PosColumn(
+              text: 'TOTAL RS',
+              width: 8,
+              styles: const PosStyles(bold: true)),
           PosColumn(
             text: cartProvider.total.toStringAsFixed(2),
             width: 4,
@@ -394,7 +432,6 @@ class _CartPageState extends State<CartPage> {
         ]);
 
         printer.text('Paid by: ${paymentMethod.toUpperCase()}');
-
         if (customerDetails['name']?.isNotEmpty == true ||
             customerDetails['phone']?.isNotEmpty == true) {
           printer.hr();
@@ -402,8 +439,8 @@ class _CartPageState extends State<CartPage> {
           printer.text('Phone: ${customerDetails['phone'] ?? ''}');
         }
 
-        printer.hr();
-        printer.text('Thank you! Visit again.',
+        printer.hr(ch: '=');
+        printer.text('Thank you! Visit Again',
             styles: const PosStyles(align: PosAlign.center));
         printer.feed(2);
         printer.cut();
@@ -421,7 +458,6 @@ class _CartPageState extends State<CartPage> {
       );
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
