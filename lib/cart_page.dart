@@ -13,6 +13,7 @@ import 'package:esc_pos_utils/esc_pos_utils.dart';
 
 class CartPage extends StatefulWidget {
   const CartPage({super.key});
+
   @override
   _CartPageState createState() => _CartPageState();
 }
@@ -37,17 +38,14 @@ class _CartPageState extends State<CartPage> {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
       if (token == null) return;
-
       final response = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/users/me?depth=2'),
         headers: {'Authorization': 'Bearer $token'},
       );
-
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final user = data['user'] ?? data;
         _userRole = user['role'];
-
         if (user['role'] == 'branch' && user['branch'] != null) {
           _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
           _branchName = (user['branch'] is Map) ? user['branch']['name'] : null;
@@ -55,7 +53,6 @@ class _CartPageState extends State<CartPage> {
         } else if (user['role'] == 'waiter') {
           await _fetchWaiterBranch(token);
         }
-
         setState(() {});
         Provider.of<CartProvider>(context, listen: false).setBranchId(_branchId);
       }
@@ -127,13 +124,11 @@ class _CartPageState extends State<CartPage> {
   Future<void> _fetchWaiterBranch(String token) async {
     String? deviceIp = await _fetchDeviceIp();
     if (deviceIp == null) return;
-
     try {
       final allBranchesResponse = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
-
       if (allBranchesResponse.statusCode == 200) {
         final branchesData = jsonDecode(allBranchesResponse.body);
         if (branchesData['docs'] != null && branchesData['docs'] is List) {
@@ -229,7 +224,6 @@ class _CartPageState extends State<CartPage> {
       );
       return;
     }
-
     Map<String, dynamic>? customerDetails;
     if (_addCustomerDetails) {
       customerDetails = await showDialog<Map<String, dynamic>>(
@@ -259,12 +253,10 @@ class _CartPageState extends State<CartPage> {
     } else {
       customerDetails = {};
     }
-
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
       if (token == null) return;
-
       final billingData = {
         'items': cartProvider.cartItems
             .map((item) => ({
@@ -283,20 +275,16 @@ class _CartPageState extends State<CartPage> {
         'notes': '',
         'status': 'completed',
       };
-
       final response = await http.post(
         Uri.parse('https://admin.theblackforestcakes.com/api/billings'),
         headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
         body: jsonEncode(billingData),
       );
-
       final billingResponse = jsonDecode(response.body);
       print('📦 BILL RESPONSE: $billingResponse'); // Debugging line
-
       if (response.statusCode == 201) {
         await _printReceipt(cartProvider, billingResponse, customerDetails, _selectedPaymentMethod!);
         cartProvider.clearCart();
-
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Billing submitted successfully')));
         Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const CategoriesPage()));
       } else {
@@ -316,53 +304,38 @@ class _CartPageState extends State<CartPage> {
     final printerIp = cartProvider.printerIp;
     final printerPort = cartProvider.printerPort;
     final printerProtocol = cartProvider.printerProtocol;
-
     if (printerIp == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No printer configured for this branch')),
       );
       return;
     }
-
     if (printerProtocol == null || printerProtocol != 'esc_pos') {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Unsupported printer protocol: $printerProtocol')),
       );
       return;
     }
-
     try {
       const PaperSize paper = PaperSize.mm80;
       final profile = await CapabilityProfile.load();
       final printer = NetworkPrinter(paper, profile);
       final PosPrintResult res = await printer.connect(printerIp, port: printerPort);
-
       if (res == PosPrintResult.success) {
-        String invoiceNumber = billingResponse['invoiceNumber'] ??
-            billingResponse['doc']?['invoiceNumber'] ??
-            'N/A';
-
+        String invoiceNumber = billingResponse['invoiceNumber'] ?? billingResponse['doc']?['invoiceNumber'] ?? 'N/A';
         // Extract numeric part from invoice like INV-YYYYMMDD-013 → 013
         final regex = RegExp(r'INV-\d{8}-(\d+)$');
         final match = regex.firstMatch(invoiceNumber);
         String billNo = match != null ? match.group(1)! : invoiceNumber;
         billNo = billNo.padLeft(3, '0');
-
         // Date
         String dateStr = DateTime.now().toString().substring(0, 16).replaceAll('T', ' ');
-
         // Header
-        printer.text(_companyName ?? 'BLACK FOREST CAKES',
-            styles: const PosStyles(align: PosAlign.center, bold: true));
-        printer.text('Branch: ${_branchName ?? _branchId}',
-            styles: const PosStyles(align: PosAlign.center));
-
-        printer.text('Mobile: 9876543210',
-            styles: const PosStyles(align: PosAlign.center));
-
+        printer.text(_companyName ?? 'BLACK FOREST CAKES', styles: const PosStyles(align: PosAlign.center, bold: true));
+        printer.text('Branch: ${_branchName ?? _branchId}', styles: const PosStyles(align: PosAlign.center));
+        printer.text('Mobile: 9876543210', styles: const PosStyles(align: PosAlign.center));
         // Double bold separator line before date and bill no
         printer.hr(ch: '=');
-
         // Date + Bill No in same row
         printer.row([
           PosColumn(
@@ -376,9 +349,7 @@ class _CartPageState extends State<CartPage> {
             styles: const PosStyles(align: PosAlign.right, bold: true),
           ),
         ]);
-
         printer.hr(ch: '=');
-
         // Item Table Header
         printer.row([
           PosColumn(text: 'Item', width: 5, styles: const PosStyles(bold: true)),
@@ -396,7 +367,6 @@ class _CartPageState extends State<CartPage> {
               styles: const PosStyles(bold: true, align: PosAlign.right)),
         ]);
         printer.hr(ch: '-');
-
         // Items
         for (var item in cartProvider.cartItems) {
           printer.row([
@@ -415,9 +385,7 @@ class _CartPageState extends State<CartPage> {
                 styles: const PosStyles(align: PosAlign.right)),
           ]);
         }
-
         printer.hr(ch: '-');
-
         // Total only (no GST)
         printer.row([
           PosColumn(
@@ -430,22 +398,17 @@ class _CartPageState extends State<CartPage> {
             styles: const PosStyles(align: PosAlign.right, bold: true),
           ),
         ]);
-
         printer.text('Paid by: ${paymentMethod.toUpperCase()}');
-        if (customerDetails['name']?.isNotEmpty == true ||
-            customerDetails['phone']?.isNotEmpty == true) {
+        if (customerDetails['name']?.isNotEmpty == true || customerDetails['phone']?.isNotEmpty == true) {
           printer.hr();
           printer.text('Customer: ${customerDetails['name'] ?? ''}');
           printer.text('Phone: ${customerDetails['phone'] ?? ''}');
         }
-
         printer.hr(ch: '=');
-        printer.text('Thank you! Visit Again',
-            styles: const PosStyles(align: PosAlign.center));
+        printer.text('Thank you! Visit Again', styles: const PosStyles(align: PosAlign.center));
         printer.feed(2);
         printer.cut();
         printer.disconnect();
-
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Receipt printed successfully')),
         );
@@ -472,8 +435,7 @@ class _CartPageState extends State<CartPage> {
               child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                 Icon(Icons.shopping_cart_outlined, size: 100, color: Colors.grey),
                 SizedBox(height: 20),
-                Text('Your cart is empty. Add products from categories!',
-                    style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18)),
+                Text('Your cart is empty. Add products from categories!', style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18)),
               ]),
             );
           }
@@ -520,29 +482,68 @@ class _CartPageState extends State<CartPage> {
                   Text('₹${cartProvider.total.toStringAsFixed(2)}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 ]),
                 const SizedBox(height: 10),
-                Row(children: [
-                  const Text('Add Customer Details'),
-                  Switch(value: _addCustomerDetails, onChanged: (v) => setState(() => _addCustomerDetails = v)),
-                ]),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  value: _selectedPaymentMethod,
-                  decoration: const InputDecoration(labelText: 'Payment Method', border: OutlineInputBorder()),
-                  items: const [
-                    DropdownMenuItem(value: 'cash', child: Text('Cash')),
-                    DropdownMenuItem(value: 'upi', child: Text('UPI')),
-                    DropdownMenuItem(value: 'card', child: Text('Card')),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 40, // Decreased height
+                        child: ElevatedButton.icon(
+                          icon: const Icon(Icons.money),
+                          label: const Text('Cash'),
+                          onPressed: () => setState(() => _selectedPaymentMethod = 'cash'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _selectedPaymentMethod == 'cash' ? Colors.green : null,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8), // Spacing between buttons
+                    Expanded(
+                      child: SizedBox(
+                        height: 40,
+                        child: ElevatedButton.icon(
+                          icon: const Icon(Icons.qr_code),
+                          label: const Text('UPI'),
+                          onPressed: () => setState(() => _selectedPaymentMethod = 'upi'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _selectedPaymentMethod == 'upi' ? Colors.green : null,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: SizedBox(
+                        height: 40,
+                        child: ElevatedButton.icon(
+                          icon: const Icon(Icons.credit_card),
+                          label: const Text('Card'),
+                          onPressed: () => setState(() => _selectedPaymentMethod = 'card'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _selectedPaymentMethod == 'card' ? Colors.green : null,
+                          ),
+                        ),
+                      ),
+                    ),
                   ],
-                  onChanged: (v) => setState(() => _selectedPaymentMethod = v),
                 ),
                 const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: _submitBilling,
-                    icon: const Icon(Icons.receipt_long),
-                    label: const Text('Generate Invoice', style: TextStyle(fontSize: 18)),
-                  ),
+                Row(
+                  children: [
+                    Switch(value: _addCustomerDetails, onChanged: (v) => setState(() => _addCustomerDetails = v)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: SizedBox(
+                        height: 40,
+                        child: ElevatedButton.icon(
+                          onPressed: _submitBilling,
+                          icon: const Icon(Icons.receipt_long),
+                          label: const Text('Generate Invoice', style: TextStyle(fontSize: 18)),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ]),
             ),
