@@ -180,12 +180,12 @@ class _CommonScaffoldState extends State<CommonScaffold> {
             children: <Widget>[
               DrawerHeader(
                 decoration: const BoxDecoration(
-                  color: Color(0xFFE4F0FE),
+                  color: Colors.black,
                 ),
                 child: Text(
                   _username,
                   style: const TextStyle(
-                    color: Colors.black,
+                    color: Colors.white,
                     fontSize: 24,
                   ),
                 ),
