@@ -292,9 +292,11 @@ class _ProductsPageState extends State<ProductsPage> {
                                     imageUrl: imageUrl!,
                                     fit: BoxFit.cover,
                                     width: double.infinity,
-                                    placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
+                                    placeholder: (context, url) =>
+                                    const Center(child: CircularProgressIndicator()),
                                     errorWidget: (context, url, error) => const Center(
-                                        child: Text('No Image', style: TextStyle(color: Colors.grey))),
+                                      child: Text('No Image', style: TextStyle(color: Colors.grey)),
+                                    ),
                                   ),
                                 ),
                               ),

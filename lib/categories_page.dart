@@ -4,21 +4,14 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:blackforest_app/products_page.dart';
-import 'package:blackforest_app/stock_order.dart';
-import 'package:blackforest_app/return_order_page.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 
 class CategoriesPage extends StatefulWidget {
-  final bool isPastryFilter;
-  final bool isStockFilter;
-
   const CategoriesPage({
     super.key,
-    this.isPastryFilter = false,
-    this.isStockFilter = false,
   });
 
   @override
@@ -91,7 +84,6 @@ class _CategoriesPageState extends State<CategoriesPage> {
   Future<List<String>> _fetchMatchingCompanyIds(String token, String? deviceIp) async {
     List<String> companyIds = [];
     if (deviceIp == null) return companyIds;
-
     try {
       final allBranchesResponse = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
@@ -142,10 +134,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
       if (_userRole == null) {
         await _fetchUserData(token);
       }
-      String filterQuery = (widget.isPastryFilter || widget.isStockFilter)
-          ? 'where[isStock][equals]=true'
-          : 'where[isBilling][equals]=true';
-
+      String filterQuery = 'where[isBilling][equals]=true';
       // Role-based company filter
       if (_userRole != 'superadmin') {
         String? companyFilter;
@@ -176,7 +165,6 @@ class _CategoriesPageState extends State<CategoriesPage> {
           filterQuery += companyFilter;
         }
       }
-
       final response = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/categories?$filterQuery&limit=100&depth=1'),
         headers: {'Authorization': 'Bearer $token'},
@@ -222,7 +210,6 @@ class _CategoriesPageState extends State<CategoriesPage> {
         Uri.parse('https://admin.theblackforestcakes.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
-
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final List<dynamic> products = data['docs'] ?? [];
@@ -270,18 +257,9 @@ class _CategoriesPageState extends State<CategoriesPage> {
 
   @override
   Widget build(BuildContext context) {
-    String title;
-    PageType pageType;
-    if (widget.isStockFilter) {
-      title = 'Return Order Categories';
-      pageType = PageType.stock;
-    } else if (widget.isPastryFilter) {
-      title = 'Pastry Categories';
-      pageType = PageType.pastry;
-    } else {
-      title = 'Billing Categories';
-      pageType = PageType.billing;
-    }
+    String title = 'Billing Categories';
+    PageType pageType = PageType.billing;
+
     return CommonScaffold(
       title: title,
       pageType: pageType,
@@ -339,26 +317,12 @@ class _CategoriesPageState extends State<CategoriesPage> {
                 imageUrl ??= 'https://via.placeholder.com/150?text=No+Image'; // Fallback
                 return GestureDetector(
                   onTap: () {
-                    Widget productPage;
-                    if (widget.isStockFilter) {
-                      productPage = ReturnOrderPage(
-                        categoryId: category['id'],
-                        categoryName: category['name'],
-                      );
-                    } else if (widget.isPastryFilter) {
-                      productPage = StockOrderPage(
-                        categoryId: category['id'],
-                        categoryName: category['name'],
-                      );
-                    } else {
-                      productPage = ProductsPage(
-                        categoryId: category['id'],
-                        categoryName: category['name'],
-                      );
-                    }
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (context) => productPage),
+                      MaterialPageRoute(builder: (context) => ProductsPage(
+                        categoryId: category['id'],
+                        categoryName: category['name'],
+                      )),
                     );
                   },
                   child: Container(
