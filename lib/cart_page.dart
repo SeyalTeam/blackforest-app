@@ -460,7 +460,18 @@ class _CartPageState extends State<CartPage> {
                         errorWidget: (context, url, error) => const Icon(Icons.error),
                       )
                           : const Icon(Icons.image_not_supported, size: 60),
-                      title: Text(item.name),
+                      title: Expanded(
+                        child: Text(
+                          item.name,
+                          softWrap: false,
+                          overflow: TextOverflow.visible,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+
                       subtitle: Text('₹${item.price.toStringAsFixed(2)} x ${item.quantity} = ₹${(item.price * item.quantity).toStringAsFixed(2)}'),
                       trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                         IconButton(icon: const Icon(Icons.remove_circle_outline), onPressed: () => cartProvider.updateQuantity(item.id, item.quantity - 1)),
