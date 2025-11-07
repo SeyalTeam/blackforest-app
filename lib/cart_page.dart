@@ -22,6 +22,7 @@ class _CartPageState extends State<CartPage> {
   String? _branchId;
   String? _branchName;
   String? _branchGst;
+  String? _branchMobile;
   String? _companyName;
   String? _userRole;
   bool _addCustomerDetails = false;
@@ -38,14 +39,17 @@ class _CartPageState extends State<CartPage> {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
       if (token == null) return;
+
       final response = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/users/me?depth=2'),
         headers: {'Authorization': 'Bearer $token'},
       );
+
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final user = data['user'] ?? data;
         _userRole = user['role'];
+
         if (user['role'] == 'branch' && user['branch'] != null) {
           _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
           _branchName = (user['branch'] is Map) ? user['branch']['name'] : null;
@@ -53,6 +57,7 @@ class _CartPageState extends State<CartPage> {
         } else if (user['role'] == 'waiter') {
           await _fetchWaiterBranch(token);
         }
+
         setState(() {});
         Provider.of<CartProvider>(context, listen: false).setBranchId(_branchId);
       }
@@ -65,15 +70,19 @@ class _CartPageState extends State<CartPage> {
         Uri.parse('https://admin.theblackforestcakes.com/api/branches/$branchId?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
+
       if (response.statusCode == 200) {
         final branch = jsonDecode(response.body);
         _branchName = branch['name'] ?? _branchName;
         _branchGst = branch['gst'];
+        _branchMobile = branch['phone'] ?? null;
+
         if (branch['company'] != null && branch['company'] is Map) {
           _companyName = branch['company']['name'];
         } else if (branch['company'] != null) {
           await _fetchCompanyDetails(token, branch['company'].toString());
         }
+
         final cartProvider = Provider.of<CartProvider>(context, listen: false);
         cartProvider.setPrinterDetails(
           branch['printerIp'],
@@ -90,6 +99,7 @@ class _CartPageState extends State<CartPage> {
         Uri.parse('https://admin.theblackforestcakes.com/api/companies/$companyId?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
+
       if (response.statusCode == 200) {
         final company = jsonDecode(response.body);
         _companyName = company['name'] ?? 'Unknown Company';
@@ -124,11 +134,13 @@ class _CartPageState extends State<CartPage> {
   Future<void> _fetchWaiterBranch(String token) async {
     String? deviceIp = await _fetchDeviceIp();
     if (deviceIp == null) return;
+
     try {
       final allBranchesResponse = await http.get(
         Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
+
       if (allBranchesResponse.statusCode == 200) {
         final branchesData = jsonDecode(allBranchesResponse.body);
         if (branchesData['docs'] != null && branchesData['docs'] is List) {
@@ -139,11 +151,14 @@ class _CartPageState extends State<CartPage> {
                 _branchId = branch['id'];
                 _branchName = branch['name'];
                 _branchGst = branch['gst'];
+                _branchMobile = branch['phone'] ?? null;
+
                 if (branch['company'] != null && branch['company'] is Map) {
                   _companyName = branch['company']['name'];
                 } else if (branch['company'] != null) {
                   await _fetchCompanyDetails(token, branch['company'].toString());
                 }
+
                 final cartProvider = Provider.of<CartProvider>(context, listen: false);
                 cartProvider.setPrinterDetails(
                   branch['printerIp'],
@@ -169,11 +184,13 @@ class _CartPageState extends State<CartPage> {
         );
         return;
       }
+
       final response = await http.get(
         Uri.parse(
             'https://admin.theblackforestcakes.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
+
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final List<dynamic> products = data['docs'] ?? [];
@@ -181,6 +198,7 @@ class _CartPageState extends State<CartPage> {
           final product = products[0];
           final cartProvider = Provider.of<CartProvider>(context, listen: false);
           double price = product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
+
           if (_branchId != null && product['branchOverrides'] != null) {
             for (var override in product['branchOverrides']) {
               var branch = override['branch'];
@@ -191,6 +209,7 @@ class _CartPageState extends State<CartPage> {
               }
             }
           }
+
           final item = CartItem.fromProduct(product, 1, branchPrice: price);
           cartProvider.addOrUpdateItem(item);
           final newQty = cartProvider.cartItems.firstWhere((i) => i.id == item.id).quantity;
@@ -218,12 +237,14 @@ class _CartPageState extends State<CartPage> {
       );
       return;
     }
+
     if (_selectedPaymentMethod == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select a payment method')),
       );
       return;
     }
+
     Map<String, dynamic>? customerDetails;
     if (_addCustomerDetails) {
       customerDetails = await showDialog<Map<String, dynamic>>(
@@ -238,13 +259,18 @@ class _CartPageState extends State<CartPage> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Customer Name')),
-                  TextField(controller: phoneController, decoration: const InputDecoration(labelText: 'Phone'), keyboardType: TextInputType.phone),
+                  TextField(
+                      controller: phoneController,
+                      decoration: const InputDecoration(labelText: 'Phone'),
+                      keyboardType: TextInputType.phone),
                 ],
               ),
             ),
             actions: [
               TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-              TextButton(onPressed: () => Navigator.pop(context, {'name': nameController.text, 'phone': phoneController.text}), child: const Text('Submit')),
+              TextButton(
+                  onPressed: () => Navigator.pop(context, {'name': nameController.text, 'phone': phoneController.text}),
+                  child: const Text('Submit')),
             ],
           );
         },
@@ -253,10 +279,12 @@ class _CartPageState extends State<CartPage> {
     } else {
       customerDetails = {};
     }
+
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
       if (token == null) return;
+
       final billingData = {
         'items': cartProvider.cartItems
             .map((item) => ({
@@ -275,13 +303,16 @@ class _CartPageState extends State<CartPage> {
         'notes': '',
         'status': 'completed',
       };
+
       final response = await http.post(
         Uri.parse('https://admin.theblackforestcakes.com/api/billings'),
         headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
         body: jsonEncode(billingData),
       );
+
       final billingResponse = jsonDecode(response.body);
       print('📦 BILL RESPONSE: $billingResponse'); // Debugging line
+
       if (response.statusCode == 201) {
         await _printReceipt(cartProvider, billingResponse, customerDetails, _selectedPaymentMethod!);
         cartProvider.clearCart();
@@ -304,38 +335,49 @@ class _CartPageState extends State<CartPage> {
     final printerIp = cartProvider.printerIp;
     final printerPort = cartProvider.printerPort;
     final printerProtocol = cartProvider.printerProtocol;
+
     if (printerIp == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No printer configured for this branch')),
       );
       return;
     }
+
     if (printerProtocol == null || printerProtocol != 'esc_pos') {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Unsupported printer protocol: $printerProtocol')),
       );
       return;
     }
+
     try {
       const PaperSize paper = PaperSize.mm80;
       final profile = await CapabilityProfile.load();
       final printer = NetworkPrinter(paper, profile);
+
       final PosPrintResult res = await printer.connect(printerIp, port: printerPort);
+
       if (res == PosPrintResult.success) {
         String invoiceNumber = billingResponse['invoiceNumber'] ?? billingResponse['doc']?['invoiceNumber'] ?? 'N/A';
+
         // Extract numeric part from invoice like INV-YYYYMMDD-013 → 013
         final regex = RegExp(r'INV-\d{8}-(\d+)$');
         final match = regex.firstMatch(invoiceNumber);
         String billNo = match != null ? match.group(1)! : invoiceNumber;
         billNo = billNo.padLeft(3, '0');
+
         // Date
         String dateStr = DateTime.now().toString().substring(0, 16).replaceAll('T', ' ');
+
         // Header
         printer.text(_companyName ?? 'BLACK FOREST CAKES', styles: const PosStyles(align: PosAlign.center, bold: true));
         printer.text('Branch: ${_branchName ?? _branchId}', styles: const PosStyles(align: PosAlign.center));
-        printer.text('Mobile: 9876543210', styles: const PosStyles(align: PosAlign.center));
+        printer.text('GST: ${_branchGst ?? 'N/A'}', styles: const PosStyles(align: PosAlign.center));
+        printer.text('Mobile: ${_branchMobile ?? 'N/A'}', styles: const PosStyles(align: PosAlign.center));
+
         // Double bold separator line before date and bill no
         printer.hr(ch: '=');
+
         // Date + Bill No in same row
         printer.row([
           PosColumn(
@@ -349,7 +391,9 @@ class _CartPageState extends State<CartPage> {
             styles: const PosStyles(align: PosAlign.right, bold: true),
           ),
         ]);
+
         printer.hr(ch: '=');
+
         // Item Table Header
         printer.row([
           PosColumn(text: 'Item', width: 5, styles: const PosStyles(bold: true)),
@@ -366,7 +410,9 @@ class _CartPageState extends State<CartPage> {
               width: 3,
               styles: const PosStyles(bold: true, align: PosAlign.right)),
         ]);
+
         printer.hr(ch: '-');
+
         // Items
         for (var item in cartProvider.cartItems) {
           printer.row([
@@ -385,7 +431,9 @@ class _CartPageState extends State<CartPage> {
                 styles: const PosStyles(align: PosAlign.right)),
           ]);
         }
+
         printer.hr(ch: '-');
+
         // Total only (no GST)
         printer.row([
           PosColumn(
@@ -398,17 +446,21 @@ class _CartPageState extends State<CartPage> {
             styles: const PosStyles(align: PosAlign.right, bold: true),
           ),
         ]);
+
         printer.text('Paid by: ${paymentMethod.toUpperCase()}');
+
         if (customerDetails['name']?.isNotEmpty == true || customerDetails['phone']?.isNotEmpty == true) {
           printer.hr();
           printer.text('Customer: ${customerDetails['name'] ?? ''}');
           printer.text('Phone: ${customerDetails['phone'] ?? ''}');
         }
+
         printer.hr(ch: '=');
         printer.text('Thank you! Visit Again', styles: const PosStyles(align: PosAlign.center));
         printer.feed(2);
         printer.cut();
         printer.disconnect();
+
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Receipt printed successfully')),
         );
@@ -435,10 +487,12 @@ class _CartPageState extends State<CartPage> {
               child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                 Icon(Icons.shopping_cart_outlined, size: 100, color: Colors.grey),
                 SizedBox(height: 20),
-                Text('Your cart is empty. Add products from categories!', style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18)),
+                Text('Your cart is empty. Add products from categories!',
+                    style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18)),
               ]),
             );
           }
+
           return Column(children: [
             Expanded(
               child: ListView.builder(
@@ -461,12 +515,19 @@ class _CartPageState extends State<CartPage> {
                       )
                           : const Icon(Icons.image_not_supported, size: 60),
                       title: Text(item.name),
-                      subtitle: Text('₹${item.price.toStringAsFixed(2)} x ${item.quantity} = ₹${(item.price * item.quantity).toStringAsFixed(2)}'),
+                      subtitle: Text(
+                          '₹${item.price.toStringAsFixed(2)} x ${item.quantity} = ₹${(item.price * item.quantity).toStringAsFixed(2)}'),
                       trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                        IconButton(icon: const Icon(Icons.remove_circle_outline), onPressed: () => cartProvider.updateQuantity(item.id, item.quantity - 1)),
+                        IconButton(
+                            icon: const Icon(Icons.remove_circle_outline),
+                            onPressed: () => cartProvider.updateQuantity(item.id, item.quantity - 1)),
                         Text('${item.quantity}', style: const TextStyle(fontSize: 16)),
-                        IconButton(icon: const Icon(Icons.add_circle_outline), onPressed: () => cartProvider.updateQuantity(item.id, item.quantity + 1)),
-                        IconButton(icon: const Icon(Icons.delete_outline, color: Colors.red), onPressed: () => cartProvider.removeItem(item.id)),
+                        IconButton(
+                            icon: const Icon(Icons.add_circle_outline),
+                            onPressed: () => cartProvider.updateQuantity(item.id, item.quantity + 1)),
+                        IconButton(
+                            icon: const Icon(Icons.delete_outline, color: Colors.red),
+                            onPressed: () => cartProvider.removeItem(item.id)),
                       ]),
                     ),
                   );
@@ -479,7 +540,8 @@ class _CartPageState extends State<CartPage> {
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
                   const Text('Total:', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                  Text('₹${cartProvider.total.toStringAsFixed(2)}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                  Text('₹${cartProvider.total.toStringAsFixed(2)}',
+                      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
                 ]),
                 const SizedBox(height: 10),
                 Row(
