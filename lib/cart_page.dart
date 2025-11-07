@@ -360,8 +360,8 @@ class _CartPageState extends State<CartPage> {
       if (res == PosPrintResult.success) {
         String invoiceNumber = billingResponse['invoiceNumber'] ?? billingResponse['doc']?['invoiceNumber'] ?? 'N/A';
 
-        // Extract numeric part from invoice like INV-YYYYMMDD-013 → 013
-        final regex = RegExp(r'INV-\d{8}-(\d+)$');
+        // Extract numeric part from invoice like CHI-YYYYMMDD-017 → 017
+        final regex = RegExp(r'CHI-\d{8}-(\d+)$');
         final match = regex.firstMatch(invoiceNumber);
         String billNo = match != null ? match.group(1)! : invoiceNumber;
         billNo = billNo.padLeft(3, '0');
