@@ -264,11 +264,16 @@ class _CartPageState extends State<CartPage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  TextField(controller: nameController, decoration: const InputDecoration(labelText: 'Customer Name')),
                   TextField(
-                      controller: phoneController,
-                      decoration: const InputDecoration(labelText: 'Phone'),
-                      keyboardType: TextInputType.phone),
+                    controller: phoneController,
+                    decoration: const InputDecoration(labelText: 'Phone Number'),
+                    keyboardType: TextInputType.phone,
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(labelText: 'Customer Name'),
+                  ),
                 ],
               ),
             ),
@@ -310,7 +315,7 @@ class _CartPageState extends State<CartPage> {
             .toList(),
         'totalAmount': cartProvider.total,
         'branch': _branchId,
-        'customerDetails': {'name': customerDetails['name'] ?? '', 'phone': customerDetails['phone'] ?? ''},
+        'customerDetails': { 'phone': customerDetails['phone'] ?? '','name': customerDetails['name'] ?? ''},
         'paymentMethod': _selectedPaymentMethod,
         'notes': '',
         'status': 'completed',
@@ -488,36 +493,127 @@ class _CartPageState extends State<CartPage> {
                 itemBuilder: (context, index) {
                   final item = cartProvider.cartItems[index];
                   return Card(
-                    elevation: 2,
-                    margin: const EdgeInsets.symmetric(vertical: 5),
-                    child: ListTile(
-                      leading: item.imageUrl != null
-                          ? CachedNetworkImage(
-                        imageUrl: item.imageUrl!,
-                        width: 60,
-                        height: 60,
-                        fit: BoxFit.cover,
-                        placeholder: (context, url) => const CircularProgressIndicator(),
-                        errorWidget: (context, url, error) => const Icon(Icons.error),
-                      )
-                          : const Icon(Icons.image_not_supported, size: 60),
-                      title: Text(item.name),
-                      subtitle: Text(
-                          '₹${item.price.toStringAsFixed(2)} x ${item.quantity} = ₹${(item.price * item.quantity).toStringAsFixed(2)}'),
-                      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                        IconButton(
-                            icon: const Icon(Icons.remove_circle_outline),
-                            onPressed: () => cartProvider.updateQuantity(item.id, item.quantity - 1)),
-                        Text('${item.quantity}', style: const TextStyle(fontSize: 16)),
-                        IconButton(
-                            icon: const Icon(Icons.add_circle_outline),
-                            onPressed: () => cartProvider.updateQuantity(item.id, item.quantity + 1)),
-                        IconButton(
-                            icon: const Icon(Icons.delete_outline, color: Colors.red),
-                            onPressed: () => cartProvider.removeItem(item.id)),
-                      ]),
+                    elevation: 3,
+                    margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // 🔹 First Row: Product name + Delete icon
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  item.name,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black87,
+                                  ),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
+                                iconSize: 20, // same height visually as text
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                onPressed: () => cartProvider.removeItem(item.id),
+                              ),
+                            ],
+                          ),
+
+                          // 🔹 One subtle line of spacing only (1 logical pixel)
+                          const SizedBox(height: 1),
+
+                          // 🔹 Second Row: Image + Quantity Controls + Price
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              // Product Image
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(6),
+                                child: item.imageUrl != null
+                                    ? CachedNetworkImage(
+                                  imageUrl: item.imageUrl!,
+                                  width: 40,
+                                  height: 40,
+                                  fit: BoxFit.cover,
+                                  placeholder: (context, url) => const SizedBox(
+                                      width: 24,
+                                      height: 24,
+                                      child: CircularProgressIndicator(strokeWidth: 2)),
+                                  errorWidget: (context, url, error) =>
+                                  const Icon(Icons.image_not_supported, size: 36),
+                                )
+                                    : Container(
+                                  width: 55,
+                                  height: 55,
+                                  color: Colors.grey[300],
+                                  child: const Icon(Icons.image_not_supported, size: 36),
+                                ),
+                              ),
+
+                              const SizedBox(width: 8),
+
+                              // Quantity Controls
+                              Row(
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.remove_circle_outline),
+                                    iconSize: 22,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(),
+                                    onPressed: () => cartProvider.updateQuantity(
+                                        item.id, item.quantity - 1),
+                                  ),
+                                  Text(
+                                    '${item.quantity}',
+                                    style: const TextStyle(
+                                        fontSize: 15, fontWeight: FontWeight.w600),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.add_circle_outline),
+                                    iconSize: 22,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(),
+                                    onPressed: () => cartProvider.updateQuantity(
+                                        item.id, item.quantity + 1),
+                                  ),
+                                ],
+                              ),
+
+                              const Spacer(),
+
+                              // Price Details
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.end,
+                                children: [
+                                  Text(
+                                    '₹${item.price.toStringAsFixed(2)}',
+                                    style: const TextStyle(fontSize: 13, color: Colors.black54),
+                                  ),
+                                  Text(
+                                    '₹${(item.price * item.quantity).toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.black87,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   );
+
                 },
               ),
             ),
