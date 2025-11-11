@@ -161,22 +161,108 @@ class _ProductsPageState extends State<ProductsPage> {
   }
 
   /// Add or update product in cart
-  void _toggleProductSelection(int index) {
+  void _toggleProductSelection(int index) async {
     final product = _products[index];
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
+
+    // Step 1: Get product price
     double price = product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
     if (_branchId != null && product['branchOverrides'] != null) {
       for (var override in product['branchOverrides']) {
         var branch = override['branch'];
-        String branchOid = branch is Map ? branch[r'$oid'] ?? branch['id'] ?? '' : branch ?? '';
+        String branchOid =
+        branch is Map ? (branch[r'$oid'] ?? branch['id'] ?? '') : (branch ?? '');
         if (branchOid == _branchId) {
           price = override['price']?.toDouble() ?? price;
           break;
         }
       }
     }
-    final item = CartItem.fromProduct(product, 1, branchPrice: price);
-    cartProvider.addOrUpdateItem(item);
+
+    // Step 2: Detect if the product is weight-based
+    bool isKgBased = false;
+    try {
+      final unit = product['unit']?.toString().toLowerCase();
+      final isKgFlag = product['isKg'] == true ||
+          product['sellByWeight'] == true ||
+          product['weightBased'] == true;
+      final pricingType = product['pricingType']?.toString().toLowerCase();
+      final nameLower = (product['name'] ?? '').toString().toLowerCase();
+
+      if (unit != null && unit.contains('kg')) isKgBased = true;
+      if (isKgFlag) isKgBased = true;
+      if (pricingType != null && pricingType.contains('kg')) isKgBased = true;
+      if (nameLower.contains('per kg') ||
+          nameLower.contains('/kg') ||
+          nameLower.contains('kg')) {
+        isKgBased = true;
+      }
+    } catch (e) {
+      isKgBased = false;
+    }
+
+    // Step 3: Get current quantity if exists
+    double existingQty = 0.0;
+    final existingItem =
+    cartProvider.cartItems.firstWhere((i) => i.id == product['id'], orElse: () => CartItem(id: '', name: '', price: 0, quantity: 0));
+    if (existingItem.id.isNotEmpty) {
+      existingQty = existingItem.quantity.toDouble();
+    }
+
+    double quantity = 1.0;
+
+    // Step 4: Show popup if kg-based
+    if (isKgBased) {
+      final TextEditingController weightController =
+      TextEditingController(text: existingQty > 0 ? existingQty.toString() : '');
+
+      final enteredWeight = await showDialog<double>(
+        context: context,
+        barrierDismissible: true,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('Enter Weight (kg)'),
+            content: TextField(
+              controller: weightController,
+              keyboardType:
+              const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                hintText: 'e.g. 0.5',
+                labelText: 'Weight in kilograms',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final value =
+                      double.tryParse(weightController.text.trim()) ?? 0.0;
+                  Navigator.pop(context, value);
+                },
+                child: const Text('OK'),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (enteredWeight == null || enteredWeight <= 0) return;
+      quantity = enteredWeight;
+    }
+
+    // Step 5: Update or add
+    if (existingItem.id.isNotEmpty) {
+      // ✅ Replace old quantity instead of adding
+      cartProvider.updateQuantity(product['id'], quantity);
+    } else {
+      // ✅ Add new item
+      final item = CartItem.fromProduct(product, quantity, branchPrice: price);
+      cartProvider.addOrUpdateItem(item);
+    }
   }
 
   /// Barcode scan support

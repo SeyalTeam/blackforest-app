@@ -8,7 +8,8 @@ class CartItem {
   final String name;
   final double price;
   final String? imageUrl;
-  final int quantity;
+  double quantity; // ✅ changed from int → double
+  final String? unit; // ✅ optional, e.g. "pcs" or "kg"
 
   CartItem({
     required this.id,
@@ -16,9 +17,10 @@ class CartItem {
     required this.price,
     this.imageUrl,
     required this.quantity,
+    this.unit,
   });
 
-  factory CartItem.fromProduct(dynamic product, int quantity, {double? branchPrice}) {
+  factory CartItem.fromProduct(dynamic product, double quantity, {double? branchPrice}) {
     String? imageUrl;
     if (product['images'] != null &&
         product['images'].isNotEmpty &&
@@ -29,14 +31,20 @@ class CartItem {
         imageUrl = 'https://admin.theblackforestcakes.com$imageUrl';
       }
     }
+
     double price =
         branchPrice ?? (product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0);
+
+    // ✅ read unit from product (default to 'pcs' if missing)
+    String? unit = product['unit']?.toString().toLowerCase() ?? 'pcs';
+
     return CartItem(
       id: product['id'],
       name: product['name'] ?? 'Unknown',
       price: price,
       imageUrl: imageUrl,
       quantity: quantity,
+      unit: unit,
     );
   }
 }
@@ -49,8 +57,10 @@ class CartProvider extends ChangeNotifier {
   String? _printerProtocol = 'esc_pos';
 
   List<CartItem> get cartItems => _cartItems;
+
   double get total =>
       _cartItems.fold(0.0, (sum, item) => sum + (item.price * item.quantity));
+
   String? get printerIp => _printerIp;
   int get printerPort => _printerPort;
   String? get printerProtocol => _printerProtocol;
@@ -58,29 +68,18 @@ class CartProvider extends ChangeNotifier {
   void addOrUpdateItem(CartItem item) {
     final index = _cartItems.indexWhere((i) => i.id == item.id);
     if (index != -1) {
-      _cartItems[index] = CartItem(
-        id: item.id,
-        name: item.name,
-        price: item.price,
-        imageUrl: item.imageUrl,
-        quantity: _cartItems[index].quantity + item.quantity,
-      );
+      // ✅ works for both kg and pcs
+      _cartItems[index].quantity += item.quantity;
     } else {
       _cartItems.add(item);
     }
     notifyListeners();
   }
 
-  void updateQuantity(String id, int newQuantity) {
+  void updateQuantity(String id, double newQuantity) { // ✅ double now
     final index = _cartItems.indexWhere((i) => i.id == id);
     if (index != -1 && newQuantity > 0) {
-      _cartItems[index] = CartItem(
-        id: _cartItems[index].id,
-        name: _cartItems[index].name,
-        price: _cartItems[index].price,
-        imageUrl: _cartItems[index].imageUrl,
-        quantity: newQuantity,
-      );
+      _cartItems[index].quantity = newQuantity;
       notifyListeners();
     } else if (newQuantity <= 0) {
       removeItem(id);
@@ -119,8 +118,9 @@ class CartProvider extends ChangeNotifier {
 
       final items = _cartItems.map((item) => {
         'product': item.id,
-        'quantity': item.quantity,
+        'quantity': item.quantity, // ✅ supports decimals now
         'price': item.price,
+        'unit': item.unit, // ✅ optional but helps in backend clarity
       }).toList();
 
       final body = jsonEncode({

@@ -11,13 +11,13 @@ import 'package:blackforest_app/cart_provider.dart'; // Import CartProvider
 import 'package:blackforest_app/employee.dart'; // Import EmployeePage
 import 'package:blackforest_app/table.dart'; // Import TablePage
 
-enum PageType { employee, billing, cake, cart, table } // Updated enum
+enum PageType { employee, billing, cake, cart, table }
 
 class CommonScaffold extends StatefulWidget {
-  final String title; // Custom title for the page
-  final Widget body; // The main content
-  final Function(String)? onScanCallback; // Optional callback for scan result
-  final PageType pageType; // To highlight active footer icon
+  final String title;
+  final Widget body;
+  final Function(String)? onScanCallback;
+  final PageType pageType;
 
   const CommonScaffold({
     super.key,
@@ -33,13 +33,13 @@ class CommonScaffold extends StatefulWidget {
 
 class _CommonScaffoldState extends State<CommonScaffold> {
   Timer? _inactivityTimer;
-  String _username = 'Menu'; // Fallback
+  String _username = 'Menu';
 
   @override
   void initState() {
     super.initState();
     _loadUsername();
-    _resetTimer(); // Start timer
+    _resetTimer();
   }
 
   @override
@@ -57,13 +57,13 @@ class _CommonScaffoldState extends State<CommonScaffold> {
 
   void _resetTimer() {
     _inactivityTimer?.cancel();
-    _inactivityTimer = Timer(const Duration(hours: 7), _logout); // 7 hours timeout
+    _inactivityTimer = Timer(const Duration(hours: 7), _logout);
   }
 
   Future<void> _logout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
-    Navigator.pushReplacementNamed(context, '/login'); // Go to login
+    Navigator.pushReplacementNamed(context, '/login');
   }
 
   void _showMessage(String message) {
@@ -76,12 +76,12 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   }
 
   Future<void> _scanBarcode() async {
-    _resetTimer(); // Reset timer on tap
+    _resetTimer();
     if (!io.Platform.isAndroid && !io.Platform.isIOS) {
       _showMessage('Scanner not supported on this platform');
       return;
     }
-    // Show full-screen dialog for scanner
+
     final result = await showGeneralDialog<String>(
       context: context,
       barrierDismissible: true,
@@ -91,9 +91,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
         return FadeTransition(opacity: anim1, child: child);
       },
     );
+
     if (result != null) {
       if (widget.onScanCallback != null) {
-        widget.onScanCallback!(result); // Call page-specific handler
+        widget.onScanCallback!(result);
       } else {
         _showMessage('Scanned barcode: $result');
       }
@@ -106,7 +107,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     return PageRouteBuilder(
       pageBuilder: (context, animation, secondaryAnimation) => page,
       transitionsBuilder: (context, animation, secondaryAnimation, child) {
-        return child; // No transition animation
+        return child;
       },
     );
   }
@@ -114,13 +115,12 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      // Detect taps to reset timer
       onTap: _resetTimer,
       child: Scaffold(
         appBar: AppBar(
           title: Text(widget.title, style: const TextStyle(color: Colors.white)),
           backgroundColor: Colors.black,
-          iconTheme: const IconThemeData(color: Colors.white), // White menu icon
+          iconTheme: const IconThemeData(color: Colors.white),
           actions: [
             IconButton(
               icon: const Icon(Icons.notifications_outlined, color: Colors.white),
@@ -129,15 +129,20 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                 _showMessage('Notifications coming soon');
               },
             ),
-            Consumer<CartProvider>( // Wrap cart icon with Consumer for badge
+            Consumer<CartProvider>(
               builder: (context, cartProvider, child) {
-                final int itemCount = cartProvider.cartItems.fold(0, (sum, item) => sum + item.quantity); // Total quantity
+                // ✅ safer logic — shows number of distinct products in cart
+                final int itemCount = cartProvider.cartItems.length;
+
+                // ✅ If you prefer total quantity (including kg decimals), uncomment below:
+                // final double itemCount = cartProvider.cartItems.fold(0.0, (sum, item) => sum + item.quantity);
+
                 return Stack(
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.shopping_cart_outlined, color: Colors.white), // Cart icon
+                      icon: const Icon(Icons.shopping_cart_outlined, color: Colors.white),
                       onPressed: () {
-                        _resetTimer(); // Reset timer on tap
+                        _resetTimer();
                         Navigator.push(
                           context,
                           MaterialPageRoute(builder: (context) => const CartPage()),
@@ -159,7 +164,8 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                             minHeight: 16,
                           ),
                           child: Text(
-                            '$itemCount',
+                            // ✅ Format properly for both integer & double display
+                            '${itemCount is double ? (itemCount % 1 == 0 ? itemCount.toInt() : itemCount.toStringAsFixed(1)) : itemCount}',
                             style: const TextStyle(
                               color: Colors.white,
                               fontSize: 10,
@@ -174,28 +180,23 @@ class _CommonScaffoldState extends State<CommonScaffold> {
             ),
           ],
         ),
-        drawer: Drawer( // Left sidebar menu
+        drawer: Drawer(
           child: ListView(
             padding: EdgeInsets.zero,
             children: <Widget>[
               DrawerHeader(
-                decoration: const BoxDecoration(
-                  color: Colors.black,
-                ),
+                decoration: const BoxDecoration(color: Colors.black),
                 child: Text(
                   _username,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                  ),
+                  style: const TextStyle(color: Colors.white, fontSize: 24),
                 ),
               ),
               ListTile(
                 leading: const Icon(Icons.shopping_cart, color: Colors.black),
                 title: const Text('Products'),
                 onTap: () {
-                  _resetTimer(); // Reset timer on tap
-                  Navigator.pop(context); // Close drawer
+                  _resetTimer();
+                  Navigator.pop(context);
                   _showMessage('Products screen coming soon');
                 },
               ),
@@ -244,7 +245,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                   _showMessage('Reports screen coming soon');
                 },
               ),
-              ListTile( // Logout at bottom
+              ListTile(
                 leading: const Icon(Icons.logout, color: Colors.black),
                 title: const Text('Logout'),
                 onTap: () {
@@ -256,146 +257,50 @@ class _CommonScaffoldState extends State<CommonScaffold> {
             ],
           ),
         ),
-        body: widget.body, // Page-specific content
+        body: widget.body,
         backgroundColor: Colors.white,
         bottomNavigationBar: Container(
           decoration: const BoxDecoration(
-            border: Border(
-              top: BorderSide(color: Colors.grey, width: 1.0),
-            ),
+            border: Border(top: BorderSide(color: Colors.grey, width: 1.0)),
           ),
           child: BottomAppBar(
-            color: Colors.white, // White background
+            color: Colors.white,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                GestureDetector(
-                  onTap: () {
-                    _resetTimer(); // Reset timer on tap
-                    Navigator.pushAndRemoveUntil(
-                      context,
-                      _createRoute(const EmployeePage()),
-                          (route) => false,
-                    );
-                  },
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.people_outlined,
-                        color: widget.pageType == PageType.employee ? Colors.blue : Colors.black,
-                        size: 32,
-                      ),
-                      Text(
-                        'Employee',
-                        style: TextStyle(
-                          color: widget.pageType == PageType.employee ? Colors.blue : Colors.black,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
+                _buildNavItem(
+                  icon: Icons.people_outlined,
+                  label: 'Employee',
+                  page: const EmployeePage(),
+                  type: PageType.employee,
                 ),
-                GestureDetector(
-                  onTap: () {
-                    _resetTimer(); // Reset timer on tap
-                    Navigator.pushAndRemoveUntil(
-                      context,
-                      _createRoute(const CategoriesPage()),
-                          (route) => false, // Clear stack to go back to Categories
-                    );
-                  },
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.receipt_outlined,
-                        color: widget.pageType == PageType.billing ? Colors.blue : Colors.black,
-                        size: 32,
-                      ),
-                      Text(
-                        'Billing',
-                        style: TextStyle(
-                          color: widget.pageType == PageType.billing ? Colors.blue : Colors.black,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
+                _buildNavItem(
+                  icon: Icons.receipt_outlined,
+                  label: 'Billing',
+                  page: const CategoriesPage(),
+                  type: PageType.billing,
                 ),
                 GestureDetector(
                   onTap: _scanBarcode,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.qr_code_scanner_outlined,
-                        color: Colors.black,
-                        size: 32,
-                      ),
-                      Text(
-                        'Scan',
-                        style: TextStyle(
-                          color: Colors.black,
-                          fontSize: 10,
-                        ),
-                      ),
+                    children: const [
+                      Icon(Icons.qr_code_scanner_outlined, color: Colors.black, size: 32),
+                      Text('Scan', style: TextStyle(color: Colors.black, fontSize: 10)),
                     ],
                   ),
                 ),
-                GestureDetector(
-                  onTap: () {
-                    _resetTimer(); // Reset timer on tap
-                    Navigator.pushAndRemoveUntil(
-                      context,
-                      _createRoute(const TablePage()),
-                          (route) => false,
-                    );
-                  },
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.table_restaurant_outlined,
-                        color: widget.pageType == PageType.table ? Colors.blue : Colors.black,
-                        size: 32,
-                      ),
-                      Text(
-                        'Table',
-                        style: TextStyle(
-                          color: widget.pageType == PageType.table ? Colors.blue : Colors.black,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
+                _buildNavItem(
+                  icon: Icons.table_restaurant_outlined,
+                  label: 'Table',
+                  page: const TablePage(),
+                  type: PageType.table,
                 ),
-                GestureDetector(
-                  onTap: () {
-                    _resetTimer(); // Reset timer on tap
-                    Navigator.pushAndRemoveUntil(
-                      context,
-                      _createRoute(const CakePage()),
-                          (route) => false, // Clear stack
-                    );
-                  },
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.cake_outlined,
-                        color: widget.pageType == PageType.cake ? Colors.blue : Colors.black,
-                        size: 32,
-                      ),
-                      Text(
-                        'Cake',
-                        style: TextStyle(
-                          color: widget.pageType == PageType.cake ? Colors.blue : Colors.black,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ],
-                  ),
+                _buildNavItem(
+                  icon: Icons.cake_outlined,
+                  label: 'Cake',
+                  page: const CakePage(),
+                  type: PageType.cake,
                 ),
               ],
             ),
@@ -404,9 +309,44 @@ class _CommonScaffoldState extends State<CommonScaffold> {
       ),
     );
   }
+
+  Widget _buildNavItem({
+    required IconData icon,
+    required String label,
+    required Widget page,
+    required PageType type,
+  }) {
+    return GestureDetector(
+      onTap: () {
+        _resetTimer();
+        Navigator.pushAndRemoveUntil(
+          context,
+          _createRoute(page),
+              (route) => false,
+        );
+      },
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            icon,
+            color: widget.pageType == type ? Colors.blue : Colors.black,
+            size: 32,
+          ),
+          Text(
+            label,
+            style: TextStyle(
+              color: widget.pageType == type ? Colors.blue : Colors.black,
+              fontSize: 10,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-// ScannerDialog for barcode scanning as dialog content
+// ScannerDialog for barcode scanning
 class ScannerDialog extends StatefulWidget {
   const ScannerDialog({super.key});
 
@@ -425,7 +365,7 @@ class _ScannerDialogState extends State<ScannerDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold( // Use Scaffold for full screen feel in dialog
+    return Scaffold(
       appBar: AppBar(title: const Text('Scan Barcode')),
       body: MobileScanner(
         controller: _controller,
@@ -433,7 +373,7 @@ class _ScannerDialogState extends State<ScannerDialog> {
           final List<Barcode> barcodes = capture.barcodes;
           for (final barcode in barcodes) {
             if (barcode.rawValue != null) {
-              Navigator.pop(context, barcode.rawValue); // Return scanned value
+              Navigator.pop(context, barcode.rawValue);
               return;
             }
           }

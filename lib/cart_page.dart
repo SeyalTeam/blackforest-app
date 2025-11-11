@@ -27,6 +27,7 @@ class _CartPageState extends State<CartPage> {
   String? _userRole;
   bool _addCustomerDetails = false;
   String? _selectedPaymentMethod;
+  bool _isBillingInProgress = false; // 🟢 Prevent duplicate bill taps
 
   @override
   void initState() {
@@ -230,11 +231,15 @@ class _CartPageState extends State<CartPage> {
   }
 
   Future<void> _submitBilling() async {
+    if (_isBillingInProgress) return; // 🔒 Prevent duplicate taps
+    setState(() => _isBillingInProgress = true);
+
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
     if (cartProvider.cartItems.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Cart is empty')),
       );
+      setState(() => _isBillingInProgress = false);
       return;
     }
 
@@ -242,6 +247,7 @@ class _CartPageState extends State<CartPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please select a payment method')),
       );
+      setState(() => _isBillingInProgress = false);
       return;
     }
 
@@ -275,7 +281,10 @@ class _CartPageState extends State<CartPage> {
           );
         },
       );
-      if (customerDetails == null) return;
+      if (customerDetails == null) {
+        setState(() => _isBillingInProgress = false);
+        return;
+      }
     } else {
       customerDetails = {};
     }
@@ -283,7 +292,10 @@ class _CartPageState extends State<CartPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
-      if (token == null) return;
+      if (token == null) {
+        setState(() => _isBillingInProgress = false);
+        return;
+      }
 
       final billingData = {
         'items': cartProvider.cartItems
@@ -311,7 +323,7 @@ class _CartPageState extends State<CartPage> {
       );
 
       final billingResponse = jsonDecode(response.body);
-      print('📦 BILL RESPONSE: $billingResponse'); // Debugging line
+      print('📦 BILL RESPONSE: $billingResponse');
 
       if (response.statusCode == 201) {
         await _printReceipt(cartProvider, billingResponse, customerDetails, _selectedPaymentMethod!);
@@ -323,6 +335,8 @@ class _CartPageState extends State<CartPage> {
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+    } finally {
+      setState(() => _isBillingInProgress = false);
     }
   }
 
@@ -361,24 +375,27 @@ class _CartPageState extends State<CartPage> {
         String invoiceNumber = billingResponse['invoiceNumber'] ?? billingResponse['doc']?['invoiceNumber'] ?? 'N/A';
 
         // Extract numeric part from invoice like CHI-YYYYMMDD-017 → 017
-        final regex = RegExp(r'CHI-\d{8}-(\d+)$');
+        final regex = RegExp(r'^[A-Z]+-\d{8}-(\d+)$');
         final match = regex.firstMatch(invoiceNumber);
         String billNo = match != null ? match.group(1)! : invoiceNumber;
         billNo = billNo.padLeft(3, '0');
 
-        // Date
-        String dateStr = DateTime.now().toString().substring(0, 16).replaceAll('T', ' ');
+        DateTime now = DateTime.now();
+        String date = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+        int hour = now.hour;
+        String ampm = hour >= 12 ? 'PM' : 'AM';
+        hour = hour % 12;
+        if (hour == 0) hour = 12;
+        String time = '$hour:${now.minute.toString().padLeft(2, '0')}$ampm';
+        String dateStr = '$date $time';
 
-        // Header
         printer.text(_companyName ?? 'BLACK FOREST CAKES', styles: const PosStyles(align: PosAlign.center, bold: true));
         printer.text('Branch: ${_branchName ?? _branchId}', styles: const PosStyles(align: PosAlign.center));
         printer.text('GST: ${_branchGst ?? 'N/A'}', styles: const PosStyles(align: PosAlign.center));
         printer.text('Mobile: ${_branchMobile ?? 'N/A'}', styles: const PosStyles(align: PosAlign.center));
 
-        // Double bold separator line before date and bill no
         printer.hr(ch: '=');
 
-        // Date + Bill No in same row
         printer.row([
           PosColumn(
             text: 'Date: $dateStr',
@@ -394,57 +411,29 @@ class _CartPageState extends State<CartPage> {
 
         printer.hr(ch: '=');
 
-        // Item Table Header
         printer.row([
           PosColumn(text: 'Item', width: 5, styles: const PosStyles(bold: true)),
-          PosColumn(
-              text: 'Qty',
-              width: 2,
-              styles: const PosStyles(bold: true, align: PosAlign.center)),
-          PosColumn(
-              text: 'Price',
-              width: 2,
-              styles: const PosStyles(bold: true, align: PosAlign.right)),
-          PosColumn(
-              text: 'Amount',
-              width: 3,
-              styles: const PosStyles(bold: true, align: PosAlign.right)),
+          PosColumn(text: 'Qty', width: 2, styles: const PosStyles(bold: true, align: PosAlign.center)),
+          PosColumn(text: 'Price', width: 2, styles: const PosStyles(bold: true, align: PosAlign.right)),
+          PosColumn(text: 'Amount', width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
         ]);
 
         printer.hr(ch: '-');
 
-        // Items
         for (var item in cartProvider.cartItems) {
           printer.row([
             PosColumn(text: item.name, width: 5),
-            PosColumn(
-                text: '${item.quantity}',
-                width: 2,
-                styles: const PosStyles(align: PosAlign.center)),
-            PosColumn(
-                text: item.price.toStringAsFixed(2),
-                width: 2,
-                styles: const PosStyles(align: PosAlign.right)),
-            PosColumn(
-                text: (item.price * item.quantity).toStringAsFixed(2),
-                width: 3,
-                styles: const PosStyles(align: PosAlign.right)),
+            PosColumn(text: '${item.quantity}', width: 2, styles: const PosStyles(align: PosAlign.center)),
+            PosColumn(text: item.price.toStringAsFixed(2), width: 2, styles: const PosStyles(align: PosAlign.right)),
+            PosColumn(text: (item.price * item.quantity).toStringAsFixed(2), width: 3, styles: const PosStyles(align: PosAlign.right)),
           ]);
         }
 
         printer.hr(ch: '-');
 
-        // Total only (no GST)
         printer.row([
-          PosColumn(
-              text: 'TOTAL RS',
-              width: 8,
-              styles: const PosStyles(bold: true)),
-          PosColumn(
-            text: cartProvider.total.toStringAsFixed(2),
-            width: 4,
-            styles: const PosStyles(align: PosAlign.right, bold: true),
-          ),
+          PosColumn(text: 'TOTAL RS', width: 8, styles: const PosStyles(bold: true)),
+          PosColumn(text: cartProvider.total.toStringAsFixed(2), width: 4, styles: const PosStyles(align: PosAlign.right, bold: true)),
         ]);
 
         printer.text('Paid by: ${paymentMethod.toUpperCase()}');
@@ -468,9 +457,7 @@ class _CartPageState extends State<CartPage> {
         throw Exception(res.msg);
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Print failed: $e')),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Print failed: $e')));
     }
   }
 
@@ -549,7 +536,7 @@ class _CartPageState extends State<CartPage> {
                   children: [
                     Expanded(
                       child: SizedBox(
-                        height: 40, // Decreased height
+                        height: 40,
                         child: ElevatedButton.icon(
                           icon: const Icon(Icons.money),
                           label: const Text('Cash'),
@@ -560,7 +547,7 @@ class _CartPageState extends State<CartPage> {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8), // Spacing between buttons
+                    const SizedBox(width: 8),
                     Expanded(
                       child: SizedBox(
                         height: 40,
@@ -596,12 +583,27 @@ class _CartPageState extends State<CartPage> {
                     Switch(value: _addCustomerDetails, onChanged: (v) => setState(() => _addCustomerDetails = v)),
                     const SizedBox(width: 10),
                     SizedBox(
-                      width: 200, // Reduced width for Generate Invoice button
+                      width: 200,
                       height: 40,
                       child: ElevatedButton.icon(
-                        onPressed: _submitBilling,
-                        icon: const Icon(Icons.receipt_long),
-                        label: const Text('Generate Invoice', style: TextStyle(fontSize: 18)),
+                        onPressed: _isBillingInProgress ? null : _submitBilling,
+                        icon: _isBillingInProgress
+                            ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                            : const Icon(Icons.receipt_long),
+                        label: Text(
+                          _isBillingInProgress ? 'Processing...' : 'OK BILL',
+                          style: const TextStyle(fontSize: 18),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _isBillingInProgress ? Colors.grey : Colors.blue,
+                        ),
                       ),
                     ),
                   ],
