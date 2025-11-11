@@ -177,12 +177,6 @@ class _ProductsPageState extends State<ProductsPage> {
     }
     final item = CartItem.fromProduct(product, 1, branchPrice: price);
     cartProvider.addOrUpdateItem(item);
-    final newQty = cartProvider.cartItems
-        .firstWhere((i) => i.id == item.id)
-        .quantity;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${product['name']} added/updated (Qty: $newQty)')),
-    );
   }
 
   /// Barcode scan support
@@ -191,9 +185,6 @@ class _ProductsPageState extends State<ProductsPage> {
       final product = _products[index];
       if (product['upc'] == scanResult) {
         _toggleProductSelection(index);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Product selected from scan: ${product['name']}')),
-        );
         return;
       }
     }
