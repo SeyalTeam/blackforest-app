@@ -5,6 +5,7 @@ import 'package:blackforest_app/login_page.dart';
 import 'package:blackforest_app/categories_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
+import 'package:blackforest_app/api_config.dart';
 
 void main() {
   runApp(
@@ -27,8 +28,8 @@ class MyApp extends StatelessWidget {
       // Validate token (recommended for security)
       try {
         final response = await http.get(
-          Uri.parse('https://admin.theblackforestcakes.com/api/users/me'),
-          headers: {'Authorization': 'Bearer $token'},
+          Uri.parse('${ApiConfig.baseUrl}/users/me'),
+          headers: ApiConfig.getHeaders(token),
         );
         if (response.statusCode == 200) {
           // Valid: Return wrapped CategoriesPage

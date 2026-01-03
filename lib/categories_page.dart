@@ -8,6 +8,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:network_info_plus/network_info_plus.dart';
+import 'package:blackforest_app/api_config.dart';
 
 class CategoriesPage extends StatefulWidget {
   const CategoriesPage({
@@ -34,8 +35,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
   Future<void> _fetchUserData(String token) async {
     try {
       final response = await http.get(
-        Uri.parse('https://admin.theblackforestcakes.com/api/users/me?depth=2'),
-        headers: {'Authorization': 'Bearer $token'},
+        Uri.parse('${ApiConfig.baseUrl}/users/me?depth=2'),
+        headers: ApiConfig.getHeaders(token),
       );
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
@@ -86,8 +87,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
     if (deviceIp == null) return companyIds;
     try {
       final allBranchesResponse = await http.get(
-        Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
-        headers: {'Authorization': 'Bearer $token'},
+        Uri.parse('${ApiConfig.baseUrl}/branches?depth=1'),
+        headers: ApiConfig.getHeaders(token),
       );
       if (allBranchesResponse.statusCode == 200) {
         final branchesData = jsonDecode(allBranchesResponse.body);
@@ -166,8 +167,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
         }
       }
       final response = await http.get(
-        Uri.parse('https://admin.theblackforestcakes.com/api/categories?$filterQuery&limit=100&depth=1'),
-        headers: {'Authorization': 'Bearer $token'},
+        Uri.parse('${ApiConfig.baseUrl}/categories?$filterQuery&limit=100&depth=1'),
+        headers: ApiConfig.getHeaders(token),
       );
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
@@ -207,8 +208,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
       }
       // Fetch product by UPC globally
       final response = await http.get(
-        Uri.parse('https://admin.theblackforestcakes.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=1'),
-        headers: {'Authorization': 'Bearer $token'},
+        Uri.parse('${ApiConfig.baseUrl}/products?where[upc][equals]=$scanResult&limit=1&depth=1'),
+        headers: ApiConfig.getHeaders(token),
       );
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
@@ -311,7 +312,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
                 if (category['image'] != null && category['image']['url'] != null) {
                   imageUrl = category['image']['url'];
                   if (imageUrl?.startsWith('/') ?? false) {
-                    imageUrl = 'https://admin.theblackforestcakes.com$imageUrl';
+                    imageUrl = '${ApiConfig.baseUrl.replaceAll('/api', '')}$imageUrl';
                   }
                 }
                 imageUrl ??= 'https://via.placeholder.com/150?text=No+Image'; // Fallback

@@ -3,12 +3,17 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:blackforest_app/categories_page.dart'; // Assuming this is your main page after login
+import 'package:blackforest_app/categories_page.dart';
 import 'package:network_info_plus/network_info_plus.dart';
+import 'package:blackforest_app/api_config.dart';
 
+// ---------------------------------------------------------
+//  IDLE TIMEOUT WRAPPER (UNCHANGED)
+// ---------------------------------------------------------
 class IdleTimeoutWrapper extends StatefulWidget {
   final Widget child;
   final Duration timeout;
+
   const IdleTimeoutWrapper({
     super.key,
     required this.child,
@@ -19,7 +24,8 @@ class IdleTimeoutWrapper extends StatefulWidget {
   _IdleTimeoutWrapperState createState() => _IdleTimeoutWrapperState();
 }
 
-class _IdleTimeoutWrapperState extends State<IdleTimeoutWrapper> with WidgetsBindingObserver {
+class _IdleTimeoutWrapperState extends State<IdleTimeoutWrapper>
+    with WidgetsBindingObserver {
   Timer? _timer;
   DateTime? _pauseTime;
 
@@ -56,13 +62,14 @@ class _IdleTimeoutWrapperState extends State<IdleTimeoutWrapper> with WidgetsBin
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
+
     if (state == AppLifecycleState.paused) {
       _timer?.cancel();
       _pauseTime = DateTime.now();
     } else if (state == AppLifecycleState.resumed) {
       if (_pauseTime != null) {
-        final duration = DateTime.now().difference(_pauseTime!);
-        if (duration > widget.timeout) {
+        final diff = DateTime.now().difference(_pauseTime!);
+        if (diff > widget.timeout) {
           _logout();
         } else {
           _startTimer();
@@ -85,6 +92,9 @@ class _IdleTimeoutWrapperState extends State<IdleTimeoutWrapper> with WidgetsBin
   }
 }
 
+// ---------------------------------------------------------
+//  PREMIUM LOGIN PAGE + USERNAME-ONLY LOGIN
+// ---------------------------------------------------------
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
@@ -94,371 +104,377 @@ class LoginPage extends StatefulWidget {
 
 class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
-  final _emailController = TextEditingController();
+  final _emailController = TextEditingController(); // username input
   final _passwordController = TextEditingController();
+
   bool _isLoading = false;
   bool _obscurePassword = true;
 
   @override
   void initState() {
     super.initState();
-    _checkExistingSession(); // New: Check for saved token on init
+    _checkExistingSession();
   }
 
+  // ---------------------------------------------------------
+  //  CHECK EXISTING SESSION
+  // ---------------------------------------------------------
   Future<void> _checkExistingSession() async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token');
+    final token = prefs.getString("token");
+
     if (token != null) {
-      // Optional: Validate token with backend (recommended for security)
       try {
-        final response = await http.get(
-          Uri.parse('https://admin.theblackforestcakes.com/api/users/me'),
-          headers: {'Authorization': 'Bearer $token'},
+        final res = await http.get(
+          Uri.parse("${ApiConfig.baseUrl}/users/me"),
+          headers: ApiConfig.getHeaders(token),
         );
-        if (response.statusCode == 200) {
-          // Token valid: Auto-nav to CategoriesPage
+
+        if (res.statusCode == 200) {
           if (mounted) {
             Navigator.pushReplacement(
               context,
               MaterialPageRoute(
-                builder: (context) => IdleTimeoutWrapper(
-                  child: const CategoriesPage(),
-                ),
+                builder: (_) =>
+                    IdleTimeoutWrapper(child: const CategoriesPage()),
               ),
             );
           }
           return;
         }
       } catch (_) {}
-      // If invalid/expired, clear prefs and stay on login
+
       await prefs.clear();
     }
-    // No valid token: Show login form
   }
 
-  Future<void> _showIpAlert(String deviceIp, String branchInfo, String? printerIp) async {
+  // ---------------------------------------------------------
+  //  IP ALERT POPUP
+  // ---------------------------------------------------------
+  Future<void> _showIpAlert(
+      String deviceIp, String branchInfo, String? printerIp) async {
     await showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (BuildContext dialogContext) {
-        return AlertDialog(
-          title: const Text('IP Verification'),
-          content: Text(
-            'Fetched Device IP: $deviceIp\n$branchInfo\nPrinter IP: ${printerIp ?? 'Not Set'}',
-            style: const TextStyle(fontSize: 16),
-          ),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('OK'),
-              onPressed: () {
-                Navigator.of(dialogContext).pop();
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  int _ipToInt(String ip) {
-    final parts = ip.split('.').map(int.parse).toList();
-    return parts[0] << 24 | parts[1] << 16 | parts[2] << 8 | parts[3];
-  }
-
-  bool _isIpInRange(String deviceIp, String range) {
-    final parts = range.split('-');
-    if (parts.length != 2) return false;
-    final start = _ipToInt(parts[0].trim());
-    final end = _ipToInt(parts[1].trim());
-    final device = _ipToInt(deviceIp);
-    return device >= start && device <= end;
-  }
-
-  Future<void> _login() async {
-    if (_formKey.currentState!.validate()) {
-      setState(() {
-        _isLoading = true;
-      });
-      final info = NetworkInfo();
-      String? deviceIp = await info.getWifiIP();
-      debugPrint('Fetched Device Private IP: $deviceIp');
-      try {
-        final response = await http.post(
-          Uri.parse('https://admin.theblackforestcakes.com/api/users/login'),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'email': _emailController.text,
-            'password': _passwordController.text,
-          }),
-        );
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          final user = data['user'];
-          final allowedRoles = ['branch', 'kitchen', 'cashier', 'waiter']; // Added 'waiter'
-          if (!allowedRoles.contains(user['role'])) {
-            _showError('Access denied: App for branch-related users only (branch, kitchen, cashier, waiter)');
-            setState(() {
-              _isLoading = false;
-            });
-            return;
-          }
-          dynamic branchRef = user['branch'];
-          String? branchId;
-          if (branchRef is Map) {
-            branchId = branchRef['id']?.toString() ?? branchRef['_id']?.toString();
-          } else {
-            branchId = branchRef?.toString();
-          }
-          // For non-waiter roles that depend on branch
-          String? branchIpRange;
-          String? printerIp;
-          if (user['role'] != 'waiter' && branchId != null && branchId.isNotEmpty) {
-            // Fetch branch details using the token (Payload CMS uses Bearer JWT)
-            final branchResponse = await http.get(
-              Uri.parse('https://admin.theblackforestcakes.com/api/branches/$branchId'),
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ${data['token']}',
-              },
-            ).timeout(const Duration(seconds: 10));
-            if (branchResponse.statusCode == 200) {
-              final branchData = jsonDecode(branchResponse.body);
-              branchIpRange = branchData['ipAddress']?.toString().trim();
-              printerIp = branchData['printerIp']?.toString().trim();
-              debugPrint('Fetched Branch IP Range: $branchIpRange');
-            } else {
-              _showError('Failed to fetch branch details: ${branchResponse.statusCode}');
-              setState(() {
-                _isLoading = false;
-              });
-              return;
-            }
-            // IP restriction logic for non-waiter (only if branch has ipAddress set)
-            if (branchIpRange != null && branchIpRange.isNotEmpty) {
-              if (deviceIp == null) {
-                _showError('Unable to fetch device IP for verification');
-                setState(() {
-                  _isLoading = false;
-                });
-                return;
-              }
-              debugPrint('IP Check - Device: "$deviceIp" vs Branch Range: "$branchIpRange"');
-              if (!_isIpInRange(deviceIp, branchIpRange)) {
-                _showError('Login restricted: Device IP ($deviceIp) does not match branch IP range ($branchIpRange)');
-                setState(() {
-                  _isLoading = false;
-                });
-                return;
-              }
-              // Show alert on successful match for non-waiter
-              debugPrint('IP Match Successful');
-              await _showIpAlert(deviceIp, 'Branch IP Range: $branchIpRange (Matched)', printerIp);
-            } else {
-              debugPrint('No IP restriction set for this branch - proceeding');
-              if (deviceIp != null) {
-                await _showIpAlert(deviceIp, 'Branch IP: Not Set (No Restriction)', printerIp);
-              }
-            }
-          } else if (user['role'] == 'waiter') {
-            // For waiter: Fetch device IP and check against ALL branches
-            if (deviceIp == null) {
-              _showError('Unable to fetch device IP');
-              setState(() {
-                _isLoading = false;
-              });
-              return;
-            }
-            // Fetch all branches
-            final allBranchesResponse = await http.get(
-              Uri.parse('https://admin.theblackforestcakes.com/api/branches'),
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ${data['token']}',
-              },
-            ).timeout(const Duration(seconds: 10));
-            String branchInfo = 'Matching Branches: None';
-            if (allBranchesResponse.statusCode == 200) {
-              final branchesData = jsonDecode(allBranchesResponse.body);
-              if (branchesData['docs'] != null && branchesData['docs'] is List) {
-                List<String> matchingBranches = [];
-                for (var branch in branchesData['docs']) {
-                  String? bIpRange = branch['ipAddress']?.toString().trim();
-                  if (bIpRange != null && _isIpInRange(deviceIp, bIpRange)) {
-                    matchingBranches.add(branch['name']?.toString() ?? 'Unnamed Branch');
-                    printerIp = branch['printerIp']?.toString().trim();
-                    branchId = branch['id']; // Store the matching branchId
-                  }
-                }
-                if (matchingBranches.isNotEmpty) {
-                  branchInfo = 'Matching Branches: ${matchingBranches.join(', ')}';
-                }
-              }
-            } else {
-              debugPrint('Failed to fetch all branches: ${allBranchesResponse.statusCode}');
-              branchInfo = 'Matching Branches: Unable to fetch';
-            }
-            // Show alert for waiter with IP and matching branches
-            await _showIpAlert(deviceIp, branchInfo, printerIp);
-          }
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('token', data['token']);
-          await prefs.setString('role', user['role']);
-          await prefs.setString('email', _emailController.text); // Store email
-          if (branchId != null) {
-            await prefs.setString('branchId', branchId);
-          }
-          if (deviceIp != null) {
-            await prefs.setString('lastLoginIp', deviceIp);
-          }
-          if (printerIp != null) {
-            await prefs.setString('printerIp', printerIp);
-          }
-          // Navigate to categories page wrapped with idle timeout
-          if (mounted) {
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(builder: (context) => IdleTimeoutWrapper(
-                child: const CategoriesPage(),
-              )),
-            );
-          }
-        } else if (response.statusCode == 401) {
-          _showError('Invalid credentials');
-        } else {
-          _showError('Server error: ${response.statusCode}');
-        }
-      } on TimeoutException {
-        _showError('Request timeout: Check your internet');
-      } catch (e) {
-        _showError('Network error: Check your internet - $e');
-      } finally {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
-      }
-    }
-  }
-
-  void _showError(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.grey[800],
-        duration: const Duration(seconds: 10),
+      builder: (ctx) => AlertDialog(
+        title: const Text("IP Verification"),
+        content: Text(
+            "Device IP: $deviceIp\n$branchInfo\nPrinter IP: ${printerIp ?? 'Not Set'}"),
+        actions: [
+          TextButton(
+            child: const Text("OK"),
+            onPressed: () => Navigator.of(ctx).pop(),
+          )
+        ],
       ),
     );
   }
 
+  // ---------------------------------------------------------
+  //  HELPER FUNCTIONS
+  // ---------------------------------------------------------
+  int _ipToInt(String ip) {
+    final p = ip.split('.').map(int.parse).toList();
+    return p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3];
+  }
+
+  bool _isIpInRange(String deviceIp, String range) {
+    final parts = range.split("-");
+    if (parts.length != 2) return false;
+
+    final start = _ipToInt(parts[0].trim());
+    final end = _ipToInt(parts[1].trim());
+    final dev = _ipToInt(deviceIp);
+
+    return dev >= start && dev <= end;
+  }
+
+  void _showError(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        backgroundColor: Colors.black,
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------
+  //  LOGIN FUNCTION - USERNAME ONLY -> username@bf.com
+  // ---------------------------------------------------------
+  Future<void> _login() async {
+    if (!_formKey.currentState!.validate()) return;
+
+    setState(() => _isLoading = true);
+
+    final info = NetworkInfo();
+    String? deviceIp = await info.getWifiIP();
+
+    // USERNAME / EMAIL PROCESSING
+    String input = _emailController.text.trim();
+
+    // If user typed only username → convert
+    String finalEmail =
+    input.contains("@") ? input : "$input@bf.com";
+
+    // Enforce domain
+    if (!finalEmail.endsWith("@bf.com")) {
+      _showError("Only @bf.com domain allowed");
+      setState(() => _isLoading = false);
+      return;
+    }
+
+    try {
+      final response = await http.post(
+        Uri.parse("${ApiConfig.baseUrl}/users/login"),
+        headers: ApiConfig.getHeaders(),
+        body: jsonEncode({
+          "email": finalEmail,
+          "password": _passwordController.text,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final user = data["user"];
+        final role = user["role"];
+
+        // Allowed roles
+        const allowedRoles = ["branch", "kitchen", "cashier", "waiter"];
+        if (!allowedRoles.contains(role)) {
+          _showError("Access denied: only branch-related users allowed.");
+          setState(() => _isLoading = false);
+          return;
+        }
+
+        dynamic branchRef = user["branch"];
+        String? branchId;
+        if (branchRef is Map) {
+          branchId =
+              branchRef["id"]?.toString() ?? branchRef["_id"]?.toString();
+        } else {
+          branchId = branchRef?.toString();
+        }
+
+        String? branchIpRange;
+        String? printerIp;
+
+        if (role != "waiter" && branchId != null) {
+          final bRes = await http.get(
+            Uri.parse(
+                "${ApiConfig.baseUrl}/branches/$branchId"),
+            headers: ApiConfig.getHeaders(data['token']),
+          );
+
+          if (bRes.statusCode == 200) {
+            final branch = jsonDecode(bRes.body);
+            branchIpRange = branch["ipAddress"]?.toString().trim();
+            printerIp = branch["printerIp"]?.toString().trim();
+          }
+
+          // IP Check
+          if (branchIpRange != null && branchIpRange.isNotEmpty) {
+            if (deviceIp == null) {
+              _showError("Unable to fetch device IP");
+              setState(() => _isLoading = false);
+              return;
+            }
+
+            if (!_isIpInRange(deviceIp, branchIpRange)) {
+              _showError("IP mismatch: $deviceIp not allowed");
+              setState(() => _isLoading = false);
+              return;
+            }
+
+            await _showIpAlert(
+                deviceIp, "Branch IP matched", printerIp);
+          }
+        }
+
+        // Save Session
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString("token", data["token"]);
+        await prefs.setString("role", role);
+        await prefs.setString("email", finalEmail);
+        if (branchId != null) await prefs.setString("branchId", branchId);
+        if (deviceIp != null) await prefs.setString("lastLoginIp", deviceIp);
+        if (printerIp != null) await prefs.setString("printerIp", printerIp);
+
+        // NAVIGATE TO CATEGORIES
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) =>
+                  IdleTimeoutWrapper(child: const CategoriesPage()),
+            ),
+          );
+        }
+      } else {
+        _showError("Error: ${response.statusCode} - ${response.body}");
+      }
+    } catch (e) {
+      _showError("Network error: $e");
+    }
+
+    if (mounted) setState(() => _isLoading = false);
+  }
+
+  // ---------------------------------------------------------
+  //  PREMIUM UI
+  // ---------------------------------------------------------
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
     return Scaffold(
-      body: Center(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: 400),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Container(
-              // Transparent container
+      body: Stack(
+        children: [
+          // Gradient BG
+          Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Colors.black, Color(0xFF1E1E1E)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+            ),
+          ),
+
+          // Glass Card
+          Center(
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              width: 380,
+              padding: const EdgeInsets.all(22),
               decoration: BoxDecoration(
-                color: Colors.transparent,
-                borderRadius: BorderRadius.circular(8),
+                color: Colors.white.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: Colors.white24),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.grey.withOpacity(0.1),
-                    spreadRadius: 2,
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
-                  ),
+                    color: Colors.black.withOpacity(0.45),
+                    blurRadius: 22,
+                    spreadRadius: 5,
+                    offset: const Offset(0, 10),
+                  )
                 ],
               ),
-              child: Padding(
-                padding: const EdgeInsets.all(20.0),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        'Welcome Team',
+
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text("Welcome Team",
                         style: TextStyle(
-                          fontSize: 28,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black,
+                            fontSize: 30,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white)),
+                    const SizedBox(height: 10),
+                    const Text("Login to Continue",
+                        style: TextStyle(fontSize: 18, color: Colors.white70)),
+                    const SizedBox(height: 30),
+
+                    // USERNAME FIELD
+                    _premiumInput(
+                      controller: _emailController,
+                      hint: "Username",
+                      icon: Icons.person,
+                      validator: (v) {
+                        if (v == null || v.trim().isEmpty) {
+                          return "Enter username";
+                        }
+
+                        // If they type email manually, force domain
+                        if (v.contains("@") && !v.endsWith("@bf.com")) {
+                          return "Only @bf.com domain allowed";
+                        }
+
+                        return null;
+                      },
+                    ),
+
+                    const SizedBox(height: 15),
+
+                    // PASSWORD FIELD
+                    _premiumInput(
+                      controller: _passwordController,
+                      hint: "Password",
+                      icon: Icons.lock,
+                      obscure: _obscurePassword,
+                      suffix: IconButton(
+                        icon: Icon(
+                          _obscurePassword
+                              ? Icons.visibility_off
+                              : Icons.visibility,
+                          color: Colors.white,
                         ),
+                        onPressed: () =>
+                            setState(() => _obscurePassword = !_obscurePassword),
                       ),
-                      const SizedBox(height: 10),
-                      const Text(
-                        'Login',
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      TextFormField(
-                        controller: _emailController,
-                        decoration: InputDecoration(
-                          labelText: 'Enter email',
-                          labelStyle: const TextStyle(color: Color(0xFF4A4A4A)),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(4),
-                            borderSide: const BorderSide(color: Color(0xFF4A4A4A)),
-                          ),
-                          filled: true, // Enable fill
-                          fillColor: Colors.white, // White background
-                          prefixIcon: const Icon(Icons.email, color: Colors.black),
-                        ),
-                        validator: (value) => value!.isEmpty ? 'Email required' : null,
-                      ),
-                      const SizedBox(height: 10),
-                      TextFormField(
-                        controller: _passwordController,
-                        decoration: InputDecoration(
-                          labelText: 'Enter password',
-                          labelStyle: const TextStyle(color: Color(0xFF4A4A4A)),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(4),
-                            borderSide: const BorderSide(color: Color(0xFF4A4A4A)),
-                          ),
-                          filled: true, // Enable fill
-                          fillColor: Colors.white, // White background
-                          prefixIcon: const Icon(Icons.lock, color: Colors.black),
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscurePassword ? Icons.visibility_off : Icons.visibility,
-                              color: Colors.black,
-                            ),
-                            onPressed: () {
-                              setState(() {
-                                _obscurePassword = !_obscurePassword;
-                              });
-                            },
-                          ),
-                        ),
-                        obscureText: _obscurePassword, // Toggle based on state
-                        validator: (value) => value!.isEmpty ? 'Password required' : null,
-                      ),
-                      const SizedBox(height: 20),
-                      ElevatedButton(
+                      validator: (v) =>
+                      v!.isEmpty ? "Enter password" : null,
+                    ),
+
+                    const SizedBox(height: 25),
+
+                    // LOGIN BUTTON
+                    SizedBox(
+                      width: double.infinity,
+                      height: 52,
+                      child: ElevatedButton(
                         onPressed: _isLoading ? null : _login,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.black,
-                          foregroundColor: Colors.white,
-                          minimumSize: const Size(double.infinity, 48),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          backgroundColor: Colors.white,
+                          foregroundColor: Colors.black,
+                          elevation: 10,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
                         ),
-                        child: _isLoading ? const CircularProgressIndicator(color: Colors.white) : const Text('Login', style: TextStyle(fontWeight: FontWeight.bold)),
+                        child: _isLoading
+                            ? const CircularProgressIndicator(color: Colors.black)
+                            : const Text("Login",
+                            style: TextStyle(
+                                fontSize: 18, fontWeight: FontWeight.bold)),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  // INPUT FIELD WIDGET
+  Widget _premiumInput({
+    required TextEditingController controller,
+    required String hint,
+    required IconData icon,
+    bool obscure = false,
+    Widget? suffix,
+    FormFieldValidator<String>? validator,
+  }) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white12,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white30),
+      ),
+      child: TextFormField(
+        controller: controller,
+        obscureText: obscure,
+        validator: validator,
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(
+          prefixIcon: Icon(icon, color: Colors.white),
+          suffixIcon: suffix,
+          hintText: hint,
+          hintStyle: const TextStyle(color: Colors.white60),
+          border: InputBorder.none,
+          contentPadding: const EdgeInsets.symmetric(
+              horizontal: 18, vertical: 15),
         ),
       ),
     );

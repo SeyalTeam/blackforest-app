@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:blackforest_app/cart_provider.dart';
+import 'package:blackforest_app/api_config.dart';
 
 class ProductsPage extends StatefulWidget {
   final String categoryId;
@@ -38,8 +39,8 @@ class _ProductsPageState extends State<ProductsPage> {
   Future<void> _fetchUserData(String token) async {
     try {
       final response = await http.get(
-        Uri.parse('https://admin.theblackforestcakes.com/api/users/me?depth=2'),
-        headers: {'Authorization': 'Bearer $token'},
+        Uri.parse('${ApiConfig.baseUrl}/users/me?depth=2'),
+        headers: ApiConfig.getHeaders(token),
       );
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
@@ -93,8 +94,8 @@ class _ProductsPageState extends State<ProductsPage> {
     if (deviceIp == null) return;
     try {
       final allBranchesResponse = await http.get(
-        Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
-        headers: {'Authorization': 'Bearer $token'},
+        Uri.parse('${ApiConfig.baseUrl}/branches?depth=1'),
+        headers: ApiConfig.getHeaders(token),
       );
       if (allBranchesResponse.statusCode == 200) {
         final branchesData = jsonDecode(allBranchesResponse.body);
@@ -135,10 +136,10 @@ class _ProductsPageState extends State<ProductsPage> {
         await _fetchUserData(token);
       }
       // Updated: Fetch all products in the category without restricting to branch overrides
-      String url = 'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
+      String url = '${ApiConfig.baseUrl}/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
       final response = await http.get(
         Uri.parse(url),
-        headers: {'Authorization': 'Bearer $token'},
+        headers: ApiConfig.getHeaders(token),
       );
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
@@ -170,8 +171,7 @@ class _ProductsPageState extends State<ProductsPage> {
     if (_branchId != null && product['branchOverrides'] != null) {
       for (var override in product['branchOverrides']) {
         var branch = override['branch'];
-        String branchOid =
-        branch is Map ? (branch[r'$oid'] ?? branch['id'] ?? '') : (branch ?? '');
+        String branchOid = branch is Map ? (branch[r'$oid'] ?? branch['id'] ?? '') : (branch ?? '');
         if (branchOid == _branchId) {
           price = override['price']?.toDouble() ?? price;
           break;
@@ -180,56 +180,50 @@ class _ProductsPageState extends State<ProductsPage> {
     }
 
     // Step 2: Detect if the product is weight-based
-    bool isKgBased = false;
+    bool isWeightBased = false;
     try {
-      final unit = product['unit']?.toString().toLowerCase();
-      final isKgFlag = product['isKg'] == true ||
-          product['sellByWeight'] == true ||
-          product['weightBased'] == true;
+      final unit = product['defaultPriceDetails']?['unit']?.toString().toLowerCase();
+      final isKgFlag = product['isKg'] == true || product['sellByWeight'] == true || product['weightBased'] == true;
       final pricingType = product['pricingType']?.toString().toLowerCase();
-      final nameLower = (product['name'] ?? '').toString().toLowerCase();
 
-      if (unit != null && unit.contains('kg')) isKgBased = true;
-      if (isKgFlag) isKgBased = true;
-      if (pricingType != null && pricingType.contains('kg')) isKgBased = true;
-      if (nameLower.contains('per kg') ||
-          nameLower.contains('/kg') ||
-          nameLower.contains('kg')) {
-        isKgBased = true;
-      }
+      if (unit != null && (unit.contains('kg') || unit.contains('gram'))) isWeightBased = true;
+      if (isKgFlag) isWeightBased = true;
+      if (pricingType != null && pricingType.contains('kg')) isWeightBased = true;
+      // Removed name check to avoid false positives
     } catch (e) {
-      isKgBased = false;
+      isWeightBased = false;
     }
 
     // Step 3: Get current quantity if exists
     double existingQty = 0.0;
-    final existingItem =
-    cartProvider.cartItems.firstWhere((i) => i.id == product['id'], orElse: () => CartItem(id: '', name: '', price: 0, quantity: 0));
+    final existingItem = cartProvider.cartItems.firstWhere(
+          (i) => i.id == product['id'],
+      orElse: () => CartItem(id: '', name: '', price: 0, quantity: 0),
+    );
     if (existingItem.id.isNotEmpty) {
       existingQty = existingItem.quantity.toDouble();
     }
 
     double quantity = 1.0;
-
-    // Step 4: Show popup if kg-based
-    if (isKgBased) {
-      final TextEditingController weightController =
-      TextEditingController(text: existingQty > 0 ? existingQty.toString() : '');
-
+    if (isWeightBased) {
+      // Step 4: Show popup if weight-based
+      final unit = product['defaultPriceDetails']?['unit'] ?? 'kg';
+      final TextEditingController weightController = TextEditingController(
+        text: existingQty > 0 ? existingQty.toStringAsFixed(2) : '',
+      );
       final enteredWeight = await showDialog<double>(
         context: context,
         barrierDismissible: true,
         builder: (context) {
           return AlertDialog(
-            title: const Text('Enter Weight (kg)'),
+            title: Text('Enter Weight ($unit)'),
             content: TextField(
               controller: weightController,
-              keyboardType:
-              const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
                 hintText: 'e.g. 0.5',
-                labelText: 'Weight in kilograms',
-                border: OutlineInputBorder(),
+                labelText: 'Weight in $unit',
+                border: const OutlineInputBorder(),
               ),
             ),
             actions: [
@@ -239,8 +233,7 @@ class _ProductsPageState extends State<ProductsPage> {
               ),
               ElevatedButton(
                 onPressed: () {
-                  final value =
-                      double.tryParse(weightController.text.trim()) ?? 0.0;
+                  final value = double.tryParse(weightController.text.trim()) ?? 0.0;
                   Navigator.pop(context, value);
                 },
                 child: const Text('OK'),
@@ -249,18 +242,19 @@ class _ProductsPageState extends State<ProductsPage> {
           );
         },
       );
-
       if (enteredWeight == null || enteredWeight <= 0) return;
       quantity = enteredWeight;
     }
 
     // Step 5: Update or add
-    if (existingItem.id.isNotEmpty) {
-      // ✅ Replace old quantity instead of adding
-      cartProvider.updateQuantity(product['id'], quantity);
+    final item = CartItem.fromProduct(product, quantity, branchPrice: price);
+    if (isWeightBased) {
+      if (existingItem.id.isNotEmpty) {
+        cartProvider.updateQuantity(product['id'], quantity);
+      } else {
+        cartProvider.addOrUpdateItem(item);
+      }
     } else {
-      // ✅ Add new item
-      final item = CartItem.fromProduct(product, quantity, branchPrice: price);
       cartProvider.addOrUpdateItem(item);
     }
   }
@@ -312,10 +306,11 @@ class _ProductsPageState extends State<ProductsPage> {
                   product['images'][0]['image']['url'] != null) {
                 imageUrl = product['images'][0]['image']['url'];
                 if (imageUrl != null && imageUrl.startsWith('/')) {
-                  imageUrl = 'https://admin.theblackforestcakes.com$imageUrl';
+                  imageUrl = '${ApiConfig.baseUrl.replaceAll('/api', '')}$imageUrl';
                 }
               }
               imageUrl ??= 'https://via.placeholder.com/150?text=No+Image';
+
               dynamic priceDetails = product['defaultPriceDetails'];
               if (_branchId != null && product['branchOverrides'] != null) {
                 for (var override in product['branchOverrides']) {
@@ -328,6 +323,7 @@ class _ProductsPageState extends State<ProductsPage> {
                 }
               }
               final price = priceDetails != null ? '₹${priceDetails['price'] ?? 0}' : '₹0';
+
               return GestureDetector(
                 onTap: () => _toggleProductSelection(index),
                 child: Consumer<CartProvider>(
@@ -344,6 +340,13 @@ class _ProductsPageState extends State<ProductsPage> {
                       ),
                     )
                         .quantity;
+                    String qtyText;
+                    if (qty == qty.floorToDouble()) {
+                      qtyText = qty.toInt().toString();
+                    } else {
+                      qtyText = qty.toStringAsFixed(2);
+                    }
+
                     return Container(
                       decoration: BoxDecoration(
                         borderRadius: BorderRadius.circular(8),
@@ -427,7 +430,7 @@ class _ProductsPageState extends State<ProductsPage> {
                                   ),
                                   padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                                   child: Text(
-                                    '$qty',
+                                    qtyText,
                                     style: const TextStyle(
                                       color: Colors.white,
                                       fontSize: 16,

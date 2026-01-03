@@ -5,13 +5,13 @@ import 'package:provider/provider.dart'; // For cart badge
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobile_scanner/mobile_scanner.dart'; // Import for scanner
 import 'package:blackforest_app/categories_page.dart'; // Import CategoriesPage
-import 'package:blackforest_app/cake.dart'; // Import CakePage
 import 'package:blackforest_app/cart_page.dart'; // Import CartPage
 import 'package:blackforest_app/cart_provider.dart'; // Import CartProvider
 import 'package:blackforest_app/employee.dart'; // Import EmployeePage
 import 'package:blackforest_app/table.dart'; // Import TablePage
+import 'package:blackforest_app/editbill.dart'; // Import EditBillPage
 
-enum PageType { employee, billing, cake, cart, table }
+enum PageType { employee, billing, cart, table, editbill }
 
 class CommonScaffold extends StatefulWidget {
   final String title;
@@ -81,7 +81,6 @@ class _CommonScaffoldState extends State<CommonScaffold> {
       _showMessage('Scanner not supported on this platform');
       return;
     }
-
     final result = await showGeneralDialog<String>(
       context: context,
       barrierDismissible: true,
@@ -91,7 +90,6 @@ class _CommonScaffoldState extends State<CommonScaffold> {
         return FadeTransition(opacity: anim1, child: child);
       },
     );
-
     if (result != null) {
       if (widget.onScanCallback != null) {
         widget.onScanCallback!(result);
@@ -118,12 +116,17 @@ class _CommonScaffoldState extends State<CommonScaffold> {
       onTap: _resetTimer,
       child: Scaffold(
         appBar: AppBar(
-          title: Text(widget.title, style: const TextStyle(color: Colors.white)),
-          backgroundColor: Colors.black,
-          iconTheme: const IconThemeData(color: Colors.white),
+          backgroundColor: Colors.white,
+          elevation: 1,
+          title: Text(
+            widget.title,
+            style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w600),
+          ),
+          iconTheme: const IconThemeData(color: Colors.black87),
+          actionsIconTheme: const IconThemeData(color: Colors.black87),
           actions: [
             IconButton(
-              icon: const Icon(Icons.notifications_outlined, color: Colors.white),
+              icon: const Icon(Icons.notifications_outlined),
               onPressed: () {
                 _resetTimer();
                 _showMessage('Notifications coming soon');
@@ -131,16 +134,12 @@ class _CommonScaffoldState extends State<CommonScaffold> {
             ),
             Consumer<CartProvider>(
               builder: (context, cartProvider, child) {
-                // ✅ safer logic — shows number of distinct products in cart
                 final int itemCount = cartProvider.cartItems.length;
-
-                // ✅ If you prefer total quantity (including kg decimals), uncomment below:
-                // final double itemCount = cartProvider.cartItems.fold(0.0, (sum, item) => sum + item.quantity);
 
                 return Stack(
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.shopping_cart_outlined, color: Colors.white),
+                      icon: const Icon(Icons.shopping_cart_outlined, color: Colors.black87),
                       onPressed: () {
                         _resetTimer();
                         Navigator.push(
@@ -159,17 +158,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                             color: Colors.red,
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          constraints: const BoxConstraints(
-                            minWidth: 16,
-                            minHeight: 16,
-                          ),
+                          constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
                           child: Text(
-                            // ✅ Format properly for both integer & double display
-                            '${itemCount is double ? (itemCount % 1 == 0 ? itemCount.toInt() : itemCount.toStringAsFixed(1)) : itemCount}',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                            ),
+                            '$itemCount',
+                            style: const TextStyle(color: Colors.white, fontSize: 10),
                             textAlign: TextAlign.center,
                           ),
                         ),
@@ -180,6 +172,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
             ),
           ],
         ),
+
         drawer: Drawer(
           child: ListView(
             padding: EdgeInsets.zero,
@@ -297,10 +290,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                   type: PageType.table,
                 ),
                 _buildNavItem(
-                  icon: Icons.cake_outlined,
-                  label: 'Cake',
-                  page: const CakePage(),
-                  type: PageType.cake,
+                  icon: Icons.edit_outlined,
+                  label: 'Edit Bill',
+                  page: const EditBillPage(),
+                  type: PageType.editbill,
                 ),
               ],
             ),
