@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:blackforest_app/api_config.dart';
 
 class CartItem {
   final String id;
@@ -26,7 +25,7 @@ class CartItem {
     if (product['images'] != null && product['images'].isNotEmpty && product['images'][0]['image'] != null && product['images'][0]['image']['url'] != null) {
       imageUrl = product['images'][0]['image']['url'];
       if (imageUrl != null && imageUrl.startsWith('/')) {
-        imageUrl = '${ApiConfig.baseUrl.replaceAll('/api', '')}$imageUrl';
+        imageUrl = 'https://blackforest.vseyal.com$imageUrl';
       }
     }
 
@@ -170,8 +169,11 @@ class CartProvider extends ChangeNotifier {
       });
 
       final response = await http.post(
-        Uri.parse('${ApiConfig.baseUrl}/billings'),
-        headers: ApiConfig.getHeaders(token),
+        Uri.parse('https://blackforest.vseyal.com/api/billings'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
         body: body,
       );
 

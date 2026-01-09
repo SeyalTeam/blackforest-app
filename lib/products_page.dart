@@ -7,7 +7,6 @@ import 'package:provider/provider.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:blackforest_app/cart_provider.dart';
-import 'package:blackforest_app/api_config.dart';
 
 class ProductsPage extends StatefulWidget {
   final String categoryId;
@@ -39,8 +38,8 @@ class _ProductsPageState extends State<ProductsPage> {
   Future<void> _fetchUserData(String token) async {
     try {
       final response = await http.get(
-        Uri.parse('${ApiConfig.baseUrl}/users/me?depth=2'),
-        headers: ApiConfig.getHeaders(token),
+        Uri.parse('https://blackforest.vseyal.com/api/users/me?depth=2'),
+        headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
@@ -94,8 +93,8 @@ class _ProductsPageState extends State<ProductsPage> {
     if (deviceIp == null) return;
     try {
       final allBranchesResponse = await http.get(
-        Uri.parse('${ApiConfig.baseUrl}/branches?depth=1'),
-        headers: ApiConfig.getHeaders(token),
+        Uri.parse('https://blackforest.vseyal.com/api/branches?depth=1'),
+        headers: {'Authorization': 'Bearer $token'},
       );
       if (allBranchesResponse.statusCode == 200) {
         final branchesData = jsonDecode(allBranchesResponse.body);
@@ -136,10 +135,10 @@ class _ProductsPageState extends State<ProductsPage> {
         await _fetchUserData(token);
       }
       // Updated: Fetch all products in the category without restricting to branch overrides
-      String url = '${ApiConfig.baseUrl}/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
+      String url = 'https://blackforest.vseyal.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
       final response = await http.get(
         Uri.parse(url),
-        headers: ApiConfig.getHeaders(token),
+        headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
@@ -306,7 +305,7 @@ class _ProductsPageState extends State<ProductsPage> {
                   product['images'][0]['image']['url'] != null) {
                 imageUrl = product['images'][0]['image']['url'];
                 if (imageUrl != null && imageUrl.startsWith('/')) {
-                  imageUrl = '${ApiConfig.baseUrl.replaceAll('/api', '')}$imageUrl';
+                  imageUrl = 'https://blackforest.vseyal.com$imageUrl';
                 }
               }
               imageUrl ??= 'https://via.placeholder.com/150?text=No+Image';

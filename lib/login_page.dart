@@ -5,7 +5,6 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/categories_page.dart';
 import 'package:network_info_plus/network_info_plus.dart';
-import 'package:blackforest_app/api_config.dart';
 
 // ---------------------------------------------------------
 //  IDLE TIMEOUT WRAPPER (UNCHANGED)
@@ -126,11 +125,20 @@ class _LoginPageState extends State<LoginPage> {
     if (token != null) {
       try {
         final res = await http.get(
-          Uri.parse("${ApiConfig.baseUrl}/users/me"),
-          headers: ApiConfig.getHeaders(token),
+          Uri.parse("https://blackforest.vseyal.com/api/users/me"),
+          headers: {"Authorization": "Bearer $token"},
         );
 
         if (res.statusCode == 200) {
+          final body = jsonDecode(res.body);
+          if (body['user'] != null) {
+            final user = body['user'];
+            final name = user['name'] ?? user['username'];
+            if (name != null && name.toString().isNotEmpty) {
+              await prefs.setString('user_name', name.toString());
+            }
+          }
+
           if (mounted) {
             Navigator.pushReplacement(
               context,
@@ -225,8 +233,8 @@ class _LoginPageState extends State<LoginPage> {
 
     try {
       final response = await http.post(
-        Uri.parse("${ApiConfig.baseUrl}/users/login"),
-        headers: ApiConfig.getHeaders(),
+        Uri.parse("https://blackforest.vseyal.com/api/users/login"),
+        headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "email": finalEmail,
           "password": _passwordController.text,
@@ -261,8 +269,11 @@ class _LoginPageState extends State<LoginPage> {
         if (role != "waiter" && branchId != null) {
           final bRes = await http.get(
             Uri.parse(
-                "${ApiConfig.baseUrl}/branches/$branchId"),
-            headers: ApiConfig.getHeaders(data['token']),
+                "https://blackforest.vseyal.com/api/branches/$branchId"),
+            headers: {
+              "Authorization": "Bearer ${data['token']}",
+              "Content-Type": "application/json"
+            },
           );
 
           if (bRes.statusCode == 200) {
@@ -298,6 +309,11 @@ class _LoginPageState extends State<LoginPage> {
         if (branchId != null) await prefs.setString("branchId", branchId);
         if (deviceIp != null) await prefs.setString("lastLoginIp", deviceIp);
         if (printerIp != null) await prefs.setString("printerIp", printerIp);
+        
+        final name = user['name'] ?? user['username'];
+        if (name != null && name.toString().isNotEmpty) {
+          await prefs.setString('user_name', name.toString());
+        }
 
         // NAVIGATE TO CATEGORIES
         if (mounted) {
@@ -310,7 +326,7 @@ class _LoginPageState extends State<LoginPage> {
           );
         }
       } else {
-        _showError("Error: ${response.statusCode} - ${response.body}");
+        _showError("Invalid credentials");
       }
     } catch (e) {
       _showError("Network error: $e");

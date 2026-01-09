@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'package:blackforest_app/api_config.dart';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -10,8 +9,12 @@ import 'package:blackforest_app/categories_page.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:network_info_plus/network_info_plus.dart';
+import 'package:flutter/services.dart';
+import 'package:image/image.dart' as img;
 import 'package:esc_pos_printer/esc_pos_printer.dart';
 import 'package:esc_pos_utils/esc_pos_utils.dart';
+import 'package:qr/qr.dart';
+import 'package:audioplayers/audioplayers.dart';
 
 class CartPage extends StatefulWidget {
   const CartPage({super.key});
@@ -26,8 +29,9 @@ class _CartPageState extends State<CartPage> {
   String? _branchGst;
   String? _branchMobile;
   String? _companyName;
+  String? _companyId; // Added to store company ID for billing
   String? _userRole;
-  bool _addCustomerDetails = false;
+  bool _addCustomerDetails = true; // Default to ON as requested
   String? _selectedPaymentMethod;
   bool _isBillingInProgress = false; // Prevent duplicate bill taps
 
@@ -48,8 +52,8 @@ class _CartPageState extends State<CartPage> {
       if (token == null) return;
 
       final response = await http.get(
-        Uri.parse('${ApiConfig.baseUrl}/users/me?depth=2'),
-        headers: ApiConfig.getHeaders(token),
+        Uri.parse('https://blackforest.vseyal.com/api/users/me?depth=2'),
+        headers: {'Authorization': 'Bearer $token'},
       );
 
       if (response.statusCode == 200) {
@@ -74,8 +78,8 @@ class _CartPageState extends State<CartPage> {
   Future<void> _fetchBranchDetails(String token, String branchId) async {
     try {
       final response = await http.get(
-        Uri.parse('${ApiConfig.baseUrl}/branches/$branchId?depth=1'),
-        headers: ApiConfig.getHeaders(token),
+        Uri.parse('https://blackforest.vseyal.com/api/branches/$branchId?depth=1'),
+        headers: {'Authorization': 'Bearer $token'},
       );
 
       if (response.statusCode == 200) {
@@ -86,7 +90,9 @@ class _CartPageState extends State<CartPage> {
 
         if (branch['company'] != null && branch['company'] is Map) {
           _companyName = branch['company']['name'];
+          _companyId = branch['company']['id']; // Store Company ID
         } else if (branch['company'] != null) {
+          _companyId = branch['company'].toString(); // Store Company ID
           await _fetchCompanyDetails(token, branch['company'].toString());
         }
 
@@ -103,8 +109,8 @@ class _CartPageState extends State<CartPage> {
   Future<void> _fetchCompanyDetails(String token, String companyId) async {
     try {
       final response = await http.get(
-        Uri.parse('${ApiConfig.baseUrl}/companies/$companyId?depth=1'),
-        headers: ApiConfig.getHeaders(token),
+        Uri.parse('https://blackforest.vseyal.com/api/companies/$companyId?depth=1'),
+        headers: {'Authorization': 'Bearer $token'},
       );
 
       if (response.statusCode == 200) {
@@ -145,8 +151,8 @@ class _CartPageState extends State<CartPage> {
 
     try {
       final allBranchesResponse = await http.get(
-        Uri.parse('${ApiConfig.baseUrl}/branches?depth=1'),
-        headers: ApiConfig.getHeaders(token),
+        Uri.parse('https://blackforest.vseyal.com/api/branches?depth=1'),
+        headers: {'Authorization': 'Bearer $token'},
       );
 
       if (allBranchesResponse.statusCode == 200) {
@@ -195,8 +201,8 @@ class _CartPageState extends State<CartPage> {
 
       final response = await http.get(
         Uri.parse(
-            '${ApiConfig.baseUrl}/products?where[upc][equals]=$scanResult&limit=1&depth=1'),
-        headers: ApiConfig.getHeaders(token),
+            'https://blackforest.vseyal.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=1'),
+        headers: {'Authorization': 'Bearer $token'},
       );
 
       if (response.statusCode == 200) {
@@ -366,6 +372,15 @@ class _CartPageState extends State<CartPage> {
                       Expanded(
                         child: ElevatedButton(
                           onPressed: () {
+                            // Validation: If name is entered, phone is mandatory.
+                            // Phone only is allowed.
+                            if (nameCtrl.text.trim().isNotEmpty && phoneCtrl.text.trim().isEmpty) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text("Phone number is required when adding a customer name")),
+                              );
+                              return;
+                            }
+
                             Navigator.pop(context, {
                               'name': nameCtrl.text,
                               'phone': phoneCtrl.text,
@@ -398,8 +413,9 @@ class _CartPageState extends State<CartPage> {
       );
 
       if (customerDetails == null) {
-        setState(() => _isBillingInProgress = false);
-        return;
+        // User cancelled: Turn off the switch and proceed without customer details
+        setState(() => _addCustomerDetails = false);
+        customerDetails = {};
       }
     } else {
       customerDetails = {};
@@ -412,6 +428,8 @@ class _CartPageState extends State<CartPage> {
         setState(() => _isBillingInProgress = false);
         return;
       }
+
+      print('📦 SUBMITTING BILL: Branch: $_branchId, Company: $_companyId'); // DEBUG LOG
 
       final billingData = {
         'items': cartProvider.cartItems
@@ -426,22 +444,40 @@ class _CartPageState extends State<CartPage> {
             .toList(),
         'totalAmount': cartProvider.total,
         'branch': _branchId,
-        'customerDetails': {'phone': customerDetails['phone'] ?? '', 'name': customerDetails['name'] ?? ''},
+        'company': _companyId,
+        'customerDetails': {
+          'name': customerDetails['name'] ?? '',
+          'phoneNumber': customerDetails['phone'] ?? '',
+          'address': '', // Placeholder as shown in schema
+        },
         'paymentMethod': _selectedPaymentMethod,
         'notes': '',
         'status': 'completed',
       };
 
       final response = await http.post(
-        Uri.parse('${ApiConfig.baseUrl}/billings'),
-        headers: ApiConfig.getHeaders(token),
+        Uri.parse('https://blackforest.vseyal.com/api/billings'),
+        headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $token'},
         body: jsonEncode(billingData),
       );
+      print('📦 PAYLOAD JSON: ${jsonEncode(billingData)}'); // DEBUG PAYLOAD
 
       final billingResponse = jsonDecode(response.body);
       print('📦 BILL RESPONSE: $billingResponse');
 
       if (response.statusCode == 201) {
+        // Play success sound
+        try {
+          print('🔊 Attempting to play payment sound...');
+          final player = AudioPlayer();
+          // Increase volume just in case
+          await player.setVolume(1.0);
+          await player.play(AssetSource('sounds/pay.mp3'));
+          print('🔊 Sound command sent successfully');
+        } catch (e) {
+          print("Error playing sound: $e");
+        }
+
         await _printReceipt(cartProvider, billingResponse, customerDetails, _selectedPaymentMethod!);
         cartProvider.clearCart();
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Billing submitted successfully')));
@@ -483,21 +519,79 @@ class _CartPageState extends State<CartPage> {
     // Fetch waiter name
     String? waiterName;
     try {
-      if (billingResponse['createdBy'] != null) {
-        String userId = billingResponse['createdBy'] is Map ? billingResponse['createdBy'][r'$oid'] ?? billingResponse['createdBy']['id'] : billingResponse['createdBy'];
-        final prefs = await SharedPreferences.getInstance();
-        final token = prefs.getString('token');
-        if (token != null && userId.isNotEmpty) {
-          final userResponse = await http.get(
-            Uri.parse('${ApiConfig.baseUrl}/users/$userId?depth=1'),
-            headers: ApiConfig.getHeaders(token),
-          );
-          if (userResponse.statusCode == 200) {
-            final user = jsonDecode(userResponse.body);
-            waiterName = user['name'] ?? user['username'] ?? 'Unknown';
+      final prefs = await SharedPreferences.getInstance();
+      waiterName = prefs.getString('user_name');
+
+      if (waiterName == null || waiterName.isEmpty || waiterName == 'Unknown') {
+        if (billingResponse['createdBy'] != null) {
+          var createdBy = billingResponse['createdBy'];
+          String userId = '';
+
+          // Case 1: createdBy is already the user object with a name
+          if (createdBy is Map && (createdBy['name'] != null || createdBy['username'] != null)) {
+            waiterName = createdBy['name'] ?? createdBy['username'];
+          }
+
+          // Case 2: Extract ID to fetch user
+          if (waiterName == null) {
+            if (createdBy is String) {
+              userId = createdBy;
+            } else if (createdBy is Map) {
+              if (createdBy.containsKey(r'$oid')) {
+                userId = createdBy[r'$oid'];
+              } else if (createdBy.containsKey('_id')) {
+                var idVal = createdBy['_id'];
+                if (idVal is Map && idVal.containsKey(r'$oid')) {
+                  userId = idVal[r'$oid'];
+                } else {
+                  userId = idVal.toString();
+                }
+              } else if (createdBy.containsKey('id')) {
+                userId = createdBy['id'];
+              }
+            }
+
+            if (userId.isNotEmpty) {
+              final token = prefs.getString('token');
+              if (token != null) {
+                final userResponse = await http.get(
+                  Uri.parse('https://blackforest.vseyal.com/api/users/$userId?depth=1'),
+                  headers: {'Authorization': 'Bearer $token'},
+                );
+                if (userResponse.statusCode == 200) {
+                  final user = jsonDecode(userResponse.body);
+                  waiterName = user['name'] ?? user['username'] ?? 'Unknown';
+                  // Cache it for next time
+                  if (waiterName != null && waiterName != 'Unknown') {
+                    await prefs.setString('user_name', waiterName!);
+                  }
+                }
+              }
+            }
           }
         }
       }
+      
+      // Final attempt: Fetch current user if we still don't have a name
+      if (waiterName == null || waiterName == 'Unknown') {
+          final token = prefs.getString('token');
+          if (token != null) {
+            final meResponse = await http.get(
+              Uri.parse('https://blackforest.vseyal.com/api/users/me'),
+              headers: {'Authorization': 'Bearer $token'},
+            );
+             if (meResponse.statusCode == 200) {
+                final body = jsonDecode(meResponse.body);
+                if (body['user'] != null) {
+                  waiterName = body['user']['name'] ?? body['user']['username'];
+                  if (waiterName != null) {
+                     await prefs.setString('user_name', waiterName!);
+                  }
+                }
+             }
+          }
+      }
+
     } catch (_) {
       waiterName = 'Unknown';
     }
@@ -526,7 +620,7 @@ class _CartPageState extends State<CartPage> {
         String time = '$hour:${now.minute.toString().padLeft(2, '0')}$ampm';
         String dateStr = '$date $time';
 
-        printer.text(_companyName ?? 'BLACK FOREST CAKES', styles: const PosStyles(align: PosAlign.center, bold: true));
+        printer.text(_companyName ?? 'BLACK FOREST CAKES', styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2));
         printer.text('Branch: ${_branchName ?? _branchId}', styles: const PosStyles(align: PosAlign.center));
         printer.text('GST: ${_branchGst ?? 'N/A'}', styles: const PosStyles(align: PosAlign.center));
         printer.text('Mobile: ${_branchMobile ?? 'N/A'}', styles: const PosStyles(align: PosAlign.center));
@@ -535,7 +629,7 @@ class _CartPageState extends State<CartPage> {
           PosColumn(
             text: 'Date: $dateStr',
             width: 6,
-            styles: const PosStyles(align: PosAlign.left),
+            styles: const PosStyles(align: PosAlign.left), // Confirmed Left Align
           ),
           PosColumn(
             text: 'BILL NO - $billNo',
@@ -544,7 +638,7 @@ class _CartPageState extends State<CartPage> {
           ),
         ]);
         if (waiterName != null) {
-          printer.text('Assigned by: $waiterName', styles: const PosStyles(align: PosAlign.center));
+          printer.text('Assigned by: $waiterName', styles: const PosStyles(align: PosAlign.left));
         }
         printer.hr(ch: '=');
         printer.row([
@@ -570,13 +664,20 @@ class _CartPageState extends State<CartPage> {
 
         printer.hr(ch: '-');
         printer.row([
-          PosColumn(text: 'TOTAL RS', width: 8, styles: const PosStyles(bold: true)),
           PosColumn(
-              text: cartProvider.total.toStringAsFixed(2),
-              width: 4,
-              styles: const PosStyles(align: PosAlign.right, bold: true)),
+              text: 'PAID BY: ${paymentMethod.toUpperCase()}',
+              width: 5,
+              styles: const PosStyles(align: PosAlign.left, bold: true)),
+          PosColumn(
+              text: 'TOTAL RS ${cartProvider.total.toStringAsFixed(2)}',
+              width: 7,
+              styles: const PosStyles(
+                  align: PosAlign.right,
+                  bold: true,
+                  height: PosTextSize.size2,
+                  width: PosTextSize.size1)),
         ]);
-        printer.text('Paid by: ${paymentMethod.toUpperCase()}');
+        printer.hr(ch: '='); // Double line after Total Row as requested
 
         if (customerDetails['name']?.isNotEmpty == true || customerDetails['phone']?.isNotEmpty == true) {
           printer.hr();
@@ -584,9 +685,115 @@ class _CartPageState extends State<CartPage> {
           printer.text('Phone: ${customerDetails['phone'] ?? ''}');
         }
 
-        printer.hr(ch: '=');
+        // QR Code for Billings
+        // Matches style of 'printer.text(_companyName ... bold: true)'
+        
+         try {
+          final ByteData data = await rootBundle.load('assets/feedback_full.png');
+          final Uint8List bytes = data.buffer.asUint8List();
+          final img.Image? image = img.decodeImage(bytes);
+          if (image != null) {
+            // Resize to full width (approx 550-570 dots for 80mm printer)
+            final img.Image resized = img.copyResize(image, width: 550);
+            printer.image(resized, align: PosAlign.center);
+          }
+        } catch (e) {
+             print("Error printing image: $e");
+             // Fallback text
+            printer.text(
+              'THE CREATOR OF THIS PRODUCT IS WAITING FOR YOUR',
+              styles: const PosStyles(align: PosAlign.center, bold: true),
+            );
+            printer.text(
+              'FEEDBACK',
+              styles: const PosStyles(
+                align: PosAlign.center,
+                bold: true,
+                height: PosTextSize.size2,
+                width: PosTextSize.size2,
+              ),
+            );
+        }
+
+        printer.feed(1); // Added space after feedback image as requested
+        String billingUrl = 'http://blackforest.vseyal.com/billings';
+        String? billingId = billingResponse['id'] ?? billingResponse['doc']?['id'] ?? billingResponse['_id'];
+        if (billingId != null) {
+          billingUrl = '$billingUrl/$billingId';
+        }
+
+        try {
+          // 1. Generate QR Code Image
+          final qrCode = QrCode(4, QrErrorCorrectLevel.L);
+          qrCode.addData(billingUrl);
+          
+          final qrImageMatrix = QrImage(qrCode);
+
+          const int pixelSize = 8; // Increased from 5 to 8 to match 'Size 6' (approx 33 modules * 8 = 264px)
+          final int qrWidth = qrImageMatrix.moduleCount * pixelSize;
+          final int qrHeight = qrImageMatrix.moduleCount * pixelSize;
+          final img.Image qrImage = img.Image(qrWidth, qrHeight);
+          
+          // Fill background white
+          img.fill(qrImage, img.getColor(255, 255, 255));
+
+          for (int x = 0; x < qrImageMatrix.moduleCount; x++) {
+            for (int y = 0; y < qrImageMatrix.moduleCount; y++) {
+              if (qrImageMatrix.isDark(y, x)) {
+                img.fillRect(qrImage, x * pixelSize, y * pixelSize, (x + 1) * pixelSize, (y + 1) * pixelSize, img.getColor(0, 0, 0));
+              }
+            }
+          }
+
+          // 2. Load Chef Image
+          final ByteData chefData = await rootBundle.load('assets/chef.png');
+          final Uint8List chefBytes = chefData.buffer.asUint8List();
+          final img.Image? chefImageRaw = img.decodeImage(chefBytes);
+
+          if (chefImageRaw != null) {
+             // 3. Resize Chef Image
+             // Max width avail = ~550 (paper) - qrWidth - gap
+             // 550 - 264 - 10 = ~276px available for chef
+             const int maxWidth = 550;
+             const int gap = 10;
+             final int remainingWidth = maxWidth - qrWidth - gap;
+             
+             // Resize chef to fit in the remaining width, preserving aspect ratio
+             // We prioritize width fit.
+             final img.Image chefImage = img.copyResize(chefImageRaw, width: remainingWidth > 100 ? remainingWidth : 100);
+             
+             // 4. Create Combined Canvas centered
+             const int canvasWidth = 550; // Use full available width
+             final int contentWidth = qrWidth + gap + chefImage.width;
+             final int startX = (canvasWidth - contentWidth) ~/ 2; // Center the content group
+             
+             final int totalHeight = max(qrHeight, chefImage.height);
+             
+             final img.Image combinedImage = img.Image(canvasWidth, totalHeight);
+             img.fill(combinedImage, img.getColor(255, 255, 255)); // White background
+
+             // Draw QR
+             img.drawImage(combinedImage, qrImage, dstX: startX, dstY: (totalHeight - qrHeight) ~/ 2);
+             
+             // Draw Chef
+             img.drawImage(combinedImage, chefImage, dstX: startX + qrWidth + gap, dstY: (totalHeight - chefImage.height) ~/ 2);
+
+             // 5. Print Combined Image
+             printer.image(combinedImage, align: PosAlign.center);
+
+          } else {
+             // Fallback: Print QR only if chef image fails
+             printer.image(qrImage, align: PosAlign.center);
+          }
+
+        } catch (e) {
+             print("Error generating/printing side-by-side QR: $e");
+             // Fallback to standard command
+             printer.qrcode(billingUrl, align: PosAlign.center, size: QRSize.Size6);
+        }
+        
+        printer.feed(1); // Space before message
         printer.text('Thank you! Visit Again', styles: const PosStyles(align: PosAlign.center));
-        printer.feed(2);
         printer.cut();
         printer.disconnect();
 
