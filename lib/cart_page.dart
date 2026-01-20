@@ -201,7 +201,7 @@ class _CartPageState extends State<CartPage> {
 
       final response = await http.get(
         Uri.parse(
-            'https://blackforest.vseyal.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=1'),
+            'https://blackforest.vseyal.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=2'),
         headers: {'Authorization': 'Bearer $token'},
       );
 
@@ -282,141 +282,169 @@ class _CartPageState extends State<CartPage> {
             backgroundColor: const Color(0xFF1E1E1E),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             insetPadding: const EdgeInsets.symmetric(horizontal: 28),
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // TITLE
-                  Center(
-                    child: Text(
-                      "Customer Details",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  // PHONE FIELD
-                  Text(
-                    "Phone Number",
-                    style: TextStyle(color: Colors.white70, fontSize: 14),
-                  ),
-                  const SizedBox(height: 6),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF121212),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Color(0xFF0A84FF).withOpacity(0.5)),
-                    ),
-                    child: TextField(
-                      controller: phoneCtrl,
-                      keyboardType: TextInputType.phone,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                        border: InputBorder.none,
-                        hintText: "Enter phone number",
-                        hintStyle: TextStyle(color: Colors.white38),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  // NAME FIELD
-                  Text(
-                    "Customer Name",
-                    style: TextStyle(color: Colors.white70, fontSize: 14),
-                  ),
-                  const SizedBox(height: 6),
-                  Container(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF121212),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: Color(0xFF0A84FF).withOpacity(0.5)),
-                    ),
-                    child: TextField(
-                      controller: nameCtrl,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                        border: InputBorder.none,
-                        hintText: "Enter customer name",
-                        hintStyle: TextStyle(color: Colors.white38),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 28),
-                  // BUTTON ROW
-                  Row(
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // CANCEL
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => Navigator.pop(context),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: Colors.white70,
-                            side: BorderSide(color: Colors.white24),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
-                            ),
+                      // TITLE
+                      Center(
+                        child: Text(
+                          "Customer Details",
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
                           ),
-                          child: const Text("Cancel"),
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      // SUBMIT
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: () {
-                            // Validation: If name is entered, phone is mandatory.
-                            // Phone only is allowed.
-                            if (nameCtrl.text.trim().isNotEmpty && phoneCtrl.text.trim().isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text("Phone number is required when adding a customer name")),
-                              );
-                              return;
-                            }
+                      const SizedBox(height: 20),
+                      // PHONE FIELD
+                      Text(
+                        "Phone Number",
+                        style: TextStyle(color: Colors.white70, fontSize: 14),
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF121212),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Color(0xFF0A84FF).withOpacity(0.5)),
+                        ),
+                        child: TextField(
+                          controller: phoneCtrl,
+                          keyboardType: TextInputType.phone,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: const InputDecoration(
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                            border: InputBorder.none,
+                            hintText: "Enter phone number",
+                            hintStyle: TextStyle(color: Colors.white38),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 18),
+                      // NAME FIELD
+                      Text(
+                        "Customer Name",
+                        style: TextStyle(color: Colors.white70, fontSize: 14),
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF121212),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: Color(0xFF0A84FF).withOpacity(0.5)),
+                        ),
+                        child: TextField(
+                          controller: nameCtrl,
+                          style: const TextStyle(color: Colors.white),
+                          decoration: const InputDecoration(
+                            contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                            border: InputBorder.none,
+                            hintText: "Enter customer name",
+                            hintStyle: TextStyle(color: Colors.white38),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 28),
+                      // BUTTON ROW
+                      Row(
+                        children: [
+                          // CANCEL -> SKIP (Return empty map)
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () => Navigator.pop(context, <String, dynamic>{}), // Skip details
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: Colors.white70,
+                                side: BorderSide(color: Colors.white24),
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                              child: const Text("Skip"),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          // SUBMIT (Return map with data)
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () {
+                                // Validation: If name is entered, phone is mandatory.
+                                // Phone only is allowed.
+                                if (nameCtrl.text.trim().isNotEmpty && phoneCtrl.text.trim().isEmpty) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text("Phone number is required when adding a customer name")),
+                                  );
+                                  return;
+                                }
 
-                            Navigator.pop(context, {
-                              'name': nameCtrl.text,
-                              'phone': phoneCtrl.text,
-                            });
-                          },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF0A84FF),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(10),
+                                Navigator.pop(context, <String, dynamic>{
+                                  'name': nameCtrl.text,
+                                  'phone': phoneCtrl.text,
+                                });
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF0A84FF),
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                              ),
+                              child: const Text(
+                                "Submit",
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
                             ),
                           ),
-                          child: const Text(
-                            "Submit",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
+                        ],
+                      )
                     ],
-                  )
-                ],
-              ),
+                  ),
+                ),
+                // X BUTTON (Return null -> Abort)
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white54),
+                    onPressed: () => Navigator.pop(context, null), // Cancel entire action
+                  ),
+                ),
+              ],
             ),
           );
         },
       );
 
+      // --- LOGIC UPDATE ---
+      // null = Aborted using 'X' -> Stop billing, keep items in cart
+      // {} = Skipped using 'Skip' -> Proceed with billing, no customer details
+      // {...} = Submitted -> Proceed with billing with details
+
       if (customerDetails == null) {
-        // User cancelled: Turn off the switch and proceed without customer details
-        setState(() => _addCustomerDetails = false);
-        customerDetails = {};
+        // User aborted the billing process entirely
+        setState(() => _isBillingInProgress = false);
+        return; // EXIT FUNCTION
       }
+      
+      // If we are here, it means we either skipped (empty map) or submitted (map with data)
+      // If skipped, we might want to turn off the prompt for future (optional, keeping existing behavior logic if desired)
+       if (customerDetails.isEmpty) {
+          // Logic: Proceed without details. 
+          // Note: If you want to permanently turn off the prompt when skipped, uncomment below:
+          // setState(() => _addCustomerDetails = false);
+       }
+
     } else {
       customerDetails = {};
     }
@@ -688,108 +716,152 @@ class _CartPageState extends State<CartPage> {
         // QR Code for Billings
         // Matches style of 'printer.text(_companyName ... bold: true)'
         
-         try {
-          final ByteData data = await rootBundle.load('assets/feedback_full.png');
-          final Uint8List bytes = data.buffer.asUint8List();
-          final img.Image? image = img.decodeImage(bytes);
-          if (image != null) {
-            // Resize to full width (approx 550-570 dots for 80mm printer)
-            final img.Image resized = img.copyResize(image, width: 550);
-            printer.image(resized, align: PosAlign.center);
-          }
-        } catch (e) {
-             print("Error printing image: $e");
-             // Fallback text
-            printer.text(
-              'THE CREATOR OF THIS PRODUCT IS WAITING FOR YOUR',
-              styles: const PosStyles(align: PosAlign.center, bold: true),
-            );
-            printer.text(
-              'FEEDBACK',
-              styles: const PosStyles(
-                align: PosAlign.center,
-                bold: true,
-                height: PosTextSize.size2,
-                width: PosTextSize.size2,
-              ),
-            );
-        }
+        // QR Code for Billings
+        // Matches style of 'printer.text(_companyName ... bold: true)'
+        
+        bool shouldShowFeedback = cartProvider.cartItems.any((item) {
+          final dept = item.department?.trim().toLowerCase();
+          print('🧐 Item: ${item.name}, Dept: "${item.department}", Processed: "$dept"');
+          return dept != null && dept.isNotEmpty && dept != 'others';
+        });
+        print('🧐 shouldShowFeedback: $shouldShowFeedback');
 
-        printer.feed(1); // Added space after feedback image as requested
+        if (shouldShowFeedback) {
+           try {
+            final ByteData data = await rootBundle.load('assets/feedback_full.png');
+            final Uint8List bytes = data.buffer.asUint8List();
+            final img.Image? image = img.decodeImage(bytes);
+            if (image != null) {
+              // Resize to full width (approx 550-570 dots for 80mm printer)
+              final img.Image resized = img.copyResize(image, width: 550);
+              printer.image(resized, align: PosAlign.center);
+            }
+          } catch (e) {
+               print("Error printing image: $e");
+               // Fallback text
+              printer.text(
+                'THE CREATOR OF THIS PRODUCT IS WAITING FOR YOUR',
+                styles: const PosStyles(align: PosAlign.center, bold: true),
+              );
+              printer.text(
+                'FEEDBACK',
+                styles: const PosStyles(
+                  align: PosAlign.center,
+                  bold: true,
+                  height: PosTextSize.size2,
+                  width: PosTextSize.size2,
+                ),
+              );
+          }
+
+          printer.feed(1); // Added space after feedback image as requested
+        }
         String billingUrl = 'http://blackforest.vseyal.com/billings';
         String? billingId = billingResponse['id'] ?? billingResponse['doc']?['id'] ?? billingResponse['_id'];
         if (billingId != null) {
           billingUrl = '$billingUrl/$billingId';
         }
 
-        try {
-          // 1. Generate QR Code Image
-          final qrCode = QrCode(4, QrErrorCorrectLevel.L);
-          qrCode.addData(billingUrl);
-          
-          final qrImageMatrix = QrImage(qrCode);
+        if (shouldShowFeedback) {
+          try {
+            // 1. Generate QR Code Image
+            final qrCode = QrCode(4, QrErrorCorrectLevel.L);
+            qrCode.addData(billingUrl);
+            
+            final qrImageMatrix = QrImage(qrCode);
 
-          const int pixelSize = 8; // Increased from 5 to 8 to match 'Size 6' (approx 33 modules * 8 = 264px)
-          final int qrWidth = qrImageMatrix.moduleCount * pixelSize;
-          final int qrHeight = qrImageMatrix.moduleCount * pixelSize;
-          final img.Image qrImage = img.Image(qrWidth, qrHeight);
-          
-          // Fill background white
-          img.fill(qrImage, img.getColor(255, 255, 255));
+            const int pixelSize = 8; // Increased from 5 to 8 to match 'Size 6' (approx 33 modules * 8 = 264px)
+            final int qrWidth = qrImageMatrix.moduleCount * pixelSize;
+            final int qrHeight = qrImageMatrix.moduleCount * pixelSize;
+            final img.Image qrImage = img.Image(qrWidth, qrHeight);
+            
+            // Fill background white
+            img.fill(qrImage, img.getColor(255, 255, 255));
 
-          for (int x = 0; x < qrImageMatrix.moduleCount; x++) {
-            for (int y = 0; y < qrImageMatrix.moduleCount; y++) {
-              if (qrImageMatrix.isDark(y, x)) {
-                img.fillRect(qrImage, x * pixelSize, y * pixelSize, (x + 1) * pixelSize, (y + 1) * pixelSize, img.getColor(0, 0, 0));
+            for (int x = 0; x < qrImageMatrix.moduleCount; x++) {
+              for (int y = 0; y < qrImageMatrix.moduleCount; y++) {
+                if (qrImageMatrix.isDark(y, x)) {
+                  img.fillRect(qrImage, x * pixelSize, y * pixelSize, (x + 1) * pixelSize, (y + 1) * pixelSize, img.getColor(0, 0, 0));
+                }
               }
             }
+
+            // 2. Load Chef Image
+             final ByteData chefData = await rootBundle.load('assets/chef.png');
+             final Uint8List chefBytes = chefData.buffer.asUint8List();
+             final img.Image? chefImageRaw = img.decodeImage(chefBytes);
+
+             if (chefImageRaw != null) {
+                // 3. Resize Chef Image
+                // Max width avail = ~550 (paper) - qrWidth - gap
+                // 550 - 264 - 10 = ~276px available for chef
+                const int maxWidth = 550;
+                const int gap = 10;
+                final int remainingWidth = maxWidth - qrWidth - gap;
+                
+                // Resize chef to fit in the remaining width, preserving aspect ratio
+                // We prioritize width fit.
+                final img.Image chefImage = img.copyResize(chefImageRaw, width: remainingWidth > 100 ? remainingWidth : 100);
+                
+                // 4. Create Combined Canvas centered
+                const int canvasWidth = 550; // Use full available width
+                final int contentWidth = qrWidth + gap + chefImage.width;
+                final int startX = (canvasWidth - contentWidth) ~/ 2; // Center the content group
+                
+                // Define Text Block Logic
+                const int textBlockHeight = 40; // Increased for larger font
+                final int qrBlockHeight = qrHeight + textBlockHeight;
+
+                final int totalHeight = max(qrBlockHeight, chefImage.height);
+                
+                final img.Image combinedImage = img.Image(canvasWidth, totalHeight);
+                img.fill(combinedImage, img.getColor(255, 255, 255)); // White background
+
+                // Calculate Y positions
+                final int qrBlockY = (totalHeight - qrBlockHeight) ~/ 2;
+                final int chefY = (totalHeight - chefImage.height) ~/ 2;
+
+                // Draw QR
+                img.drawImage(combinedImage, qrImage, dstX: startX, dstY: qrBlockY);
+                
+                // Draw Black Box under QR
+                img.fillRect(
+                  combinedImage, 
+                  startX, 
+                  qrBlockY + qrHeight, 
+                  startX + qrWidth, 
+                  qrBlockY + qrHeight + textBlockHeight, 
+                  img.getColor(0, 0, 0)
+                );
+
+                // Draw Text "SCAN TO REVIEW"
+                // Approximating centering for arial_24 (approx 15-16px width per char? "SCAN TO REVIEW" is 14 chars)
+                // 14 chars * 16px = 224px. QR width is ~264px. (264 - 224) / 2 = 20px padding
+                img.drawString(
+                  combinedImage, 
+                  img.arial_24, 
+                  startX + (qrWidth - (14 * 16)) ~/ 2, 
+                  qrBlockY + qrHeight + (textBlockHeight - 24) ~/ 2, 
+                  'SCAN TO REVIEW', 
+                  color: img.getColor(255, 255, 255)
+                );
+
+                // Draw Chef
+                img.drawImage(combinedImage, chefImage, dstX: startX + qrWidth + gap, dstY: chefY);
+
+                // 5. Print Combined Image
+                printer.image(combinedImage, align: PosAlign.center);
+
+             } else {
+                // Fallback: Print QR only if chef image fails
+                printer.image(qrImage, align: PosAlign.center);
+             }
+
+          } catch (e) {
+               print("Error generating/printing side-by-side QR: $e");
+               // Fallback to standard command
+               printer.qrcode(billingUrl, align: PosAlign.center, size: QRSize.Size6);
           }
-
-          // 2. Load Chef Image
-          final ByteData chefData = await rootBundle.load('assets/chef.png');
-          final Uint8List chefBytes = chefData.buffer.asUint8List();
-          final img.Image? chefImageRaw = img.decodeImage(chefBytes);
-
-          if (chefImageRaw != null) {
-             // 3. Resize Chef Image
-             // Max width avail = ~550 (paper) - qrWidth - gap
-             // 550 - 264 - 10 = ~276px available for chef
-             const int maxWidth = 550;
-             const int gap = 10;
-             final int remainingWidth = maxWidth - qrWidth - gap;
-             
-             // Resize chef to fit in the remaining width, preserving aspect ratio
-             // We prioritize width fit.
-             final img.Image chefImage = img.copyResize(chefImageRaw, width: remainingWidth > 100 ? remainingWidth : 100);
-             
-             // 4. Create Combined Canvas centered
-             const int canvasWidth = 550; // Use full available width
-             final int contentWidth = qrWidth + gap + chefImage.width;
-             final int startX = (canvasWidth - contentWidth) ~/ 2; // Center the content group
-             
-             final int totalHeight = max(qrHeight, chefImage.height);
-             
-             final img.Image combinedImage = img.Image(canvasWidth, totalHeight);
-             img.fill(combinedImage, img.getColor(255, 255, 255)); // White background
-
-             // Draw QR
-             img.drawImage(combinedImage, qrImage, dstX: startX, dstY: (totalHeight - qrHeight) ~/ 2);
-             
-             // Draw Chef
-             img.drawImage(combinedImage, chefImage, dstX: startX + qrWidth + gap, dstY: (totalHeight - chefImage.height) ~/ 2);
-
-             // 5. Print Combined Image
-             printer.image(combinedImage, align: PosAlign.center);
-
-          } else {
-             // Fallback: Print QR only if chef image fails
-             printer.image(qrImage, align: PosAlign.center);
-          }
-
-        } catch (e) {
-             print("Error generating/printing side-by-side QR: $e");
-             // Fallback to standard command
-             printer.qrcode(billingUrl, align: PosAlign.center, size: QRSize.Size6);
         }
         
         printer.feed(1); // Space before message

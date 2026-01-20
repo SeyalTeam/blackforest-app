@@ -135,7 +135,7 @@ class _ProductsPageState extends State<ProductsPage> {
         await _fetchUserData(token);
       }
       // Updated: Fetch all products in the category without restricting to branch overrides
-      String url = 'https://blackforest.vseyal.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
+      String url = 'https://blackforest.vseyal.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=2';
       final response = await http.get(
         Uri.parse(url),
         headers: {'Authorization': 'Bearer $token'},

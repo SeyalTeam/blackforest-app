@@ -10,6 +10,7 @@ class CartItem {
   final String? imageUrl;
   double quantity; // ✅ changed from int → double
   final String? unit; // ✅ optional, e.g. "pcs" or "kg"
+  final String? department; // ✅ New field
 
   CartItem({
     required this.id,
@@ -18,6 +19,7 @@ class CartItem {
     this.imageUrl,
     required this.quantity,
     this.unit,
+    this.department,
   });
 
   factory CartItem.fromProduct(dynamic product, double quantity, {double? branchPrice}) {
@@ -34,6 +36,16 @@ class CartItem {
     // ✅ read unit from product (default to 'pcs' if missing)
     String? unit = product['unit']?.toString().toLowerCase() ?? 'pcs';
 
+    // ✅ Extract department
+    String? dept;
+    if (product['department'] != null) {
+      dept = (product['department'] is Map) ? product['department']['name'] : product['department'].toString();
+    } else if (product['category'] != null && product['category'] is Map && product['category']['department'] != null) {
+        // Fallback: Check inside category
+        var catDept = product['category']['department'];
+        dept = (catDept is Map) ? catDept['name'] : catDept.toString();
+    }
+
     return CartItem(
       id: product['id'],
       name: product['name'] ?? 'Unknown',
@@ -41,6 +53,7 @@ class CartItem {
       imageUrl: imageUrl,
       quantity: quantity,
       unit: unit,
+      department: dept,
     );
   }
 
@@ -52,6 +65,7 @@ class CartItem {
       'imageUrl': imageUrl,
       'quantity': quantity,
       'unit': unit,
+      'department': department,
     };
   }
 
@@ -63,6 +77,7 @@ class CartItem {
       imageUrl: json['imageUrl'],
       quantity: json['quantity'],
       unit: json['unit'],
+      department: json['department'],
     );
   }
 }
