@@ -10,12 +10,12 @@ import 'package:blackforest_app/cart_provider.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 
 class CategoriesPage extends StatefulWidget {
-  const CategoriesPage({
-    super.key,
-  });
+  final PageType sourcePage;
+
+  const CategoriesPage({super.key, this.sourcePage = PageType.billing});
 
   @override
-  _CategoriesPageState createState() => _CategoriesPageState();
+  State<CategoriesPage> createState() => _CategoriesPageState();
 }
 
 class _CategoriesPageState extends State<CategoriesPage> {
@@ -43,12 +43,21 @@ class _CategoriesPageState extends State<CategoriesPage> {
         setState(() {
           _userRole = user['role'];
           if (user['role'] == 'company' && user['company'] != null) {
-            _companyId = (user['company'] is Map) ? user['company']['id'] : user['company'];
-          } else if (user['role'] == 'branch' && user['branch'] != null && user['branch']['company'] != null) {
-            _companyId = (user['branch']['company'] is Map) ? user['branch']['company']['id'] : user['branch']['company'];
+            final comp = user['company'];
+            _companyId = comp is Map
+                ? (comp['id'] ?? comp['_id'] ?? comp[r'$oid'])?.toString()
+                : comp.toString();
+          } else if (user['role'] == 'branch' &&
+              user['branch'] != null &&
+              user['branch']['company'] != null) {
+            final comp = user['branch']['company'];
+            _companyId = comp is Map
+                ? (comp['id'] ?? comp['_id'] ?? comp[r'$oid'])?.toString()
+                : comp.toString();
           }
           // For superadmin, _companyId remains null
         });
+        debugPrint("User Role: $_userRole, Company ID: $_companyId");
       } else {
         // Handle error silently or log
       }
@@ -81,10 +90,83 @@ class _CategoriesPageState extends State<CategoriesPage> {
     return device >= startIp && device <= endIp;
   }
 
-  Future<List<String>> _fetchMatchingCompanyIds(String token, String? deviceIp) async {
+  Future<List<String>> _fetchMatchingCompanyIds(
+    String token,
+    String? deviceIp, {
+    String? branchId,
+  }) async {
+    debugPrint(
+      "Fetching matching company IDs. Device IP: $deviceIp, Branch ID: $branchId",
+    );
     List<String> companyIds = [];
-    if (deviceIp == null) return companyIds;
     try {
+      Set<String> uniqueCompanyIds = {};
+
+      // 1. Try Global Settings
+      try {
+        final gRes = await http.get(
+          Uri.parse(
+            'https://blackforest.vseyal.com/api/globals/branch-geo-settings',
+          ),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+        );
+        if (gRes.statusCode == 200) {
+          final settings = jsonDecode(gRes.body);
+          final locations = settings['locations'] as List?;
+          if (locations != null) {
+            for (var loc in locations) {
+              final locBranch = loc['branch'];
+              String? locBranchId;
+              if (locBranch is Map) {
+                locBranchId =
+                    locBranch['id']?.toString() ??
+                    locBranch['_id']?.toString() ??
+                    locBranch['\$oid']?.toString();
+              } else {
+                locBranchId = locBranch?.toString();
+              }
+
+              bool isMatch = false;
+              // Match by stored branchId (from geo-login)
+              if (branchId != null && locBranchId == branchId) {
+                isMatch = true;
+              }
+              // Match by IP
+              else if (deviceIp != null) {
+                String? bIpRange = loc['ipAddress']?.toString().trim();
+                if (bIpRange != null &&
+                    (bIpRange == deviceIp ||
+                        _isIpInRange(deviceIp, bIpRange))) {
+                  isMatch = true;
+                }
+              }
+
+              if (isMatch) {
+                if (locBranch is Map && locBranch['company'] != null) {
+                  final company = locBranch['company'];
+                  String? cId;
+                  if (company is Map) {
+                    cId =
+                        company['id']?.toString() ??
+                        company['_id']?.toString() ??
+                        company['\$oid']?.toString();
+                  } else {
+                    cId = company?.toString();
+                  }
+                  if (cId != null) uniqueCompanyIds.add(cId);
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint("Error fetching global settings in categories: $e");
+      }
+
+      // 2. Fallback/Include Branches Collection
       final allBranchesResponse = await http.get(
         Uri.parse('https://blackforest.vseyal.com/api/branches?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
@@ -92,20 +174,43 @@ class _CategoriesPageState extends State<CategoriesPage> {
       if (allBranchesResponse.statusCode == 200) {
         final branchesData = jsonDecode(allBranchesResponse.body);
         if (branchesData['docs'] != null && branchesData['docs'] is List) {
-          Set<String> uniqueCompanyIds = {};
           for (var branch in branchesData['docs']) {
-            String? bIpRange = branch['ipAddress']?.toString().trim();
-            if (bIpRange != null && _isIpInRange(deviceIp, bIpRange)) {
+            final String bId =
+                branch['id']?.toString() ?? branch['_id']?.toString() ?? '';
+
+            bool isMatch = false;
+            // Match by stored branchId
+            if (branchId != null && bId == branchId) {
+              isMatch = true;
+            }
+            // Match by IP
+            else if (deviceIp != null) {
+              String? bIpRange = branch['ipAddress']?.toString().trim();
+              if (bIpRange != null &&
+                  (bIpRange == deviceIp || _isIpInRange(deviceIp, bIpRange))) {
+                isMatch = true;
+              }
+            }
+
+            if (isMatch) {
               var company = branch['company'];
-              String? companyId = company is Map ? company['id'] : company?.toString();
+              String? companyId;
+              if (company is Map) {
+                companyId =
+                    company['id']?.toString() ??
+                    company['_id']?.toString() ??
+                    company['\$oid']?.toString();
+              } else {
+                companyId = company?.toString();
+              }
               if (companyId != null) {
                 uniqueCompanyIds.add(companyId);
               }
             }
           }
-          companyIds = uniqueCompanyIds.toList();
         }
       }
+      companyIds = uniqueCompanyIds.toList();
     } catch (e) {
       // Handle silently
     }
@@ -134,26 +239,27 @@ class _CategoriesPageState extends State<CategoriesPage> {
       if (_userRole == null) {
         await _fetchUserData(token);
       }
+      if (!mounted) return;
       String filterQuery = 'where[isBilling][equals]=true';
       // Role-based company filter
       if (_userRole != 'superadmin') {
         String? companyFilter;
         if (_userRole == 'waiter') {
+          final branchId = prefs.getString('branchId');
           String? deviceIp = await _fetchDeviceIp();
-          if (deviceIp != null) {
-            List<String> matchingCompanyIds = await _fetchMatchingCompanyIds(token, deviceIp);
-            if (matchingCompanyIds.isNotEmpty) {
-              companyFilter = '&where[company][in]=${matchingCompanyIds.join(',')}';
-            } else {
-              setState(() {
-                _errorMessage = 'No matching branches for your device IP.';
-                _isLoading = false;
-              });
-              return;
-            }
+
+          List<String> matchingCompanyIds = await _fetchMatchingCompanyIds(
+            token,
+            deviceIp,
+            branchId: branchId,
+          );
+          if (matchingCompanyIds.isNotEmpty) {
+            companyFilter =
+                '&where[company][in]=${matchingCompanyIds.join(',')}';
           } else {
             setState(() {
-              _errorMessage = 'Unable to fetch device IP.';
+              _errorMessage =
+                  'No matching branches for your connection or location.';
               _isLoading = false;
             });
             return;
@@ -166,25 +272,32 @@ class _CategoriesPageState extends State<CategoriesPage> {
         }
       }
       final response = await http.get(
-        Uri.parse('https://blackforest.vseyal.com/api/categories?$filterQuery&limit=100&depth=1'),
+        Uri.parse(
+          'https://blackforest.vseyal.com/api/categories?$filterQuery&limit=100&depth=1',
+        ),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
+        if (!mounted) return;
         setState(() {
           _categories = data['docs'] ?? [];
           _isLoading = false;
         });
       } else {
+        if (!mounted) return;
         setState(() {
           _errorMessage = 'Failed to fetch categories: ${response.statusCode}';
           _isLoading = false;
         });
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to fetch categories: ${response.statusCode}')),
+          SnackBar(
+            content: Text('Failed to fetch categories: ${response.statusCode}'),
+          ),
         );
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _errorMessage = 'Network error: Check your internet';
         _isLoading = false;
@@ -207,7 +320,9 @@ class _CategoriesPageState extends State<CategoriesPage> {
       }
       // Fetch product by UPC globally
       final response = await http.get(
-        Uri.parse('https://blackforest.vseyal.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=1'),
+        Uri.parse(
+          'https://blackforest.vseyal.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=1',
+        ),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
@@ -215,40 +330,47 @@ class _CategoriesPageState extends State<CategoriesPage> {
         final List<dynamic> products = data['docs'] ?? [];
         if (products.isNotEmpty) {
           final product = products[0];
-          final cartProvider = Provider.of<CartProvider>(context, listen: false);
+          if (!mounted) return;
+          final cartProvider = Provider.of<CartProvider>(
+            context,
+            listen: false,
+          );
           // Get branch-specific price if available (similar to ProductsPage)
-          double price = product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
-          String? _branchId; // Fetch branchId if needed, assume from user data
+          double price =
+              product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
           if (_userRole == 'branch') {
             // Reuse _fetchUserData logic or store globally
-            if (_branchId != null && product['branchOverrides'] != null) {
-              for (var override in product['branchOverrides']) {
-                var branch = override['branch'];
-                String branchOid = branch is Map ? branch[r'$oid'] ?? branch['id'] ?? '' : branch ?? '';
-                if (branchOid == _branchId) {
-                  price = override['price']?.toDouble() ?? price;
-                  break;
-                }
-              }
+            if (product['branchOverrides'] != null) {
+              // Removed unused branchId/branchOid loop logic
             }
           }
           final item = CartItem.fromProduct(product, 1, branchPrice: price);
           cartProvider.addOrUpdateItem(item);
-          final newQty = cartProvider.cartItems.firstWhere((i) => i.id == item.id).quantity;
+          final newQty = cartProvider.cartItems
+              .firstWhere((i) => i.id == item.id)
+              .quantity;
+          if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('${product['name']} added/updated (Qty: $newQty)')),
+            SnackBar(
+              content: Text('${product['name']} added/updated (Qty: $newQty)'),
+            ),
           );
         } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Product not found')),
-          );
+          if (!mounted) return;
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Product not found')));
         }
       } else {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to fetch product: ${response.statusCode}')),
+          SnackBar(
+            content: Text('Failed to fetch product: ${response.statusCode}'),
+          ),
         );
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Network error: Check your internet')),
       );
@@ -257,8 +379,13 @@ class _CategoriesPageState extends State<CategoriesPage> {
 
   @override
   Widget build(BuildContext context) {
-    String title = 'Billing Categories';
-    PageType pageType = PageType.billing;
+    final cartProvider = Provider.of<CartProvider>(context);
+    String title = 'Billing';
+    if (cartProvider.selectedTable != null) {
+      title =
+          'Table: ${cartProvider.selectedTable} (${cartProvider.selectedSection})';
+    }
+    PageType pageType = widget.sourcePage;
 
     return CommonScaffold(
       title: title,
@@ -267,116 +394,145 @@ class _CategoriesPageState extends State<CategoriesPage> {
       body: RefreshIndicator(
         onRefresh: _fetchCategories,
         child: _isLoading
-            ? const Center(child: CircularProgressIndicator(color: Colors.black))
+            ? const Center(
+                child: CircularProgressIndicator(color: Colors.black),
+              )
             : _errorMessage.isNotEmpty
             ? Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                _errorMessage,
-                style: const TextStyle(color: Color(0xFF4A4A4A), fontSize: 18),
-              ),
-              const SizedBox(height: 10),
-              ElevatedButton(
-                onPressed: _fetchCategories,
-                child: const Text('Retry'),
-              ),
-            ],
-          ),
-        )
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      _errorMessage,
+                      style: const TextStyle(
+                        color: Color(0xFF4A4A4A),
+                        fontSize: 18,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    ElevatedButton(
+                      onPressed: _fetchCategories,
+                      child: const Text('Retry'),
+                    ),
+                  ],
+                ),
+              )
             : _categories.isEmpty
             ? const Center(
-          child: Text(
-            'No categories found',
-            style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18),
-          ),
-        )
+                child: Text(
+                  'No categories found',
+                  style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18),
+                ),
+              )
             : LayoutBuilder(
-          builder: (context, constraints) {
-            final width = constraints.maxWidth;
-            final crossAxisCount = (width > 600) ? 5 : 3; // 3 on phones, 5 on desktop/web/tablets
-            return GridView.builder(
-              padding: const EdgeInsets.all(10),
-              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: crossAxisCount,
-                crossAxisSpacing: 10,
-                mainAxisSpacing: 10,
-                childAspectRatio: 0.75, // Rectangular
+                builder: (context, constraints) {
+                  final width = constraints.maxWidth;
+                  final crossAxisCount = (width > 600)
+                      ? 5
+                      : 3; // 3 on phones, 5 on desktop/web/tablets
+                  return GridView.builder(
+                    padding: const EdgeInsets.all(10),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: crossAxisCount,
+                      crossAxisSpacing: 10,
+                      mainAxisSpacing: 10,
+                      childAspectRatio: 0.75, // Rectangular
+                    ),
+                    itemCount: _categories.length,
+                    itemBuilder: (context, index) {
+                      final category = _categories[index];
+                      String? imageUrl;
+                      if (category['image'] != null &&
+                          category['image']['url'] != null) {
+                        imageUrl = category['image']['url'];
+                        if (imageUrl?.startsWith('/') ?? false) {
+                          imageUrl = 'https://blackforest.vseyal.com$imageUrl';
+                        }
+                      }
+                      imageUrl ??=
+                          'https://via.placeholder.com/150?text=No+Image'; // Fallback
+                      return GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => ProductsPage(
+                                categoryId: category['id'],
+                                categoryName: category['name'],
+                                sourcePage: widget.sourcePage,
+                              ),
+                            ),
+                          );
+                        },
+                        child: Container(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(8),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.grey.withValues(alpha: 0.1),
+                                spreadRadius: 2,
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            children: [
+                              Expanded(
+                                flex: 8, // 80% image
+                                child: ClipRRect(
+                                  borderRadius: const BorderRadius.vertical(
+                                    top: Radius.circular(8),
+                                  ),
+                                  child: CachedNetworkImage(
+                                    imageUrl: imageUrl,
+                                    fit: BoxFit.cover,
+                                    width: double.infinity,
+                                    placeholder: (context, url) => const Center(
+                                      child: CircularProgressIndicator(),
+                                    ),
+                                    errorWidget: (context, url, error) =>
+                                        const Center(
+                                          child: Text(
+                                            'No Image',
+                                            style: TextStyle(
+                                              color: Colors.grey,
+                                            ),
+                                          ),
+                                        ),
+                                  ),
+                                ),
+                              ),
+                              Expanded(
+                                flex: 2, // 20% name
+                                child: Container(
+                                  width: double.infinity,
+                                  decoration: const BoxDecoration(
+                                    color: Colors.black,
+                                    borderRadius: BorderRadius.vertical(
+                                      bottom: Radius.circular(8),
+                                    ),
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: Text(
+                                    category['name'] ?? 'Unknown',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
               ),
-              itemCount: _categories.length,
-              itemBuilder: (context, index) {
-                final category = _categories[index];
-                String? imageUrl;
-                if (category['image'] != null && category['image']['url'] != null) {
-                  imageUrl = category['image']['url'];
-                  if (imageUrl?.startsWith('/') ?? false) {
-                    imageUrl = 'https://blackforest.vseyal.com$imageUrl';
-                  }
-                }
-                imageUrl ??= 'https://via.placeholder.com/150?text=No+Image'; // Fallback
-                return GestureDetector(
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => ProductsPage(
-                        categoryId: category['id'],
-                        categoryName: category['name'],
-                      )),
-                    );
-                  },
-                  child: Container(
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(8),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.grey.withOpacity(0.1),
-                          spreadRadius: 2,
-                          blurRadius: 4,
-                          offset: const Offset(0, 2),
-                        ),
-                      ],
-                    ),
-                    child: Column(
-                      children: [
-                        Expanded(
-                          flex: 8, // 80% image
-                          child: ClipRRect(
-                            borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-                            child: CachedNetworkImage(
-                              imageUrl: imageUrl!,
-                              fit: BoxFit.cover,
-                              width: double.infinity,
-                              placeholder: (context, url) => const Center(child: CircularProgressIndicator()),
-                              errorWidget: (context, url, error) => const Center(child: Text('No Image', style: TextStyle(color: Colors.grey))),
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          flex: 2, // 20% name
-                          child: Container(
-                            width: double.infinity,
-                            decoration: const BoxDecoration(
-                              color: Colors.black,
-                              borderRadius: BorderRadius.vertical(bottom: Radius.circular(8)),
-                            ),
-                            alignment: Alignment.center,
-                            child: Text(
-                              category['name'] ?? 'Unknown',
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                              textAlign: TextAlign.center,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            );
-          },
-        ),
       ),
     );
   }

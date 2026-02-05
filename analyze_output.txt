@@ -1,0 +1,105 @@
+Resolving dependencies...
+Downloading packages...
+  archive 3.6.1 (4.0.7 available)
+  camera 0.10.6 (0.11.3 available)
+  camera_avfoundation 0.9.22+8 (0.9.22+9 available)
+  camera_web 0.3.5+2 (0.3.5+3 available)
+  characters 1.4.0 (1.4.1 available)
+  flutter_lints 5.0.0 (6.0.0 available)
+  image 3.3.0 (4.7.2 available)
+  intl 0.18.1 (0.20.2 available)
+  lints 5.1.1 (6.0.0 available)
+  matcher 0.12.17 (0.12.18 available)
+  material_color_utilities 0.11.1 (0.13.0 available)
+  meta 1.16.0 (1.18.0 available)
+  mobile_scanner 5.2.3 (7.1.4 available)
+  network_info_plus 4.1.0+1 (7.0.0 available)
+  network_info_plus_platform_interface 1.1.3 (2.0.2 available)
+  path_provider_foundation 2.5.1 (2.6.0 available)
+  permission_handler 11.4.0 (12.0.1 available)
+  permission_handler_android 12.1.0 (13.0.1 available)
+  test_api 0.7.6 (0.7.9 available)
+Got dependencies!
+19 packages have newer versions incompatible with dependency constraints.
+Try `flutter pub outdated` for more information.
+Analyzing blackforest_app...                                    
+
+   info • Invalid use of a private type in a public API • lib/cart_page.dart:23:3 • library_private_types_in_public_api
+warning • The value of the field '_userRole' isn't used • lib/cart_page.dart:33:11 • unused_field
+   info • Don't use 'BuildContext's across async gaps • lib/cart_page.dart:73:35 • use_build_context_synchronously
+   info • Unnecessary use of '??' with 'null' • lib/cart_page.dart:146:44 • unnecessary_null_in_if_null_operators
+   info • Don't use 'BuildContext's across async gaps • lib/cart_page.dart:159:56 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/cart_page.dart:285:30 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/cart_page.dart:302:58 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/cart_page.dart:320:32 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/cart_page.dart:324:32 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/cart_page.dart:330:28 • use_build_context_synchronously
+   info • 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss • lib/cart_page.dart:405:71 • deprecated_member_use
+   info • 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss • lib/cart_page.dart:430:71 • deprecated_member_use
+   info • Don't invoke 'print' in production code • lib/cart_page.dart:549:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/cart_page.dart:580:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/cart_page.dart:583:7 • avoid_print
+   info • Don't invoke 'print' in production code • lib/cart_page.dart:588:11 • avoid_print
+   info • Don't invoke 'print' in production code • lib/cart_page.dart:593:11 • avoid_print
+   info • Don't invoke 'print' in production code • lib/cart_page.dart:595:11 • avoid_print
+   info • Don't use 'BuildContext's across async gaps • lib/cart_page.dart:600:30 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/cart_page.dart:601:35 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/cart_page.dart:603:30 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/cart_page.dart:606:28 • use_build_context_synchronously
+warning • The '!' will have no effect because the receiver can't be null • lib/cart_page.dart:683:66 • unnecessary_non_null_assertion
+warning • The '!' will have no effect because the receiver can't be null • lib/cart_page.dart:705:67 • unnecessary_non_null_assertion
+   info • Don't invoke 'print' in production code • lib/cart_page.dart:813:11 • avoid_print
+   info • Don't invoke 'print' in production code • lib/cart_page.dart:816:9 • avoid_print
+   info • Don't invoke 'print' in production code • lib/cart_page.dart:829:16 • avoid_print
+   info • Don't invoke 'print' in production code • lib/cart_page.dart:950:16 • avoid_print
+   info • Don't use 'BuildContext's across async gaps • lib/cart_page.dart:961:30 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/cart_page.dart:968:28 • use_build_context_synchronously
+   info • 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss • lib/cart_page.dart:1091:49 • deprecated_member_use
+   info • 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss • lib/cart_page.dart:1091:80 • deprecated_member_use
+   info • 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss • lib/cart_page.dart:1095:76 • deprecated_member_use
+   info • 'activeColor' is deprecated and shouldn't be used. Use activeThumbColor instead. This feature was deprecated after v3.31.0-2.0.pre • lib/cart_page.dart:1144:33 • deprecated_member_use
+   info • Parameter 'key' could be a super parameter • lib/cart_page.dart:1222:9 • use_super_parameters
+   info • 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss • lib/cart_page.dart:1292:33 • deprecated_member_use
+   info • Parameter 'key' could be a super parameter • lib/cart_page.dart:1424:9 • use_super_parameters
+   info • 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss • lib/cart_page.dart:1436:50 • deprecated_member_use
+   info • Parameter 'key' could be a super parameter • lib/cart_page.dart:1453:9 • use_super_parameters
+   info • 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss • lib/cart_page.dart:1473:36 • deprecated_member_use
+   info • Don't use 'BuildContext's across async gaps • lib/cart_provider.dart:199:30 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/cart_provider.dart:207:28 • use_build_context_synchronously
+   info • Invalid use of a private type in a public API • lib/categories_page.dart:18:3 • library_private_types_in_public_api
+   info • Don't use 'BuildContext's across async gaps • lib/categories_page.dart:207:30 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/categories_page.dart:256:30 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/categories_page.dart:265:28 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/categories_page.dart:276:30 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/categories_page.dart:291:58 • use_build_context_synchronously
+   info • The local variable '_branchId' starts with an underscore • lib/categories_page.dart:294:19 • no_leading_underscores_for_local_identifiers
+warning • The operand must be 'null', so the condition is always 'false' • lib/categories_page.dart:297:17 • unnecessary_null_comparison
+   info • Don't use 'BuildContext's across async gaps • lib/categories_page.dart:311:32 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/categories_page.dart:315:32 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/categories_page.dart:320:30 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/categories_page.dart:325:28 • use_build_context_synchronously
+   info • 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss • lib/categories_page.dart:406:46 • deprecated_member_use
+warning • The '!' will have no effect because the receiver can't be null • lib/categories_page.dart:420:49 • unnecessary_non_null_assertion
+   info • Invalid use of a private type in a public API • lib/common_scaffold.dart:31:3 • library_private_types_in_public_api
+   info • Don't use 'BuildContext's across async gaps • lib/common_scaffold.dart:66:36 • use_build_context_synchronously
+   info • Invalid use of a private type in a public API • lib/common_scaffold.dart:347:3 • library_private_types_in_public_api
+   info • Invalid use of a private type in a public API • lib/employee.dart:11:3 • library_private_types_in_public_api
+warning • The value of the field '_userName' isn't used • lib/employee.dart:15:10 • unused_field
+warning • The value of the field '_loginTime' isn't used • lib/employee.dart:16:12 • unused_field
+warning • The declaration '_punchIn' isn't referenced • lib/employee.dart:98:8 • unused_element
+warning • The declaration '_punchOut' isn't referenced • lib/employee.dart:110:8 • unused_element
+warning • The declaration '_startBreak' isn't referenced • lib/employee.dart:122:8 • unused_element
+warning • The value of the local variable 'currentDate' isn't used • lib/employee.dart:146:11 • unused_local_variable
+   info • Invalid use of a private type in a public API • lib/login_page.dart:24:3 • library_private_types_in_public_api
+   info • Invalid use of a private type in a public API • lib/login_page.dart:102:3 • library_private_types_in_public_api
+   info • 'desiredAccuracy' is deprecated and shouldn't be used. use settings parameter with AndroidSettings, AppleSettings, WebSettings, or LocationSettings • lib/login_page.dart:264:11 • deprecated_member_use
+   info • 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss • lib/login_page.dart:565:37 • deprecated_member_use
+   info • 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss • lib/login_page.dart:570:41 • deprecated_member_use
+   info • Invalid use of a private type in a public API • lib/products_page.dart:22:3 • library_private_types_in_public_api
+   info • Don't use 'BuildContext's across async gaps • lib/products_page.dart:175:30 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/products_page.dart:195:30 • use_build_context_synchronously
+   info • Don't use 'BuildContext's across async gaps • lib/products_page.dart:200:28 • use_build_context_synchronously
+   info • 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss • lib/products_page.dart:401:48 • deprecated_member_use
+   info • 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss • lib/products_page.dart:472:57 • deprecated_member_use
+
+77 issues found. (ran in 1.2s)

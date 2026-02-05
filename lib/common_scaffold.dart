@@ -9,9 +9,11 @@ import 'package:blackforest_app/cart_page.dart'; // Import CartPage
 import 'package:blackforest_app/cart_provider.dart'; // Import CartProvider
 import 'package:blackforest_app/employee.dart'; // Import EmployeePage
 import 'package:blackforest_app/table.dart'; // Import TablePage
-import 'package:blackforest_app/editbill.dart'; // Import EditBillPage
+import 'package:blackforest_app/kot_bills_page.dart'; // Import KotBillsPage
+import 'package:blackforest_app/home_page.dart';
+import 'package:blackforest_app/kitchen_notifications_page.dart'; // Import HomePage
 
-enum PageType { employee, billing, cart, table, editbill }
+enum PageType { home, billing, cart, billsheet, table, editbill, employee }
 
 class CommonScaffold extends StatefulWidget {
   final String title;
@@ -33,19 +35,53 @@ class CommonScaffold extends StatefulWidget {
 
 class _CommonScaffoldState extends State<CommonScaffold> {
   Timer? _inactivityTimer;
+  Timer? _kitchenSyncTimer;
   String _username = 'Menu';
 
   @override
   void initState() {
     super.initState();
     _loadUsername();
-    _resetTimer();
+    _resetTimer(); // Changed from _startTimer() to _resetTimer() as per original code
+    _startKitchenSync();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final cartProvider = Provider.of<CartProvider>(context, listen: false);
+      if (widget.pageType == PageType.billing) {
+        cartProvider.setCartType(CartType.billing);
+      } else if (widget.pageType == PageType.table) {
+        cartProvider.setCartType(CartType.table);
+      }
+    });
   }
 
   @override
   void dispose() {
     _inactivityTimer?.cancel();
+    _kitchenSyncTimer?.cancel();
     super.dispose();
+  }
+
+  void _startKitchenSync() {
+    // Initial sync
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        Provider.of<CartProvider>(
+          context,
+          listen: false,
+        ).syncKitchenNotifications();
+      }
+    });
+
+    // Periodic sync every 5 seconds
+    _kitchenSyncTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (mounted) {
+        Provider.of<CartProvider>(
+          context,
+          listen: false,
+        ).syncKitchenNotifications();
+      }
+    });
   }
 
   Future<void> _loadUsername() async {
@@ -66,12 +102,17 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     Navigator.pushReplacementNamed(context, '/login');
   }
 
+  Future<void> _clearCache() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+    PaintingBinding.instance.imageCache.clear();
+    _showMessage('Cache and storage cleared');
+    Navigator.pushReplacementNamed(context, '/login');
+  }
+
   void _showMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.grey[800],
-      ),
+      SnackBar(content: Text(message), backgroundColor: Colors.grey[800]),
     );
   }
 
@@ -120,16 +161,71 @@ class _CommonScaffoldState extends State<CommonScaffold> {
           elevation: 1,
           title: Text(
             widget.title,
-            style: const TextStyle(color: Colors.black87, fontWeight: FontWeight.w600),
+            style: const TextStyle(
+              color: Colors.black87,
+              fontWeight: FontWeight.w600,
+            ),
           ),
           iconTheme: const IconThemeData(color: Colors.black87),
           actionsIconTheme: const IconThemeData(color: Colors.black87),
           actions: [
+            Consumer<CartProvider>(
+              builder: (context, cartProvider, child) {
+                final int notifyCount =
+                    cartProvider.kitchenNotifications.length;
+
+                return Stack(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.notifications_none_outlined),
+                      onPressed: () {
+                        _resetTimer();
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                const KitchenNotificationsPage(),
+                          ),
+                        );
+                      },
+                    ),
+                    if (notifyCount > 0)
+                      Positioned(
+                        right: 8,
+                        top: 8,
+                        child: Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          constraints: const BoxConstraints(
+                            minWidth: 16,
+                            minHeight: 16,
+                          ),
+                          child: Text(
+                            '$notifyCount',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
             IconButton(
-              icon: const Icon(Icons.notifications_outlined),
+              icon: const Icon(Icons.receipt_long_outlined),
               onPressed: () {
                 _resetTimer();
-                _showMessage('Notifications coming soon');
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  _createRoute(const KotBillsPage()),
+                  (route) => false,
+                );
               },
             ),
             Consumer<CartProvider>(
@@ -139,12 +235,17 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                 return Stack(
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.shopping_cart_outlined, color: Colors.black87),
+                      icon: const Icon(
+                        Icons.shopping_cart_outlined,
+                        color: Colors.black87,
+                      ),
                       onPressed: () {
                         _resetTimer();
                         Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (context) => const CartPage()),
+                          MaterialPageRoute(
+                            builder: (context) => const CartPage(),
+                          ),
                         );
                       },
                     ),
@@ -158,10 +259,16 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                             color: Colors.red,
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
+                          constraints: const BoxConstraints(
+                            minWidth: 16,
+                            minHeight: 16,
+                          ),
                           child: Text(
                             '$itemCount',
-                            style: const TextStyle(color: Colors.white, fontSize: 10),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                            ),
                             textAlign: TextAlign.center,
                           ),
                         ),
@@ -239,6 +346,18 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                 },
               ),
               ListTile(
+                leading: const Icon(
+                  Icons.cleaning_services,
+                  color: Colors.black,
+                ),
+                title: const Text('Clear Cache'),
+                onTap: () {
+                  _resetTimer();
+                  Navigator.pop(context);
+                  _clearCache();
+                },
+              ),
+              ListTile(
                 leading: const Icon(Icons.logout, color: Colors.black),
                 title: const Text('Logout'),
                 onTap: () {
@@ -262,10 +381,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
                 _buildNavItem(
-                  icon: Icons.people_outlined,
-                  label: 'Employee',
-                  page: const EmployeePage(),
-                  type: PageType.employee,
+                  icon: Icons.home_outlined,
+                  label: 'Home',
+                  page: const HomePage(),
+                  type: PageType.home,
                 ),
                 _buildNavItem(
                   icon: Icons.receipt_outlined,
@@ -278,8 +397,15 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: const [
-                      Icon(Icons.qr_code_scanner_outlined, color: Colors.black, size: 32),
-                      Text('Scan', style: TextStyle(color: Colors.black, fontSize: 10)),
+                      Icon(
+                        Icons.qr_code_scanner_outlined,
+                        color: Colors.black,
+                        size: 32,
+                      ),
+                      Text(
+                        'Scan',
+                        style: TextStyle(color: Colors.black, fontSize: 10),
+                      ),
                     ],
                   ),
                 ),
@@ -290,10 +416,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                   type: PageType.table,
                 ),
                 _buildNavItem(
-                  icon: Icons.edit_outlined,
-                  label: 'Edit Bill',
-                  page: const EditBillPage(),
-                  type: PageType.editbill,
+                  icon: Icons.badge_outlined,
+                  label: 'Employee',
+                  page: const EmployeePage(),
+                  type: PageType.employee,
                 ),
               ],
             ),
@@ -315,7 +441,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
         Navigator.pushAndRemoveUntil(
           context,
           _createRoute(page),
-              (route) => false,
+          (route) => false,
         );
       },
       child: Column(

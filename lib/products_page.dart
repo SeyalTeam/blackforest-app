@@ -11,15 +11,17 @@ import 'package:blackforest_app/cart_provider.dart';
 class ProductsPage extends StatefulWidget {
   final String categoryId;
   final String categoryName;
+  final PageType sourcePage;
 
   const ProductsPage({
     super.key,
     required this.categoryId,
     required this.categoryName,
+    this.sourcePage = PageType.billing,
   });
 
   @override
-  _ProductsPageState createState() => _ProductsPageState();
+  State<ProductsPage> createState() => _ProductsPageState();
 }
 
 class _ProductsPageState extends State<ProductsPage> {
@@ -49,7 +51,9 @@ class _ProductsPageState extends State<ProductsPage> {
         });
         if (user['role'] == 'branch' && user['branch'] != null) {
           setState(() {
-            _branchId = (user['branch'] is Map) ? user['branch']['id'] : user['branch'];
+            _branchId = (user['branch'] is Map)
+                ? user['branch']['id']
+                : user['branch'];
           });
         } else if (user['role'] == 'waiter') {
           await _fetchWaiterBranch(token);
@@ -89,9 +93,64 @@ class _ProductsPageState extends State<ProductsPage> {
 
   /// Find the waiter's branch by matching device IP to branch IP or range
   Future<void> _fetchWaiterBranch(String token) async {
-    String? deviceIp = await _fetchDeviceIp();
-    if (deviceIp == null) return;
     try {
+      // 0. Prioritize stored branchId from login
+      final prefs = await SharedPreferences.getInstance();
+      final storedBranchId = prefs.getString('branchId');
+      if (storedBranchId != null) {
+        setState(() {
+          _branchId = storedBranchId;
+        });
+        return;
+      }
+
+      String? deviceIp = await _fetchDeviceIp();
+      if (deviceIp == null) return;
+
+      // 1. Try Global Settings
+      try {
+        final gRes = await http.get(
+          Uri.parse(
+            'https://blackforest.vseyal.com/api/globals/branch-geo-settings',
+          ),
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
+        );
+        if (gRes.statusCode == 200) {
+          final settings = jsonDecode(gRes.body);
+          final locations = settings['locations'] as List?;
+          if (locations != null) {
+            for (var loc in locations) {
+              String? bIpRange = loc['ipAddress']?.toString().trim();
+              if (bIpRange != null &&
+                  (bIpRange == deviceIp || _isIpInRange(deviceIp, bIpRange))) {
+                final branchRef = loc['branch'];
+                String? branchId;
+                if (branchRef is Map) {
+                  branchId =
+                      branchRef['id']?.toString() ??
+                      branchRef['_id']?.toString() ??
+                      branchRef['\$oid']?.toString();
+                } else {
+                  branchId = branchRef?.toString();
+                }
+                if (branchId != null) {
+                  setState(() {
+                    _branchId = branchId;
+                  });
+                  return;
+                }
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint("Error fetching global settings in products: $e");
+      }
+
+      // 2. Fallback to Branches Collection
       final allBranchesResponse = await http.get(
         Uri.parse('https://blackforest.vseyal.com/api/branches?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
@@ -101,13 +160,13 @@ class _ProductsPageState extends State<ProductsPage> {
         if (branchesData['docs'] != null && branchesData['docs'] is List) {
           for (var branch in branchesData['docs']) {
             String? bIpRange = branch['ipAddress']?.toString().trim();
-            if (bIpRange != null) {
-              if (bIpRange == deviceIp || _isIpInRange(deviceIp, bIpRange)) {
-                setState(() {
-                  _branchId = branch['id'];
-                });
-                break;
-              }
+            if (bIpRange != null &&
+                (bIpRange == deviceIp || _isIpInRange(deviceIp, bIpRange))) {
+              setState(() {
+                _branchId =
+                    branch['id']?.toString() ?? branch['_id']?.toString();
+              });
+              break;
             }
           }
         }
@@ -126,6 +185,7 @@ class _ProductsPageState extends State<ProductsPage> {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
       if (token == null) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('No token found. Please login again.')),
         );
@@ -135,22 +195,28 @@ class _ProductsPageState extends State<ProductsPage> {
         await _fetchUserData(token);
       }
       // Updated: Fetch all products in the category without restricting to branch overrides
-      String url = 'https://blackforest.vseyal.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=2';
+      String url =
+          'https://blackforest.vseyal.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=2';
       final response = await http.get(
         Uri.parse(url),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
+        if (!mounted) return;
         setState(() {
           _products = data['docs'] ?? [];
         });
       } else {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to fetch products: ${response.statusCode}')),
+          SnackBar(
+            content: Text('Failed to fetch products: ${response.statusCode}'),
+          ),
         );
       }
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Network error: Check your internet')),
       );
@@ -170,7 +236,9 @@ class _ProductsPageState extends State<ProductsPage> {
     if (_branchId != null && product['branchOverrides'] != null) {
       for (var override in product['branchOverrides']) {
         var branch = override['branch'];
-        String branchOid = branch is Map ? (branch[r'$oid'] ?? branch['id'] ?? '') : (branch ?? '');
+        String branchOid = branch is Map
+            ? (branch[r'$oid'] ?? branch['id'] ?? '')
+            : (branch ?? '');
         if (branchOid == _branchId) {
           price = override['price']?.toDouble() ?? price;
           break;
@@ -181,13 +249,24 @@ class _ProductsPageState extends State<ProductsPage> {
     // Step 2: Detect if the product is weight-based
     bool isWeightBased = false;
     try {
-      final unit = product['defaultPriceDetails']?['unit']?.toString().toLowerCase();
-      final isKgFlag = product['isKg'] == true || product['sellByWeight'] == true || product['weightBased'] == true;
+      final unit = product['defaultPriceDetails']?['unit']
+          ?.toString()
+          .toLowerCase();
+      final isKgFlag =
+          product['isKg'] == true ||
+          product['sellByWeight'] == true ||
+          product['weightBased'] == true;
       final pricingType = product['pricingType']?.toString().toLowerCase();
 
-      if (unit != null && (unit.contains('kg') || unit.contains('gram'))) isWeightBased = true;
-      if (isKgFlag) isWeightBased = true;
-      if (pricingType != null && pricingType.contains('kg')) isWeightBased = true;
+      if (unit != null && (unit.contains('kg') || unit.contains('gram'))) {
+        isWeightBased = true;
+      }
+      if (isKgFlag) {
+        isWeightBased = true;
+      }
+      if (pricingType != null && pricingType.contains('kg')) {
+        isWeightBased = true;
+      }
       // Removed name check to avoid false positives
     } catch (e) {
       isWeightBased = false;
@@ -196,7 +275,7 @@ class _ProductsPageState extends State<ProductsPage> {
     // Step 3: Get current quantity if exists
     double existingQty = 0.0;
     final existingItem = cartProvider.cartItems.firstWhere(
-          (i) => i.id == product['id'],
+      (i) => i.id == product['id'],
       orElse: () => CartItem(id: '', name: '', price: 0, quantity: 0),
     );
     if (existingItem.id.isNotEmpty) {
@@ -218,7 +297,9 @@ class _ProductsPageState extends State<ProductsPage> {
             title: Text('Enter Weight ($unit)'),
             content: TextField(
               controller: weightController,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               decoration: InputDecoration(
                 hintText: 'e.g. 0.5',
                 labelText: 'Weight in $unit',
@@ -232,7 +313,8 @@ class _ProductsPageState extends State<ProductsPage> {
               ),
               ElevatedButton(
                 onPressed: () {
-                  final value = double.tryParse(weightController.text.trim()) ?? 0.0;
+                  final value =
+                      double.tryParse(weightController.text.trim()) ?? 0.0;
                   Navigator.pop(context, value);
                 },
                 child: const Text('OK'),
@@ -274,181 +356,231 @@ class _ProductsPageState extends State<ProductsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final cartProvider = Provider.of<CartProvider>(context);
+    String title = widget.categoryName;
+    if (cartProvider.selectedTable != null) {
+      title = '${widget.categoryName} (Table: ${cartProvider.selectedTable})';
+    }
+
     return CommonScaffold(
-      title: 'Products in ${widget.categoryName}',
-      pageType: PageType.billing,
+      title: title,
+      pageType: widget.sourcePage,
       onScanCallback: _handleScan,
       body: _isLoading
           ? const Center(child: CircularProgressIndicator(color: Colors.black))
           : _products.isEmpty
           ? const Center(
-          child: Text('No products found', style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18)))
+              child: Text(
+                'No products found',
+                style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18),
+              ),
+            )
           : LayoutBuilder(
-        builder: (context, constraints) {
-          final width = constraints.maxWidth;
-          final crossAxisCount = (width > 600) ? 5 : 3;
-          return GridView.builder(
-            padding: const EdgeInsets.all(10),
-            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: crossAxisCount,
-              crossAxisSpacing: 10,
-              mainAxisSpacing: 10,
-              childAspectRatio: 0.75,
-            ),
-            itemCount: _products.length,
-            itemBuilder: (context, index) {
-              final product = _products[index];
-              String? imageUrl;
-              if (product['images'] != null &&
-                  product['images'].isNotEmpty &&
-                  product['images'][0]['image'] != null &&
-                  product['images'][0]['image']['url'] != null) {
-                imageUrl = product['images'][0]['image']['url'];
-                if (imageUrl != null && imageUrl.startsWith('/')) {
-                  imageUrl = 'https://blackforest.vseyal.com$imageUrl';
-                }
-              }
-              imageUrl ??= 'https://via.placeholder.com/150?text=No+Image';
-
-              dynamic priceDetails = product['defaultPriceDetails'];
-              if (_branchId != null && product['branchOverrides'] != null) {
-                for (var override in product['branchOverrides']) {
-                  var branch = override['branch'];
-                  String branchOid = branch is Map ? branch[r'$oid'] ?? branch['id'] ?? '' : branch ?? '';
-                  if (branchOid == _branchId) {
-                    priceDetails = override;
-                    break;
-                  }
-                }
-              }
-              final price = priceDetails != null ? '₹${priceDetails['price'] ?? 0}' : '₹0';
-
-              return GestureDetector(
-                onTap: () => _toggleProductSelection(index),
-                child: Consumer<CartProvider>(
-                  builder: (context, cartProvider, child) {
-                    final isSelected = cartProvider.cartItems.any((i) => i.id == product['id']);
-                    final qty = cartProvider.cartItems
-                        .firstWhere(
-                          (i) => i.id == product['id'],
-                      orElse: () => CartItem(
-                        id: '',
-                        name: '',
-                        price: 0,
-                        quantity: 0,
-                      ),
-                    )
-                        .quantity;
-                    String qtyText;
-                    if (qty == qty.floorToDouble()) {
-                      qtyText = qty.toInt().toString();
-                    } else {
-                      qtyText = qty.toStringAsFixed(2);
+              builder: (context, constraints) {
+                final width = constraints.maxWidth;
+                final crossAxisCount = (width > 600) ? 5 : 3;
+                return GridView.builder(
+                  padding: const EdgeInsets.all(10),
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: crossAxisCount,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                    childAspectRatio: 0.75,
+                  ),
+                  itemCount: _products.length,
+                  itemBuilder: (context, index) {
+                    final product = _products[index];
+                    String? imageUrl;
+                    if (product['images'] != null &&
+                        product['images'].isNotEmpty &&
+                        product['images'][0]['image'] != null &&
+                        product['images'][0]['image']['url'] != null) {
+                      imageUrl = product['images'][0]['image']['url'];
+                      if (imageUrl != null && imageUrl.startsWith('/')) {
+                        imageUrl = 'https://blackforest.vseyal.com$imageUrl';
+                      }
                     }
+                    imageUrl ??=
+                        'https://via.placeholder.com/150?text=No+Image';
 
-                    return Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(8),
-                        border: isSelected ? Border.all(color: Colors.green, width: 4) : null,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.grey.withOpacity(0.1),
-                            spreadRadius: 2,
-                            blurRadius: 4,
-                            offset: const Offset(0, 2),
-                          ),
-                        ],
-                      ),
-                      child: Stack(
-                        children: [
-                          Column(
-                            children: [
-                              Expanded(
-                                flex: 8,
-                                child: ClipRRect(
-                                  borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-                                  child: CachedNetworkImage(
-                                    imageUrl: imageUrl!,
-                                    fit: BoxFit.cover,
-                                    width: double.infinity,
-                                    placeholder: (context, url) =>
-                                    const Center(child: CircularProgressIndicator()),
-                                    errorWidget: (context, url, error) => const Center(
-                                      child: Text('No Image', style: TextStyle(color: Colors.grey)),
+                    dynamic priceDetails = product['defaultPriceDetails'];
+                    if (_branchId != null &&
+                        product['branchOverrides'] != null) {
+                      for (var override in product['branchOverrides']) {
+                        var branch = override['branch'];
+                        String branchOid = branch is Map
+                            ? branch[r'$oid'] ?? branch['id'] ?? ''
+                            : branch ?? '';
+                        if (branchOid == _branchId) {
+                          priceDetails = override;
+                          break;
+                        }
+                      }
+                    }
+                    final price = priceDetails != null
+                        ? '₹${priceDetails['price'] ?? 0}'
+                        : '₹0';
+
+                    return GestureDetector(
+                      onTap: () => _toggleProductSelection(index),
+                      child: Consumer<CartProvider>(
+                        builder: (context, cartProvider, child) {
+                          final isSelected = cartProvider.cartItems.any(
+                            (i) => i.id == product['id'],
+                          );
+                          final qty = cartProvider.cartItems
+                              .firstWhere(
+                                (i) => i.id == product['id'],
+                                orElse: () => CartItem(
+                                  id: '',
+                                  name: '',
+                                  price: 0,
+                                  quantity: 0,
+                                ),
+                              )
+                              .quantity;
+                          String qtyText;
+                          if (qty == qty.floorToDouble()) {
+                            qtyText = qty.toInt().toString();
+                          } else {
+                            qtyText = qty.toStringAsFixed(2);
+                          }
+
+                          return Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              border: isSelected
+                                  ? Border.all(color: Colors.green, width: 4)
+                                  : null,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.1),
+                                  spreadRadius: 1,
+                                  blurRadius: 5,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                            child: Stack(
+                              children: [
+                                Column(
+                                  children: [
+                                    Expanded(
+                                      flex: 8,
+                                      child: ClipRRect(
+                                        borderRadius:
+                                            const BorderRadius.vertical(
+                                              top: Radius.circular(8),
+                                            ),
+                                        child: CachedNetworkImage(
+                                          imageUrl: imageUrl!,
+                                          fit: BoxFit.cover,
+                                          width: double.infinity,
+                                          placeholder: (context, url) =>
+                                              const Center(
+                                                child:
+                                                    CircularProgressIndicator(),
+                                              ),
+                                          errorWidget: (context, url, error) =>
+                                              const Center(
+                                                child: Text(
+                                                  'No Image',
+                                                  style: TextStyle(
+                                                    color: Colors.grey,
+                                                  ),
+                                                ),
+                                              ),
+                                        ),
+                                      ),
+                                    ),
+                                    Expanded(
+                                      flex: 2,
+                                      child: Container(
+                                        width: double.infinity,
+                                        decoration: const BoxDecoration(
+                                          color: Colors.black,
+                                          borderRadius: BorderRadius.vertical(
+                                            bottom: Radius.circular(8),
+                                          ),
+                                        ),
+                                        alignment: Alignment.center,
+                                        child: Text(
+                                          product['name'] ?? 'Unknown',
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                          textAlign: TextAlign.center,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                Positioned(
+                                  top: 2,
+                                  left: 2,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 4,
+                                      vertical: 2,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      price,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 10,
+                                      ),
                                     ),
                                   ),
                                 ),
-                              ),
-                              Expanded(
-                                flex: 2,
-                                child: Container(
-                                  width: double.infinity,
-                                  decoration: const BoxDecoration(
-                                    color: Colors.black,
-                                    borderRadius: BorderRadius.vertical(bottom: Radius.circular(8)),
-                                  ),
-                                  alignment: Alignment.center,
-                                  child: Text(
-                                    product['name'] ?? 'Unknown',
-                                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                                    textAlign: TextAlign.center,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          Positioned(
-                            top: 2,
-                            left: 2,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.black,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                price,
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 10,
-                                ),
-                              ),
-                            ),
-                          ),
-                          if (isSelected)
-                            Positioned.fill(
-                              child: Align(
-                                alignment: Alignment.center,
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withOpacity(0.7),
-                                    border: Border.all(color: Colors.grey, width: 1),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                  child: Text(
-                                    qtyText,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
+                                if (isSelected)
+                                  Positioned.fill(
+                                    child: Align(
+                                      alignment: Alignment.center,
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                          color: Colors.black.withValues(
+                                            alpha: 0.7,
+                                          ),
+                                          border: Border.all(
+                                            color: Colors.grey,
+                                            width: 1,
+                                          ),
+                                          borderRadius: BorderRadius.circular(
+                                            4,
+                                          ),
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 4,
+                                        ),
+                                        child: Text(
+                                          qtyText,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
                                     ),
                                   ),
-                                ),
-                              ),
+                              ],
                             ),
-                        ],
+                          );
+                        },
                       ),
                     );
                   },
-                ),
-              );
-            },
-          );
-        },
-      ),
+                );
+              },
+            ),
     );
   }
 }

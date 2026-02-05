@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import 'package:blackforest_app/common_scaffold.dart'; // Added import for header/footer consistency
 
@@ -8,17 +7,18 @@ class EmployeePage extends StatefulWidget {
   const EmployeePage({super.key});
 
   @override
-  _EmployeePageState createState() => _EmployeePageState();
+  State<EmployeePage> createState() => _EmployeePageState();
 }
 
 class _EmployeePageState extends State<EmployeePage> {
-  String _userName = 'Unknown'; // Fetched from login (e.g., email or name)
-  DateTime _loginTime = DateTime.now(); // Simulate login time; fetch from prefs if needed
+  // String _userName = 'Unknown'; // Assigned but unused
+  // DateTime _loginTime = DateTime.now(); // Assigned but unused
   Timer? _timer;
   Duration _workingDuration = Duration.zero;
   Duration _breakDuration = Duration.zero;
 
-  List<Map<String, dynamic>> _activities = []; // List of punch in/out/break entries
+  List<Map<String, dynamic>> _activities =
+      []; // List of punch in/out/break entries
   bool _isPunchedIn = false; // Track current state
   DateTime? _currentPunchInTime; // For calculating on punch out
 
@@ -29,11 +29,23 @@ class _EmployeePageState extends State<EmployeePage> {
     _startWorkingTimer();
     // Load previous activities if stored (e.g., from backend or prefs)
     _activities = [
-      {'type': 'in', 'time': DateTime.now().subtract(const Duration(hours: 1, minutes: 25))}, // Example data from screenshot
-      {'type': 'out', 'time': DateTime.now().subtract(const Duration(hours: 1, minutes: 4))},
+      {
+        'type': 'in',
+        'time': DateTime.now().subtract(const Duration(hours: 1, minutes: 25)),
+      }, // Example data from screenshot
+      {
+        'type': 'out',
+        'time': DateTime.now().subtract(const Duration(hours: 1, minutes: 4)),
+      },
       {'type': 'break', 'duration': const Duration(minutes: 51)},
-      {'type': 'in', 'time': DateTime.now().subtract(const Duration(minutes: 44))},
-      {'type': 'out', 'time': DateTime.now().subtract(const Duration(minutes: 40))},
+      {
+        'type': 'in',
+        'time': DateTime.now().subtract(const Duration(minutes: 44)),
+      },
+      {
+        'type': 'out',
+        'time': DateTime.now().subtract(const Duration(minutes: 40)),
+      },
     ];
     _calculateTotals(); // Initial calculation based on activities
   }
@@ -45,17 +57,15 @@ class _EmployeePageState extends State<EmployeePage> {
   }
 
   Future<void> _loadUserData() async {
-    final prefs = await SharedPreferences.getInstance();
-    final email = prefs.getString('email') ?? 'Unknown';
     // Assuming name is derived from email or stored separately; adjust if you have 'name' field
-    setState(() {
-      _userName = email.split('@')[0]; // Simple derivation; replace with actual name if available
-    });
+    // setState(() {
+    //   _userName = email.split('@')[0]; // Simple derivation; replace with actual name if available
+    // });
     // Fetch login time if stored (e.g., prefs.setString('loginTime', DateTime.now().toIso8601String()) in login)
-    final loginTimeStr = prefs.getString('loginTime');
-    if (loginTimeStr != null) {
-      _loginTime = DateTime.parse(loginTimeStr);
-    }
+    // final loginTimeStr = prefs.getString('loginTime');
+    // if (loginTimeStr != null) {
+    //   _loginTime = DateTime.parse(loginTimeStr);
+    // }
   }
 
   void _startWorkingTimer() {
@@ -95,6 +105,7 @@ class _EmployeePageState extends State<EmployeePage> {
     });
   }
 
+  /*
   void _punchIn() {
     if (!_isPunchedIn) {
       final now = DateTime.now();
@@ -123,10 +134,14 @@ class _EmployeePageState extends State<EmployeePage> {
     // Simulate break; add logic for break duration calculation if needed
     // For now, add a placeholder break (e.g., from screenshot: 51 min)
     setState(() {
-      _activities.add({'type': 'break', 'duration': const Duration(minutes: 51)});
+      _activities.add({
+        'type': 'break',
+        'duration': const Duration(minutes: 51),
+      });
     });
     _calculateTotals();
   }
+  */
 
   String _formatDuration(Duration d) {
     final hours = d.inHours.toString().padLeft(2, '0');
@@ -143,12 +158,14 @@ class _EmployeePageState extends State<EmployeePage> {
 
   @override
   Widget build(BuildContext context) {
-    final currentDate = DateFormat('dd MMMM yyyy').format(DateTime.now());
+    // final currentDate = DateFormat('dd MMMM yyyy').format(DateTime.now()); // Unused
 
-    return CommonScaffold(  // Wrapped with CommonScaffold for header/footer consistency
-      title: 'Employee Dashboard',  // Custom title; adjust as needed
-      pageType: PageType.employee,  // Assuming PageType enum exists; add if not (e.g., enum PageType { billing, employee })
-      onScanCallback: null,  // No scan needed; set to null or a callback if required
+    return CommonScaffold(
+      // Wrapped with CommonScaffold for header/footer consistency
+      title: 'Employee Dashboard', // Custom title; adjust as needed
+      pageType: PageType.employee, // Repurposed from home to employee
+      onScanCallback:
+          null, // No scan needed; set to null or a callback if required
       body: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(16.0),
@@ -158,21 +175,51 @@ class _EmployeePageState extends State<EmployeePage> {
               Center(
                 child: Card(
                   color: Colors.black,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                   child: Padding(
                     padding: const EdgeInsets.all(16.0),
                     child: Column(
                       children: [
-                        const Text('Working Hours', style: TextStyle(color: Colors.white, fontSize: 16)),
+                        const Text(
+                          'Working Hours',
+                          style: TextStyle(color: Colors.white, fontSize: 16),
+                        ),
                         const SizedBox(height: 8),
-                        Text(_formatDuration(_workingDuration), style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.bold)),
+                        Text(
+                          _formatDuration(_workingDuration),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 32,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                         const SizedBox(height: 8),
                         const Row(
                           mainAxisAlignment: MainAxisAlignment.spaceAround,
                           children: [
-                            Text('Hour', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                            Text('Min', style: TextStyle(color: Colors.white70, fontSize: 12)),
-                            Text('Sec', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                            Text(
+                              'Hour',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                              ),
+                            ),
+                            Text(
+                              'Min',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                              ),
+                            ),
+                            Text(
+                              'Sec',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                              ),
+                            ),
                           ],
                         ),
                       ],
@@ -183,7 +230,9 @@ class _EmployeePageState extends State<EmployeePage> {
               const SizedBox(height: 16),
               Card(
                 color: Colors.orange[100],
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 child: Padding(
                   padding: const EdgeInsets.all(12.0),
                   child: Row(
@@ -191,7 +240,10 @@ class _EmployeePageState extends State<EmployeePage> {
                     children: [
                       const Icon(Icons.coffee, color: Colors.orange),
                       const SizedBox(width: 8),
-                      Text('Total Break Time ${_formatBreak(_breakDuration)}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      Text(
+                        'Total Break Time ${_formatBreak(_breakDuration)}',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
                     ],
                   ),
                 ),
@@ -199,7 +251,9 @@ class _EmployeePageState extends State<EmployeePage> {
               const SizedBox(height: 16),
               Card(
                 color: Colors.blue[50],
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 child: Padding(
                   padding: const EdgeInsets.all(12.0),
                   child: Row(
@@ -207,13 +261,19 @@ class _EmployeePageState extends State<EmployeePage> {
                     children: [
                       const Icon(Icons.access_time, color: Colors.blue),
                       const SizedBox(width: 8),
-                      const Text('First shift timing is 10:00 am - 07:00 pm', style: TextStyle(fontWeight: FontWeight.bold)),
+                      const Text(
+                        'First shift timing is 10:00 am - 07:00 pm',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
                     ],
                   ),
                 ),
               ),
               const SizedBox(height: 24),
-              const Text('Your activity', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const Text(
+                'Your activity',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
               const SizedBox(height: 8),
               ListView.builder(
                 shrinkWrap: true,
@@ -227,7 +287,10 @@ class _EmployeePageState extends State<EmployeePage> {
                       child: Padding(
                         padding: const EdgeInsets.all(8.0),
                         child: Center(
-                          child: Text('${activity['duration'].inMinutes} Min Break', style: const TextStyle(color: Colors.orange)),
+                          child: Text(
+                            '${activity['duration'].inMinutes} Min Break',
+                            style: const TextStyle(color: Colors.orange),
+                          ),
                         ),
                       ),
                     );
@@ -245,7 +308,13 @@ class _EmployeePageState extends State<EmployeePage> {
                         children: [
                           Icon(icon, color: isIn ? Colors.green : Colors.red),
                           const SizedBox(width: 8),
-                          Text(label, style: TextStyle(color: isIn ? Colors.green : Colors.red, fontWeight: FontWeight.bold)),
+                          Text(
+                            label,
+                            style: TextStyle(
+                              color: isIn ? Colors.green : Colors.red,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                           const Spacer(),
                           Text(time),
                         ],
