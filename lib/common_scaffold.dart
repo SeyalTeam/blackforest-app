@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' as io; // For Platform check
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart'; // For cart badge
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobile_scanner/mobile_scanner.dart'; // Import for scanner
@@ -37,6 +40,11 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   Timer? _inactivityTimer;
   Timer? _kitchenSyncTimer;
   String _username = 'Menu';
+  String _employeeId = '';
+  String? _photoUrl;
+  String _branchName = '';
+  String _role = '';
+  Timer? _sessionCheckTimer;
 
   @override
   void initState() {
@@ -44,6 +52,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     _loadUsername();
     _resetTimer(); // Changed from _startTimer() to _resetTimer() as per original code
     _startKitchenSync();
+    _startSessionCheck();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final cartProvider = Provider.of<CartProvider>(context, listen: false);
@@ -59,6 +68,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   void dispose() {
     _inactivityTimer?.cancel();
     _kitchenSyncTimer?.cancel();
+    _sessionCheckTimer?.cancel();
     super.dispose();
   }
 
@@ -84,10 +94,63 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     });
   }
 
+  void _startSessionCheck() {
+    _checkSessionValidity();
+    _sessionCheckTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      _checkSessionValidity();
+    });
+  }
+
+  Future<void> _checkSessionValidity() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    final localDeviceId = prefs.getString('deviceId');
+
+    if (token == null || localDeviceId == null) return;
+
+    try {
+      final response = await http
+          .get(
+            Uri.parse('https://blackforest.vseyal.com/api/users/me'),
+            headers: {'Authorization': 'Bearer $token'},
+          )
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final user = data['user'];
+        final serverDeviceId = user['deviceId'];
+
+        if (serverDeviceId != null && serverDeviceId != localDeviceId) {
+          debugPrint(
+            "Session Conflict: Local ($localDeviceId) != Server ($serverDeviceId)",
+          );
+          _logoutWithMessage("Logged in on another device.");
+        }
+      }
+    } catch (e) {
+      // Slient fail on network error
+    }
+  }
+
+  void _logoutWithMessage(String msg) {
+    if (mounted) {
+      _showMessage(msg);
+      _logout();
+    }
+  }
+
   Future<void> _loadUsername() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      _username = prefs.getString('username') ?? 'Menu';
+      _username =
+          prefs.getString('employee_name') ??
+          prefs.getString('user_name') ??
+          'Menu';
+      _employeeId = prefs.getString('employee_code') ?? '';
+      _photoUrl = prefs.getString('employee_photo_url');
+      _branchName = prefs.getString('branchName') ?? '';
+      _role = prefs.getString('role') ?? 'Role';
     });
   }
 
@@ -98,16 +161,137 @@ class _CommonScaffoldState extends State<CommonScaffold> {
 
   Future<void> _logout() async {
     final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    final userId = prefs.getString('user_id');
+    if (token != null && userId != null) {
+      try {
+        final now = DateTime.now();
+
+        // 1. Find the log record that has an ACTIVE session
+        final searchUrl =
+            'https://blackforest.vseyal.com/api/attendance?where[user][equals]=$userId&where[activities.status][equals]=active&limit=1';
+        final searchResp = await http
+            .get(
+              Uri.parse(searchUrl),
+              headers: {'Authorization': 'Bearer $token'},
+            )
+            .timeout(const Duration(seconds: 3));
+
+        if (searchResp.statusCode == 200) {
+          final data = jsonDecode(searchResp.body);
+          final docs = data['docs'] as List;
+          if (docs.isNotEmpty) {
+            final attendanceDoc = docs[0];
+            final sessionId = attendanceDoc['id'];
+            final activities = List<Map<String, dynamic>>.from(
+              attendanceDoc['activities'] ?? [],
+            );
+
+            if (activities.isNotEmpty) {
+              // Find the last active session
+              for (int i = activities.length - 1; i >= 0; i--) {
+                if (activities[i]['type'] == 'session' &&
+                    activities[i]['status'] == 'active') {
+                  activities[i]['punchOut'] = now.toUtc().toIso8601String();
+                  activities[i]['status'] = 'closed';
+
+                  // Optional: calculate duration
+                  final punchIn = DateTime.parse(activities[i]['punchIn']);
+                  activities[i]['durationSeconds'] = now
+                      .difference(punchIn)
+                      .inSeconds;
+                  break;
+                }
+              }
+
+              // 2. Update the document with the modified activities array
+              final updateResp = await http
+                  .patch(
+                    Uri.parse(
+                      'https://blackforest.vseyal.com/api/attendance/$sessionId',
+                    ),
+                    headers: {
+                      'Authorization': 'Bearer $token',
+                      'Content-Type': 'application/json',
+                    },
+                    body: jsonEncode({'activities': activities}),
+                  )
+                  .timeout(const Duration(seconds: 3));
+
+              if (updateResp.statusCode != 200) {
+                debugPrint(
+                  'Failed to update daily log: ${updateResp.statusCode} ${updateResp.body}',
+                );
+              }
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('Logout attendance error: $e');
+      }
+    }
+
     await prefs.clear();
-    Navigator.pushReplacementNamed(context, '/login');
+    if (mounted) {
+      Navigator.pushReplacementNamed(context, '/login');
+    }
   }
 
   Future<void> _clearCache() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
-    PaintingBinding.instance.imageCache.clear();
-    _showMessage('Cache and storage cleared');
-    Navigator.pushReplacementNamed(context, '/login');
+    try {
+      // 1. Clear Flutter internal image cache
+      PaintingBinding.instance.imageCache.clear();
+
+      // 2. Clear Temporary Directory (OS Cache)
+      final io.Directory tempDir = await getTemporaryDirectory();
+      if (tempDir.existsSync()) {
+        try {
+          await tempDir.delete(recursive: true);
+          await tempDir.create();
+        } catch (e) {
+          debugPrint("Non-critical: Failed to delete some temp files: $e");
+        }
+      }
+
+      // 3. Selective SharedPreferences clear (to keep user logged in)
+      final prefs = await SharedPreferences.getInstance();
+      final keys = prefs.getKeys();
+      final authKeys = {
+        'token',
+        'role',
+        'email',
+        'branchId',
+        'branchName',
+        'lastLoginIp',
+        'printerIp',
+        'user_id',
+        'user_name',
+        'login_time',
+        'employee_id',
+        'employee_name',
+        'employee_code',
+        'employee_photo_url',
+        'deviceId',
+        'branchLat',
+        'branchLng',
+        'branchRadius',
+      };
+
+      for (String key in keys) {
+        if (!authKeys.contains(key)) {
+          await prefs.remove(key);
+        }
+      }
+
+      // 4. Clear CartProvider in-memory state
+      if (mounted) {
+        Provider.of<CartProvider>(context, listen: false).clearCart();
+        _showMessage('Cache and storage cleared');
+      }
+    } catch (e) {
+      debugPrint('Error clearing cache: $e');
+      if (mounted) _showMessage('Error occurred while clearing cache');
+    }
   }
 
   void _showMessage(String message) {
@@ -159,6 +343,21 @@ class _CommonScaffoldState extends State<CommonScaffold> {
         appBar: AppBar(
           backgroundColor: Colors.white,
           elevation: 1,
+          leading: Builder(
+            builder: (context) => IconButton(
+              icon: _photoUrl != null && _photoUrl!.isNotEmpty
+                  ? CircleAvatar(
+                      radius: 14,
+                      backgroundImage: NetworkImage(_photoUrl!),
+                      backgroundColor: Colors.grey[100],
+                    )
+                  : const Icon(Icons.menu, color: Colors.black87),
+              onPressed: () {
+                _resetTimer();
+                Scaffold.of(context).openDrawer();
+              },
+            ),
+          ),
           title: Text(
             widget.title,
             style: const TextStyle(
@@ -285,72 +484,176 @@ class _CommonScaffoldState extends State<CommonScaffold> {
             padding: EdgeInsets.zero,
             children: <Widget>[
               DrawerHeader(
-                decoration: const BoxDecoration(color: Colors.black),
-                child: Text(
-                  _username,
-                  style: const TextStyle(color: Colors.white, fontSize: 24),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: Border(
+                    bottom: BorderSide(color: Colors.grey[200]!, width: 1),
+                  ),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    CircleAvatar(
+                      radius: 35,
+                      backgroundColor: Colors.grey[100],
+                      backgroundImage:
+                          _photoUrl != null && _photoUrl!.isNotEmpty
+                          ? NetworkImage(_photoUrl!)
+                          : null,
+                      child: _photoUrl == null || _photoUrl!.isEmpty
+                          ? Icon(
+                              Icons.person,
+                              size: 35,
+                              color: Colors.grey[400],
+                            )
+                          : null,
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        if (_employeeId.isNotEmpty) ...[
+                          Text(
+                            'ID: $_employeeId',
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            '|',
+                            style: TextStyle(
+                              color: Colors.grey[300],
+                              fontSize: 13,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                        ],
+                        Text(
+                          _username,
+                          style: const TextStyle(
+                            color: Colors.black87,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '|',
+                          style: TextStyle(
+                            color: Colors.grey[300],
+                            fontSize: 13,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.grey[50],
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(color: Colors.grey[200]!),
+                          ),
+                          child: Text(
+                            _role.toUpperCase(),
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 8,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    if (_branchName.isNotEmpty)
+                      Text(
+                        _branchName,
+                        style: const TextStyle(
+                          color: Colors.blue,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                  ],
                 ),
               ),
               ListTile(
-                leading: const Icon(Icons.shopping_cart, color: Colors.black),
-                title: const Text('Products'),
+                leading: const Icon(Icons.home_outlined, color: Colors.black87),
+                title: const Text('Home'),
                 onTap: () {
                   _resetTimer();
                   Navigator.pop(context);
-                  _showMessage('Products screen coming soon');
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.category, color: Colors.black),
-                title: const Text('Categories'),
-                onTap: () {
-                  _resetTimer();
-                  Navigator.pop(context);
-                  _showMessage('Categories screen coming soon');
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.location_on, color: Colors.black),
-                title: const Text('Branches'),
-                onTap: () {
-                  _resetTimer();
-                  Navigator.pop(context);
-                  _showMessage('Branches screen coming soon');
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.people, color: Colors.black),
-                title: const Text('Employees'),
-                onTap: () {
-                  _resetTimer();
-                  Navigator.pop(context);
-                  _showMessage('Employees screen coming soon');
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.receipt, color: Colors.black),
-                title: const Text('Billing'),
-                onTap: () {
-                  _resetTimer();
-                  Navigator.pop(context);
-                  _showMessage('Billing screen coming soon');
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.bar_chart, color: Colors.black),
-                title: const Text('Reports'),
-                onTap: () {
-                  _resetTimer();
-                  Navigator.pop(context);
-                  _showMessage('Reports screen coming soon');
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(builder: (context) => const HomePage()),
+                    (route) => false,
+                  );
                 },
               ),
               ListTile(
                 leading: const Icon(
-                  Icons.cleaning_services,
-                  color: Colors.black,
+                  Icons.receipt_outlined,
+                  color: Colors.black87,
                 ),
-                title: const Text('Clear Cache'),
+                title: const Text('billings'),
+                onTap: () {
+                  _resetTimer();
+                  Navigator.pop(context);
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) =>
+                          const CategoriesPage(sourcePage: PageType.billing),
+                    ),
+                    (route) => false,
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.table_restaurant_outlined,
+                  color: Colors.black87,
+                ),
+                title: const Text('Table'),
+                onTap: () {
+                  _resetTimer();
+                  Navigator.pop(context);
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(builder: (context) => const TablePage()),
+                    (route) => false,
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.badge_outlined,
+                  color: Colors.black87,
+                ),
+                title: const Text('Employee'),
+                onTap: () {
+                  _resetTimer();
+                  Navigator.pop(context);
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const EmployeePage(),
+                    ),
+                    (route) => false,
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.cleaning_services_outlined,
+                  color: Colors.black87,
+                ),
+                title: const Text('Clear cache'),
                 onTap: () {
                   _resetTimer();
                   Navigator.pop(context);
@@ -358,8 +661,11 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.logout, color: Colors.black),
-                title: const Text('Logout'),
+                leading: const Icon(
+                  Icons.logout_outlined,
+                  color: Colors.black87,
+                ),
+                title: const Text('logout'),
                 onTap: () {
                   _resetTimer();
                   Navigator.pop(context);
@@ -434,15 +740,20 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     required String label,
     required Widget page,
     required PageType type,
+    VoidCallback? onTap,
   }) {
     return GestureDetector(
       onTap: () {
         _resetTimer();
-        Navigator.pushAndRemoveUntil(
-          context,
-          _createRoute(page),
-          (route) => false,
-        );
+        if (onTap != null) {
+          onTap();
+        } else {
+          Navigator.pushAndRemoveUntil(
+            context,
+            _createRoute(page),
+            (route) => false,
+          );
+        }
       },
       child: Column(
         mainAxisSize: MainAxisSize.min,

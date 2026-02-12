@@ -203,9 +203,46 @@ class _ProductsPageState extends State<ProductsPage> {
       );
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
+
+        var fetchedProducts = data['docs'] ?? [];
+
+        // Filter out products:
+        // 1. Globally inactive (status == 'inactive')
+        // 2. Inactive for current branch (branch in inactiveBranches)
+        if (fetchedProducts is List) {
+          fetchedProducts = fetchedProducts.where((product) {
+            // Check global status
+            final status = product['status'];
+            if (status == 'inactive') return false;
+
+            // Check availability
+            if (product['isAvailable'] == false) return false;
+
+            // Check branch-specific inactivity
+            if (_branchId != null) {
+              final inactiveBranches = product['inactiveBranches'];
+              if (inactiveBranches != null && inactiveBranches is List) {
+                for (var branch in inactiveBranches) {
+                  String? id;
+                  if (branch is Map) {
+                    id =
+                        branch['id']?.toString() ??
+                        branch['_id']?.toString() ??
+                        branch['\$oid']?.toString();
+                  } else {
+                    id = branch?.toString();
+                  }
+                  if (id == _branchId) return false;
+                }
+              }
+            }
+            return true;
+          }).toList();
+        }
+
         if (!mounted) return;
         setState(() {
-          _products = data['docs'] ?? [];
+          _products = fetchedProducts;
         });
       } else {
         if (!mounted) return;

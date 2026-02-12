@@ -1,10 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:blackforest_app/cart_provider.dart';
-import 'package:blackforest_app/cart_page.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class KitchenNotificationsPage extends StatelessWidget {
   const KitchenNotificationsPage({super.key});
@@ -173,7 +169,7 @@ class KitchenNotificationsPage extends StatelessWidget {
                   ),
                   onTap: () async {
                     // Navigate to CartPage for this table
-                    _openBillInCart(context, cartProvider, billId);
+                    cartProvider.openBillAndNavigate(context, billId);
                   },
                 ),
               );
@@ -192,113 +188,5 @@ class KitchenNotificationsPage extends StatelessWidget {
         },
       ),
     );
-  }
-
-  Future<void> _openBillInCart(
-    BuildContext context,
-    CartProvider cartProvider,
-    String billId,
-  ) async {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
-
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('token');
-      if (token == null) throw Exception("No token");
-
-      final response = await http.get(
-        Uri.parse(
-          'https://blackforest.vseyal.com/api/billings/$billId?depth=3',
-        ),
-        headers: {'Authorization': 'Bearer $token'},
-      );
-
-      if (!context.mounted) return;
-      Navigator.pop(context); // Close loading
-
-      if (response.statusCode == 200) {
-        // Mark all notifications for this bill as read
-        cartProvider.markBillAsRead(billId);
-
-        final bill = jsonDecode(response.body);
-
-        // Logic to load KOT items (similar to KotBillsPage)
-        List<CartItem> recalledItems = (bill['items'] as List)
-            .where((item) => item['status']?.toString() != 'cancelled')
-            .map((item) {
-              final prod = item['product'];
-              final String pid = (prod is Map)
-                  ? (prod['id'] ?? prod['_id'] ?? prod[r'$oid']).toString()
-                  : prod.toString();
-
-              String? imageUrl;
-              String? dept;
-              String? cid;
-
-              if (prod is Map) {
-                if (prod['images'] != null &&
-                    (prod['images'] as List).isNotEmpty) {
-                  final img = prod['images'][0]['image'];
-                  if (img != null && img['url'] != null) {
-                    imageUrl = img['url'];
-                    if (imageUrl != null && imageUrl.startsWith('/')) {
-                      imageUrl = 'https://blackforest.vseyal.com$imageUrl';
-                    }
-                  }
-                }
-                if (prod['department'] != null) {
-                  dept = (prod['department'] is Map)
-                      ? prod['department']['name']
-                      : prod['department'];
-                }
-                if (prod['category'] != null) {
-                  cid = (prod['category'] is Map)
-                      ? prod['category']['id']
-                      : prod['category'];
-                }
-              }
-
-              return CartItem(
-                id: pid,
-                name: item['name'] ?? 'Unknown',
-                price: (item['unitPrice'] ?? item['price'] ?? 0.0).toDouble(),
-                imageUrl: imageUrl,
-                quantity: (item['quantity'] ?? 0.0).toDouble(),
-                unit: item['unit']?.toString(),
-                department: dept,
-                categoryId: cid,
-                specialNote: item['specialNote'],
-                status: item['status']?.toString(),
-              );
-            })
-            .toList();
-
-        cartProvider.setCartType(CartType.table);
-        cartProvider.loadKOTItems(
-          recalledItems,
-          billId: billId,
-          cName: bill['customerName'],
-          cPhone: bill['customerPhone'],
-          tName: bill['table']?['name'],
-          tSection: bill['table']?['section']?['name'],
-        );
-
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const CartPage()),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        if (Navigator.canPop(context)) Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
-        );
-      }
-    }
   }
 }

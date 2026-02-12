@@ -8,6 +8,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:network_info_plus/network_info_plus.dart';
+import 'package:geolocator/geolocator.dart';
 
 class CategoriesPage extends StatefulWidget {
   final PageType sourcePage;
@@ -40,8 +41,23 @@ class _CategoriesPageState extends State<CategoriesPage> {
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final user = data['user'] ?? data; // Depending on response structure
+        final prefs = await SharedPreferences.getInstance();
         setState(() {
           _userRole = user['role'];
+
+          // Extract Branch ID if present in user profile
+          dynamic branchRef = user['branch'];
+          String? bId;
+          if (branchRef is Map) {
+            bId = (branchRef['id'] ?? branchRef['_id'] ?? branchRef['\$oid'])
+                ?.toString();
+          } else {
+            bId = branchRef?.toString();
+          }
+          if (bId != null) {
+            prefs.setString('branchId', bId);
+          }
+
           if (user['role'] == 'company' && user['company'] != null) {
             final comp = user['company'];
             _companyId = comp is Map
@@ -55,9 +71,10 @@ class _CategoriesPageState extends State<CategoriesPage> {
                 ? (comp['id'] ?? comp['_id'] ?? comp[r'$oid'])?.toString()
                 : comp.toString();
           }
-          // For superadmin, _companyId remains null
         });
-        debugPrint("User Role: $_userRole, Company ID: $_companyId");
+        debugPrint(
+          "User Role: $_userRole, Company ID: $_companyId, Branch ID: ${prefs.getString('branchId')}",
+        );
       } else {
         // Handle error silently or log
       }
@@ -90,6 +107,30 @@ class _CategoriesPageState extends State<CategoriesPage> {
     return device >= startIp && device <= endIp;
   }
 
+  Future<bool> _checkLocationPermission() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      return false;
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        return false;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      return false;
+    }
+
+    return true;
+  }
+
   Future<List<String>> _fetchMatchingCompanyIds(
     String token,
     String? deviceIp, {
@@ -101,6 +142,25 @@ class _CategoriesPageState extends State<CategoriesPage> {
     List<String> companyIds = [];
     try {
       Set<String> uniqueCompanyIds = {};
+
+      // 1. Fetch Current GPS Position once for matching
+      Position? currentPos;
+      if (await _checkLocationPermission()) {
+        try {
+          currentPos = await Geolocator.getCurrentPosition(
+            locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.high,
+            ),
+          );
+          debugPrint(
+            "Categories Matching: Current Location: ${currentPos.latitude}, ${currentPos.longitude}",
+          );
+        } catch (e) {
+          debugPrint("Categories Matching: GPS fetch failed: $e");
+        }
+      } else {
+        debugPrint("Categories Matching: GPS permission denied.");
+      }
 
       // 1. Try Global Settings
       try {
@@ -130,33 +190,75 @@ class _CategoriesPageState extends State<CategoriesPage> {
               }
 
               bool isMatch = false;
-              // Match by stored branchId (from geo-login)
+              // Match by stored branchId
               if (branchId != null && locBranchId == branchId) {
                 isMatch = true;
+                debugPrint(
+                  "Categories Matching: [S1] ID Match for $locBranchId",
+                );
               }
               // Match by IP
               else if (deviceIp != null) {
                 String? bIpRange = loc['ipAddress']?.toString().trim();
                 if (bIpRange != null &&
+                    bIpRange.isNotEmpty &&
                     (bIpRange == deviceIp ||
                         _isIpInRange(deviceIp, bIpRange))) {
                   isMatch = true;
+                  debugPrint(
+                    "Categories Matching: [S1] IP Match for $locBranchId",
+                  );
+                }
+              }
+              // Match by GPS
+              if (!isMatch && currentPos != null) {
+                final double? lat = loc['latitude'] != null
+                    ? (loc['latitude'] as num).toDouble()
+                    : null;
+                final double? lng = loc['longitude'] != null
+                    ? (loc['longitude'] as num).toDouble()
+                    : null;
+                final int radius = loc['radius'] != null
+                    ? (loc['radius'] as num).toInt()
+                    : 100;
+
+                if (lat != null && lng != null) {
+                  final dist = Geolocator.distanceBetween(
+                    currentPos.latitude,
+                    currentPos.longitude,
+                    lat,
+                    lng,
+                  );
+                  if (dist <= radius) {
+                    isMatch = true;
+                    debugPrint(
+                      "Categories Matching: [S1] GPS Match for $locBranchId (Dist: ${dist.toStringAsFixed(1)}m)",
+                    );
+                  } else {
+                    // Log even if no match to debug distance issues
+                    if (locBranchId == branchId) {
+                      debugPrint(
+                        "Categories Matching: [S1] GPS Out-of-Range for $locBranchId. Dist: ${dist.toStringAsFixed(1)}m, Required: ${radius}m",
+                      );
+                    }
+                  }
                 }
               }
 
               if (isMatch) {
-                if (locBranch is Map && locBranch['company'] != null) {
-                  final company = locBranch['company'];
-                  String? cId;
-                  if (company is Map) {
-                    cId =
-                        company['id']?.toString() ??
-                        company['_id']?.toString() ??
-                        company['\$oid']?.toString();
-                  } else {
-                    cId = company?.toString();
-                  }
-                  if (cId != null) uniqueCompanyIds.add(cId);
+                final company = (locBranch is Map)
+                    ? locBranch['company']
+                    : loc['company'];
+                String? cId;
+                if (company is Map) {
+                  cId = (company['id'] ?? company['_id'] ?? company['\$oid'])
+                      ?.toString();
+                } else {
+                  cId = company?.toString();
+                }
+                if (cId != null) {
+                  debugPrint("Categories Matching: [S1] Added Company: $cId");
+                  uniqueCompanyIds.add(cId);
                 }
               }
             }
@@ -166,45 +268,124 @@ class _CategoriesPageState extends State<CategoriesPage> {
         debugPrint("Error fetching global settings in categories: $e");
       }
 
-      // 2. Fallback/Include Branches Collection
-      final allBranchesResponse = await http.get(
-        Uri.parse('https://blackforest.vseyal.com/api/branches?depth=1'),
-        headers: {'Authorization': 'Bearer $token'},
-      );
-      if (allBranchesResponse.statusCode == 200) {
-        final branchesData = jsonDecode(allBranchesResponse.body);
-        if (branchesData['docs'] != null && branchesData['docs'] is List) {
-          for (var branch in branchesData['docs']) {
-            final String bId =
-                branch['id']?.toString() ?? branch['_id']?.toString() ?? '';
-
-            bool isMatch = false;
-            // Match by stored branchId
-            if (branchId != null && bId == branchId) {
-              isMatch = true;
+      // 2. Direct fetch by branchId if available (Most reliable for logged-in waiters)
+      if (branchId != null) {
+        try {
+          final bRes = await http.get(
+            Uri.parse(
+              'https://blackforest.vseyal.com/api/branches/$branchId?depth=1',
+            ),
+            headers: {'Authorization': 'Bearer $token'},
+          );
+          if (bRes.statusCode == 200) {
+            final branch = jsonDecode(bRes.body);
+            var company = branch['company'];
+            String? cId;
+            if (company is Map) {
+              cId =
+                  company['id']?.toString() ??
+                  company['_id']?.toString() ??
+                  company['\$oid']?.toString();
+            } else {
+              cId = company?.toString();
             }
-            // Match by IP
-            else if (deviceIp != null) {
-              String? bIpRange = branch['ipAddress']?.toString().trim();
-              if (bIpRange != null &&
-                  (bIpRange == deviceIp || _isIpInRange(deviceIp, bIpRange))) {
+            if (cId != null) {
+              debugPrint(
+                "Categories Matching: [Direct] Successfully recovered Company ID: $cId",
+              );
+              uniqueCompanyIds.add(cId);
+            } else {
+              debugPrint(
+                "Categories Matching: [Direct] Branch found but Company ID is NULL",
+              );
+            }
+          } else {
+            debugPrint(
+              "Categories Matching: [Direct] Failed to fetch branch details: ${bRes.statusCode}",
+            );
+          }
+        } catch (e) {
+          debugPrint("Error fetching direct branch in categories: $e");
+        }
+      }
+
+      // 3. Fallback/Include Branches Collection (Scan for IP matches if needed)
+      if (uniqueCompanyIds.isEmpty) {
+        final allBranchesResponse = await http.get(
+          Uri.parse(
+            'https://blackforest.vseyal.com/api/branches?limit=100&depth=1',
+          ),
+          headers: {'Authorization': 'Bearer $token'},
+        );
+        if (allBranchesResponse.statusCode == 200) {
+          final branchesData = jsonDecode(allBranchesResponse.body);
+          if (branchesData['docs'] != null && branchesData['docs'] is List) {
+            for (var branch in branchesData['docs']) {
+              final String bId =
+                  branch['id']?.toString() ?? branch['_id']?.toString() ?? '';
+
+              bool isMatch = false;
+              // Match by stored branchId
+              if (branchId != null && bId == branchId) {
                 isMatch = true;
+                debugPrint("Categories Matching: [S3] ID Match for $bId");
               }
-            }
+              // Match by IP
+              else if (deviceIp != null) {
+                String? bIpRange = branch['ipAddress']?.toString().trim();
+                if (bIpRange != null &&
+                    bIpRange.isNotEmpty &&
+                    (bIpRange == deviceIp ||
+                        _isIpInRange(deviceIp, bIpRange))) {
+                  isMatch = true;
+                  debugPrint("Categories Matching: [S3] IP Match for $bId");
+                }
+              }
+              // Match by GPS Fallback
+              if (!isMatch && currentPos != null) {
+                final double? lat = branch['latitude'] != null
+                    ? (branch['latitude'] as num).toDouble()
+                    : null;
+                final double? lng = branch['longitude'] != null
+                    ? (branch['longitude'] as num).toDouble()
+                    : null;
+                final int radius = branch['radius'] != null
+                    ? (branch['radius'] as num).toInt()
+                    : 100;
 
-            if (isMatch) {
-              var company = branch['company'];
-              String? companyId;
-              if (company is Map) {
-                companyId =
-                    company['id']?.toString() ??
-                    company['_id']?.toString() ??
-                    company['\$oid']?.toString();
-              } else {
-                companyId = company?.toString();
+                if (lat != null && lng != null) {
+                  final dist = Geolocator.distanceBetween(
+                    currentPos.latitude,
+                    currentPos.longitude,
+                    lat,
+                    lng,
+                  );
+                  if (dist <= radius) {
+                    isMatch = true;
+                    debugPrint(
+                      "Categories Matching: [S3] GPS Match for $bId (Dist: ${dist.toStringAsFixed(1)}m)",
+                    );
+                  }
+                }
               }
-              if (companyId != null) {
-                uniqueCompanyIds.add(companyId);
+
+              if (isMatch) {
+                var company = branch['company'];
+                String? companyId;
+                if (company is Map) {
+                  companyId =
+                      company['id']?.toString() ??
+                      company['_id']?.toString() ??
+                      company['\$oid']?.toString();
+                } else {
+                  companyId = company?.toString();
+                }
+                if (companyId != null) {
+                  debugPrint(
+                    "Categories Matching: [S3] Added Company: $companyId",
+                  );
+                  uniqueCompanyIds.add(companyId);
+                }
               }
             }
           }
@@ -235,6 +416,47 @@ class _CategoriesPageState extends State<CategoriesPage> {
         );
         return;
       }
+
+      final branchId = prefs.getString('branchId');
+      List<String>? authorizedCategoryIds;
+
+      // Only combine kitchen categories for Table flow
+      if (widget.sourcePage == PageType.table) {
+        authorizedCategoryIds = []; // Enforce strict filtering for Table
+        if (branchId != null) {
+          try {
+            final kRes = await http.get(
+              Uri.parse(
+                'https://blackforest.vseyal.com/api/kitchens?where[branches][contains]=$branchId&limit=100',
+              ),
+              headers: {'Authorization': 'Bearer $token'},
+            );
+            if (kRes.statusCode == 200) {
+              final data = jsonDecode(kRes.body);
+              final kitchens = data['docs'] as List?;
+              if (kitchens != null) {
+                Set<String> catIds = {};
+                for (var kitchen in kitchens) {
+                  final cats = kitchen['categories'] as List?;
+                  if (cats != null) {
+                    for (var c in cats) {
+                      if (c is Map) {
+                        catIds.add(c['id'].toString());
+                      } else {
+                        catIds.add(c.toString());
+                      }
+                    }
+                  }
+                }
+                authorizedCategoryIds = catIds.toList();
+              }
+            }
+          } catch (e) {
+            debugPrint("Error fetching kitchen categories: $e");
+          }
+        }
+      }
+
       // Fetch user data if not already fetched
       if (_userRole == null) {
         await _fetchUserData(token);
@@ -271,6 +493,20 @@ class _CategoriesPageState extends State<CategoriesPage> {
           filterQuery += companyFilter;
         }
       }
+
+      // Add Kitchen Category Filter if applicable
+      if (authorizedCategoryIds != null) {
+        if (authorizedCategoryIds.isEmpty) {
+          setState(() {
+            _categories = [];
+            _isLoading = false;
+            _errorMessage = 'No categories assigned to branch kitchens.';
+          });
+          return;
+        }
+        filterQuery += '&where[id][in]=${authorizedCategoryIds.join(',')}';
+      }
+
       final response = await http.get(
         Uri.parse(
           'https://blackforest.vseyal.com/api/categories?$filterQuery&limit=100&depth=1',

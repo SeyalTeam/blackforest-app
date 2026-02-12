@@ -27,6 +27,8 @@ dependencies:
   qr: ^3.0.1
   audioplayers: ^6.0.0
   geolocator: ^14.0.2
+  connectivity_plus: ^7.0.0
+  flutter_local_notifications: ^20.0.0
 
 dev_dependencies:
   flutter_test:

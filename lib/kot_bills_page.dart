@@ -86,14 +86,85 @@ class _KotBillsPageState extends State<KotBillsPage> {
       }
     } catch (e) {
       setState(() {
-        _errorMessage = "Error: $e";
+        _errorMessage = "Network error: Check your internet";
         _isLoading = false;
       });
     }
   }
 
-  void _loadBillIntoCart(Map<String, dynamic> bill) {
+  Future<void> _loadBillIntoCart(Map<String, dynamic> bill) async {
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
+
+    // --- Kitchen Selection Logic ---
+    String? selectedKitchenId;
+    String? selectedKitchenName;
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      final branchId = prefs.getString('branchId');
+
+      if (token != null && branchId != null) {
+        // Show loading
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) =>
+              const Center(child: CircularProgressIndicator()),
+        );
+
+        final response = await http.get(
+          Uri.parse(
+            'https://blackforest.vseyal.com/api/kitchens?where[branches][contains]=$branchId&limit=100',
+          ),
+          headers: {'Authorization': 'Bearer $token'},
+        );
+
+        if (mounted) Navigator.pop(context); // pop loading
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          final List<dynamic> kitchens = data['docs'] ?? [];
+
+          if (kitchens.isNotEmpty) {
+            if (kitchens.length == 1) {
+              selectedKitchenId = kitchens[0]['id'].toString();
+              selectedKitchenName = kitchens[0]['name'].toString();
+            } else {
+              final selected = await showDialog<dynamic>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Select Kitchen'),
+                  content: SizedBox(
+                    width: double.maxFinite,
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: kitchens.length,
+                      itemBuilder: (context, index) {
+                        final kitchen = kitchens[index];
+                        return ListTile(
+                          title: Text(kitchen['name'] ?? 'Unknown'),
+                          onTap: () => Navigator.pop(context, kitchen),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              );
+
+              if (selected != null) {
+                selectedKitchenId = selected['id'].toString();
+                selectedKitchenName = selected['name'].toString();
+              } else {
+                return; // User cancelled
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("Error fetching kitchens: $e");
+    }
 
     // Maps billing items to CartItems
     List<CartItem> recalledItems = (bill['items'] as List)
@@ -161,6 +232,8 @@ class _KotBillsPageState extends State<KotBillsPage> {
       cPhone: customer['phoneNumber'],
       tName: tableDetails['tableNumber']?.toString(),
       tSection: tableDetails['section']?.toString(),
+      kitchenId: selectedKitchenId,
+      kitchenName: selectedKitchenName,
     );
 
     Navigator.pushAndRemoveUntil(

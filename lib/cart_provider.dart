@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:blackforest_app/notification_service.dart';
+import 'package:blackforest_app/cart_page.dart';
 
 class CartItem {
   final String id;
@@ -137,6 +139,14 @@ class CartProvider extends ChangeNotifier {
     CartType.billing: null,
     CartType.table: null,
   };
+  final Map<CartType, String?> _selectedKitchenIdMap = {
+    CartType.billing: null,
+    CartType.table: null,
+  };
+  final Map<CartType, String?> _selectedKitchenNameMap = {
+    CartType.billing: null,
+    CartType.table: null,
+  };
   final Map<CartType, String?> _customerNameMap = {
     CartType.billing: null,
     CartType.table: null,
@@ -204,6 +214,8 @@ class CartProvider extends ChangeNotifier {
   );
 
   String? get recalledBillId => _recalledBillIdMap[_currentType];
+  String? get selectedKitchenId => _selectedKitchenIdMap[_currentType];
+  String? get selectedKitchenName => _selectedKitchenNameMap[_currentType];
   String? get customerName => _customerNameMap[_currentType];
   String? get customerPhone => _customerPhoneMap[_currentType];
   String? get selectedTable => _selectedTableMap[_currentType];
@@ -222,6 +234,13 @@ class CartProvider extends ChangeNotifier {
     if (_currentType == type) return;
     _currentType = type;
     if (notify) notifyListeners();
+  }
+
+  void setKitchen(String? id, String? name) {
+    _selectedKitchenIdMap[_currentType] = id;
+    _selectedKitchenNameMap[_currentType] = name;
+    notifyListeners();
+    _saveCurrentCart();
   }
 
   void addOrUpdateItem(CartItem item) {
@@ -273,6 +292,8 @@ class CartProvider extends ChangeNotifier {
 
   void _clearMetadata(CartType type) {
     _recalledBillIdMap[type] = null;
+    _selectedKitchenIdMap[type] = null;
+    _selectedKitchenNameMap[type] = null;
     _customerNameMap[type] = null;
     _customerPhoneMap[type] = null;
     _selectedTableMap[type] = null;
@@ -309,6 +330,8 @@ class CartProvider extends ChangeNotifier {
     String? cPhone,
     String? tName,
     String? tSection,
+    String? kitchenId,
+    String? kitchenName,
   }) {
     // Drafting Mode: Move existing items to recalledItems and clear active items
     _recalledItemsMap[_currentType] = List.from(items);
@@ -319,6 +342,12 @@ class CartProvider extends ChangeNotifier {
     _customerPhoneMap[_currentType] = cPhone;
     _selectedTableMap[_currentType] = tName;
     _selectedSectionMap[_currentType] = tSection;
+    if (kitchenId != null) {
+      _selectedKitchenIdMap[_currentType] = kitchenId;
+    }
+    if (kitchenName != null) {
+      _selectedKitchenNameMap[_currentType] = kitchenName;
+    }
     notifyListeners();
     _saveCurrentCart();
   }
@@ -379,6 +408,8 @@ class CartProvider extends ChangeNotifier {
     saveOrRemove('customerPhone', _customerPhoneMap[type]);
     saveOrRemove('selectedTable', _selectedTableMap[type]);
     saveOrRemove('selectedSection', _selectedSectionMap[type]);
+    saveOrRemove('selectedKitchenId', _selectedKitchenIdMap[type]);
+    saveOrRemove('selectedKitchenName', _selectedKitchenNameMap[type]);
   }
 
   Future<void> _loadCarts() async {
@@ -408,6 +439,12 @@ class CartProvider extends ChangeNotifier {
       _selectedTableMap[type] = prefs.getString(_key(type, 'selectedTable'));
       _selectedSectionMap[type] = prefs.getString(
         _key(type, 'selectedSection'),
+      );
+      _selectedKitchenIdMap[type] = prefs.getString(
+        _key(type, 'selectedKitchenId'),
+      );
+      _selectedKitchenNameMap[type] = prefs.getString(
+        _key(type, 'selectedKitchenName'),
       );
     }
     notifyListeners();
@@ -476,9 +513,9 @@ class CartProvider extends ChangeNotifier {
         throw Exception('Failed to submit billing: ${response.body}');
       }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error submitting billing: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Network error: Check your internet')),
+      );
       return null;
     }
   }
@@ -583,7 +620,7 @@ class CartProvider extends ChangeNotifier {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Error updating status: $e'),
+          content: const Text('Network error: Check your internet'),
           backgroundColor: Colors.red,
         ),
       );
@@ -613,16 +650,25 @@ class CartProvider extends ChangeNotifier {
         final localRecalled = _recalledItemsMap[_currentType]!;
 
         bool changed = false;
+        final Set<int> matchedIndices = {};
+
         for (var sItem in serverItems) {
           final pid = (sItem['product'] is Map)
               ? sItem['product']['id']
               : sItem['product'];
           final sStatus = sItem['status']?.toString().toLowerCase();
 
-          // Find matching local item by product id
-          // Note: This logic assumes products are unique in the recalled lost
-          // If there are multiple same products with different notes, this might need refinement
-          final idx = localRecalled.indexWhere((l) => l.id == pid);
+          // Find matching local item by product id that hasn't been matched yet
+          // This correctly handles multiple entries of "Tea" with different statuses
+          int idx = -1;
+          for (int i = 0; i < localRecalled.length; i++) {
+            if (!matchedIndices.contains(i) && localRecalled[i].id == pid) {
+              idx = i;
+              matchedIndices.add(i);
+              break;
+            }
+          }
+
           if (idx != -1) {
             final lItem = localRecalled[idx];
             if (lItem.status != sStatus) {
@@ -729,6 +775,34 @@ class CartProvider extends ChangeNotifier {
 
           if (hasNewItems) {
             _audioPlayer.play(AssetSource('sounds/order.wav'));
+
+            // Show visual notification for new items
+            final newItems = readyItems
+                .where((n) => !existingIds.contains(n['id'] as String))
+                .toList();
+
+            if (newItems.isNotEmpty) {
+              String bodyText;
+              if (newItems.length == 1) {
+                final item = newItems.first;
+                bodyText =
+                    "${item['quantity']} ${item['productName']} is ready";
+              } else {
+                final names = newItems
+                    .take(2)
+                    .map((n) => "${n['quantity']} ${n['productName']}")
+                    .join(", ");
+                bodyText =
+                    "$names${newItems.length > 2 ? ' +${newItems.length - 2} more' : ''} ready";
+              }
+
+              NotificationService().showNotification(
+                id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+                title: 'Kitchen Ready',
+                body: bodyText,
+                payload: newItems.first['billId'],
+              );
+            }
           }
 
           _kitchenNotifications = readyItems;
@@ -737,6 +811,204 @@ class CartProvider extends ChangeNotifier {
       }
     } catch (e) {
       debugPrint("Error syncing kitchen notifications: $e");
+    }
+  }
+
+  Future<void> openBillAndNavigate(BuildContext context, String billId) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      await loadBillFromServer(billId);
+
+      if (!context.mounted) return;
+      Navigator.pop(context); // Close loading
+
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const CartPage()),
+      );
+    } catch (e) {
+      if (context.mounted) {
+        if (Navigator.canPop(context)) Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> loadBillFromServer(String billId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    if (token == null) throw Exception("No token");
+
+    final response = await http.get(
+      Uri.parse('https://blackforest.vseyal.com/api/billings/$billId?depth=3'),
+      headers: {'Authorization': 'Bearer $token'},
+    );
+
+    if (response.statusCode == 200) {
+      markBillAsRead(billId);
+      final bill = jsonDecode(response.body);
+
+      List<CartItem> recalledItems = (bill['items'] as List)
+          .where((item) => item['status']?.toString() != 'cancelled')
+          .map((item) {
+            final prod = item['product'];
+            final String pid = (prod is Map)
+                ? (prod['id'] ?? prod['_id'] ?? prod[r'$oid']).toString()
+                : prod.toString();
+
+            String? imageUrl;
+            String? dept;
+            String? cid;
+
+            if (prod is Map) {
+              if (prod['images'] != null &&
+                  (prod['images'] as List).isNotEmpty) {
+                final img = prod['images'][0]['image'];
+                if (img != null && img['url'] != null) {
+                  imageUrl = img['url'];
+                  if (imageUrl != null && imageUrl.startsWith('/')) {
+                    imageUrl = 'https://blackforest.vseyal.com$imageUrl';
+                  }
+                }
+              }
+              if (prod['department'] != null) {
+                dept = (prod['department'] is Map)
+                    ? prod['department']['name']
+                    : prod['department'];
+              }
+              if (prod['category'] != null) {
+                cid = (prod['category'] is Map)
+                    ? prod['category']['id']
+                    : prod['category'];
+              }
+            }
+
+            return CartItem(
+              id: pid,
+              name: item['name'] ?? 'Unknown',
+              price: (item['unitPrice'] ?? item['price'] ?? 0.0).toDouble(),
+              imageUrl: imageUrl,
+              quantity: (item['quantity'] ?? 0.0).toDouble(),
+              unit: item['unit']?.toString(),
+              department: dept,
+              categoryId: cid,
+              specialNote: item['specialNote'],
+              status: item['status']?.toString(),
+            );
+          })
+          .toList();
+
+      setCartType(CartType.table);
+      loadKOTItems(
+        recalledItems,
+        billId: billId,
+        cName: bill['customerName'],
+        cPhone: bill['customerPhone'],
+        tName: bill['table']?['name'],
+        tSection: bill['table']?['section']?['name'],
+      );
+    } else {
+      throw Exception("Failed to load bill: ${response.statusCode}");
+    }
+  }
+
+  Future<Map<String, dynamic>?> fetchCustomerData(String phoneNumber) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      if (token == null) throw Exception('No token found');
+
+      // 1. Fetch Billings for this customer directly for robust metrics
+      final response = await http.get(
+        Uri.parse(
+          'https://blackforest.vseyal.com/api/billings?where[customerDetails.phoneNumber][equals]=$phoneNumber&where[status][not_equals]=cancelled&sort=-createdAt&limit=500&depth=4',
+        ),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final List<dynamic> bills = data['docs'] ?? [];
+        if (bills.isEmpty) return null;
+
+        double totalAmount = 0;
+        double bigBill = 0;
+        Map<String, int> productCounts = {};
+        Map<String, double> productAmounts = {};
+
+        for (var bill in bills) {
+          final amount = (bill['totalAmount'] as num?)?.toDouble() ?? 0.0;
+          totalAmount += amount;
+          if (amount > bigBill) bigBill = amount;
+
+          // Count products for "Favourite" logic
+          final items = bill['items'] as List? ?? [];
+          for (var item in items) {
+            final productName = item['name'] ?? 'Unknown';
+            final quantity = (item['quantity'] as num?)?.toInt() ?? 0;
+            final itemAmount = (item['subtotal'] as num?)?.toDouble() ?? 0.0;
+
+            productCounts[productName] =
+                (productCounts[productName] ?? 0) + quantity;
+            productAmounts[productName] =
+                (productAmounts[productName] ?? 0) + itemAmount;
+          }
+        }
+
+        // Find favourite product
+        String favouriteProductName = 'N/A';
+        int favouriteProductQty = 0;
+        double favouriteProductTotal = 0.0;
+
+        if (productCounts.isNotEmpty) {
+          final sortedProducts = productCounts.entries.toList()
+            ..sort((a, b) => b.value.compareTo(a.value));
+          favouriteProductName = sortedProducts.first.key;
+          favouriteProductQty = sortedProducts.first.value;
+          favouriteProductTotal = productAmounts[favouriteProductName] ?? 0.0;
+        }
+
+        final lastBill = bills.first; // Sorted by -createdAt
+        final customerDetails = lastBill['customerDetails'];
+        final customerName = (customerDetails is Map)
+            ? (customerDetails['name'] ??
+                  customerDetails['phoneNumber'] ??
+                  'Unknown')
+            : 'Unknown';
+        final branch = lastBill['branch'];
+        final lastBranch = (branch is Map) ? branch['name'] ?? 'N/A' : 'N/A';
+
+        return {
+          'name': customerName,
+          'phoneNumber': phoneNumber,
+          'totalBills': data['totalDocs'] ?? bills.length,
+          'totalAmount': totalAmount,
+          'bigBill': bigBill,
+          'favouriteProduct': favouriteProductName,
+          'favouriteProductQty': favouriteProductQty,
+          'favouriteProductAmount': favouriteProductTotal,
+          'lastBillAmount':
+              (lastBill['totalAmount'] as num?)?.toDouble() ?? 0.0,
+          'lastBillDate': lastBill['createdAt'],
+          'lastBranch': lastBranch,
+          'bills': bills,
+        };
+      } else {
+        throw Exception('Failed to fetch metrics: ${response.statusCode}');
+      }
+    } catch (e) {
+      debugPrint("Error fetching customer data: $e");
+      rethrow;
     }
   }
 }

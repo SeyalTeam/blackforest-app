@@ -18,6 +18,7 @@ import 'package:qr/qr.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
+import 'package:blackforest_app/customer_history_dialog.dart';
 
 class CartPage extends StatefulWidget {
   const CartPage({super.key});
@@ -39,6 +40,7 @@ class _CartPageState extends State<CartPage> {
   bool _isBillingInProgress = false; // Prevent duplicate bill taps
   List<dynamic>? _kotPrinters; // Store KOT printer configs
   Timer? _refreshTimer;
+  final Map<String, String> _categoryToKitchenMap = {}; // ID mapping
 
   @override
   void initState() {
@@ -215,6 +217,9 @@ class _CartPageState extends State<CartPage> {
             ? globalPrinterIp
             : branch['printerIp'];
 
+        // Load kitchen mappings for KOT routing
+        await _fetchKitchensForMapping();
+
         cartProvider.setPrinterDetails(
           printerIpToUse,
           branch['printerPort'],
@@ -222,6 +227,42 @@ class _CartPageState extends State<CartPage> {
         );
       }
     } catch (_) {}
+  }
+
+  Future<void> _fetchKitchensForMapping() async {
+    if (_branchId == null) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      final response = await http.get(
+        Uri.parse(
+          'https://blackforest.vseyal.com/api/kitchens?where[branches][contains]=$_branchId&limit=100',
+        ),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final docs = data['docs'] as List;
+        _categoryToKitchenMap.clear();
+        for (var k in docs) {
+          final kId = k['id']?.toString();
+          final cats = k['categories'] as List?;
+          if (kId != null && cats != null) {
+            for (var c in cats) {
+              final cId = (c is Map) ? c['id']?.toString() : c?.toString();
+              if (cId != null) {
+                _categoryToKitchenMap[cId] = kId;
+              }
+            }
+          }
+        }
+        debugPrint(
+          "✅ Kitchen Mapping Loaded: ${_categoryToKitchenMap.length} categories mapped",
+        );
+      }
+    } catch (e) {
+      debugPrint("Error fetching kitchen mapping: $e");
+    }
   }
 
   Future<void> _fetchCompanyDetails(String token, String companyId) async {
@@ -336,19 +377,28 @@ class _CartPageState extends State<CartPage> {
   }
 
   bool _isKOTEnabled(String? categoryId) {
-    if (categoryId == null || _kotPrinters == null || _kotPrinters!.isEmpty) {
+    if (_kotPrinters == null || _kotPrinters!.isEmpty) {
       return false;
     }
+
+    final cartProvider = Provider.of<CartProvider>(context, listen: false);
+    final selectedKitchenId = cartProvider.selectedKitchenId;
+
+    if (selectedKitchenId == null) {
+      return false;
+    }
+
     for (var printerConfig in _kotPrinters!) {
-      final categories = printerConfig['categories'] as List?;
-      if (categories == null) continue;
-      final printerCategoryIds = categories.map((c) {
-        if (c is Map) {
-          return (c['id'] ?? c['_id'] ?? c[r'$oid'])?.toString();
+      final kitchens = printerConfig['kitchens'] as List?;
+      if (kitchens == null) continue;
+      final printerKitchenIds = kitchens.map((k) {
+        if (k is Map) {
+          return (k['id'] ?? k['_id'] ?? k[r'$oid'])?.toString();
         }
-        return c.toString();
+        return k.toString();
       }).toList();
-      if (printerCategoryIds.contains(categoryId)) {
+
+      if (printerKitchenIds.contains(selectedKitchenId)) {
         return true;
       }
     }
@@ -478,173 +528,266 @@ class _CartPageState extends State<CartPage> {
           final phoneCtrl = TextEditingController(
             text: cartProvider.customerPhone ?? '',
           );
+          Timer? debounceTimer;
 
-          return Dialog(
-            backgroundColor: const Color(0xFF1E1E1E),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            insetPadding: const EdgeInsets.symmetric(horizontal: 28),
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // TITLE
-                      Center(
-                        child: Text(
-                          "Customer Details",
-                          style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      // PHONE FIELD
-                      Text(
-                        "Phone Number",
-                        style: TextStyle(color: Colors.white70, fontSize: 14),
-                      ),
-                      const SizedBox(height: 6),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF121212),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: const Color(
-                              0xFF0A84FF,
-                            ).withValues(alpha: 0.5),
-                          ),
-                        ),
-                        child: TextField(
-                          controller: phoneCtrl,
-                          keyboardType: TextInputType.phone,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: const InputDecoration(
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 14,
-                            ),
-                            border: InputBorder.none,
-                            hintText: "Enter phone number",
-                            hintStyle: TextStyle(color: Colors.white38),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 18),
-                      // NAME FIELD
-                      Text(
-                        "Customer Name",
-                        style: TextStyle(color: Colors.white70, fontSize: 14),
-                      ),
-                      const SizedBox(height: 6),
-                      Container(
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF121212),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: const Color(
-                              0xFF0A84FF,
-                            ).withValues(alpha: 0.5),
-                          ),
-                        ),
-                        child: TextField(
-                          controller: nameCtrl,
-                          style: const TextStyle(color: Colors.white),
-                          decoration: const InputDecoration(
-                            contentPadding: EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 14,
-                            ),
-                            border: InputBorder.none,
-                            hintText: "Enter customer name",
-                            hintStyle: TextStyle(color: Colors.white38),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 28),
-                      // BUTTON ROW
-                      Row(
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return Dialog(
+                backgroundColor: const Color(0xFF1E1E1E),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () =>
-                                  Navigator.pop(context, <String, dynamic>{}),
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.white70,
-                                side: BorderSide(color: Colors.white24),
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
+                          Center(
+                            child: Text(
+                              "Customer Details",
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          Text(
+                            "Phone Number",
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF121212),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: const Color(
+                                  0xFF0A84FF,
+                                ).withValues(alpha: 0.5),
+                              ),
+                            ),
+                            child: TextField(
+                              controller: phoneCtrl,
+                              keyboardType: TextInputType.phone,
+                              style: const TextStyle(color: Colors.white),
+                              onChanged: (val) {
+                                setDialogState(
+                                  () {},
+                                ); // Refresh button visibility immediately
+                                if (val.length >= 10) {
+                                  debounceTimer?.cancel();
+                                  debounceTimer = Timer(
+                                    const Duration(milliseconds: 600),
+                                    () async {
+                                      if (nameCtrl.text.trim().isEmpty) {
+                                        try {
+                                          final data = await cartProvider
+                                              .fetchCustomerData(val.trim());
+                                          if (data != null &&
+                                              data['name'] != null &&
+                                              nameCtrl.text.trim().isEmpty) {
+                                            setDialogState(() {
+                                              nameCtrl.text = data['name'];
+                                            });
+                                          }
+                                        } catch (e) {
+                                          debugPrint("Lookup failed: $e");
+                                        }
+                                      }
+                                    },
+                                  );
+                                }
+                              },
+                              decoration: const InputDecoration(
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 14,
                                 ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
+                                border: InputBorder.none,
+                                hintText: "Enter phone number",
+                                hintStyle: TextStyle(color: Colors.white38),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          Text(
+                            "Customer Name",
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF121212),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: const Color(
+                                  0xFF0A84FF,
+                                ).withValues(alpha: 0.5),
+                              ),
+                            ),
+                            child: TextField(
+                              controller: nameCtrl,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: const InputDecoration(
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 14,
+                                ),
+                                border: InputBorder.none,
+                                hintText: "Enter customer name",
+                                hintStyle: TextStyle(color: Colors.white38),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 28),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: () => Navigator.pop(
+                                    context,
+                                    <String, dynamic>{},
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.white70,
+                                    side: BorderSide(color: Colors.white24),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 12,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                  ),
+                                  child: const Text("Skip"),
                                 ),
                               ),
-                              child: const Text("Skip"),
-                            ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: () {
+                                    if (nameCtrl.text.trim().isEmpty) {
+                                      if (!mounted) return;
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            "Please enter customer name or use Skip",
+                                          ),
+                                        ),
+                                      );
+                                      return;
+                                    }
+                                    if (phoneCtrl.text.trim().isEmpty) {
+                                      if (!mounted) return;
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            "Phone number is required when adding a customer name",
+                                          ),
+                                        ),
+                                      );
+                                      return;
+                                    }
+                                    Navigator.pop(context, <String, dynamic>{
+                                      'name': nameCtrl.text,
+                                      'phone': phoneCtrl.text,
+                                    });
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF0A84FF),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 12,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                  ),
+                                  child: const Text(
+                                    "Submit",
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: ElevatedButton(
-                              onPressed: () {
-                                if (nameCtrl.text.trim().isNotEmpty &&
-                                    phoneCtrl.text.trim().isEmpty) {
-                                  if (!mounted) return;
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text(
-                                        "Phone number is required when adding a customer name",
-                                      ),
+                          if (phoneCtrl.text.length >= 10) ...[
+                            const SizedBox(height: 20),
+                            Center(
+                              child: InkWell(
+                                onTap: () {
+                                  showDialog(
+                                    context: context,
+                                    builder: (context) => CustomerHistoryDialog(
+                                      phoneNumber: phoneCtrl.text.trim(),
                                     ),
                                   );
-                                  return;
-                                }
-
-                                Navigator.pop(context, <String, dynamic>{
-                                  'name': nameCtrl.text,
-                                  'phone': phoneCtrl.text,
-                                });
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF0A84FF),
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                              ),
-                              child: const Text(
-                                "Submit",
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.green.shade700,
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.history,
+                                        color: Colors.white,
+                                        size: 18,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Text(
+                                        "Customer History",
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
+                          ],
                         ],
                       ),
-                    ],
-                  ),
+                    ),
+                    Positioned(
+                      right: 8,
+                      top: 8,
+                      child: IconButton(
+                        icon: const Icon(Icons.close, color: Colors.white54),
+                        onPressed: () => Navigator.pop(context, null),
+                      ),
+                    ),
+                  ],
                 ),
-                Positioned(
-                  right: 8,
-                  top: 8,
-                  child: IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white54),
-                    onPressed: () => Navigator.pop(context, null),
-                  ),
-                ),
-              ],
-            ),
+              );
+            },
           );
         },
       );
@@ -673,34 +816,17 @@ class _CartPageState extends State<CartPage> {
         '📦 SUBMITTING BILL: Branch: $_branchId, Company: $_companyId',
       ); // DEBUG LOG
 
-      // 1. Merge active cart items with previously ordered items
-      final Map<String, CartItem> mergedMap = {};
+      // 1. Combine active cart items with previously ordered items
+      // OLD LOGIC: Merged by product ID (caused "2x Tea" instead of "1 Tea, 1 Tea")
+      // NEW LOGIC: Just append new items to the list. Server handles them as separate subdocs.
 
-      // Start with recalled items (existing bill state)
-      for (var item in cartProvider.recalledItems) {
-        mergedMap[item.id] = item;
-      }
+      final List<CartItem> mergedItems = [];
 
-      // Add/update with new cart items (active draft)
-      for (var item in cartProvider.cartItems) {
-        if (mergedMap.containsKey(item.id)) {
-          // If already ordered, we increment the quantity
-          final existing = mergedMap[item.id]!;
-          existing.quantity += item.quantity;
-          // Keep the special note if provided for the new item, or append?
-          // Typically, for KOT, new notes are important.
-          if (item.specialNote != null && item.specialNote!.isNotEmpty) {
-            existing.specialNote =
-                (existing.specialNote == null || existing.specialNote!.isEmpty)
-                ? item.specialNote
-                : '${existing.specialNote}, ${item.specialNote}';
-          }
-        } else {
-          mergedMap[item.id] = item;
-        }
-      }
+      // Add all recalled items (already ordered)
+      mergedItems.addAll(cartProvider.recalledItems);
 
-      final mergedItems = mergedMap.values.toList();
+      // Add all new cart items (new orders)
+      mergedItems.addAll(cartProvider.cartItems);
 
       final billingData = {
         'items': mergedItems
@@ -772,14 +898,13 @@ class _CartPageState extends State<CartPage> {
       debugPrint('📦 BILL RESPONSE: $billingResponse');
 
       if (response.statusCode == 201 || response.statusCode == 200) {
-        // Play success sound
+        // Play success sound (non-blocking)
         try {
           debugPrint('🔊 Attempting to play payment sound...');
           final player = AudioPlayer();
-          // Increase volume just in case
-          await player.setVolume(1.0);
-          await player.play(AssetSource('sounds/pay.mp3'));
-          debugPrint('🔊 Sound command sent successfully');
+          player.setVolume(1.0);
+          player.play(AssetSource('sounds/pay.mp3'));
+          debugPrint('🔊 Sound command sent');
         } catch (e) {
           debugPrint("Error playing sound: $e");
         }
@@ -787,17 +912,23 @@ class _CartPageState extends State<CartPage> {
         if (!mounted) return;
 
         if (status == 'pending') {
-          await _handleKOTPrinting(
-            cartProvider,
-            billingResponse,
-            customerDetails,
+          // Snapshot active cart items for KOT
+          final kotItems = List<CartItem>.from(cartProvider.cartItems);
+          _handleKOTPrinting(
+            items: kotItems,
+            billingResponse: billingResponse,
+            customerDetails: customerDetails,
           );
         } else {
-          await _printReceipt(
-            cartProvider,
-            billingResponse,
-            customerDetails,
-            _selectedPaymentMethod!,
+          _printReceipt(
+            items: mergedItems,
+            totalAmount: cartProvider.total,
+            printerIp: cartProvider.printerIp!,
+            printerPort: cartProvider.printerPort,
+            printerProtocol: cartProvider.printerProtocol ?? 'esc_pos',
+            billingResponse: billingResponse,
+            customerDetails: customerDetails,
+            paymentMethod: _selectedPaymentMethod!,
           );
         }
 
@@ -839,29 +970,24 @@ class _CartPageState extends State<CartPage> {
     }
   }
 
-  Future<void> _printReceipt(
-    CartProvider cartProvider,
-    Map<String, dynamic> billingResponse,
-    Map<String, dynamic> customerDetails,
-    String paymentMethod,
-  ) async {
-    final printerIp = cartProvider.printerIp;
-    final printerPort = cartProvider.printerPort;
-    final printerProtocol = cartProvider.printerProtocol;
-
-    if (printerIp == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No printer configured for this branch')),
-      );
-      return;
-    }
-
-    if (printerProtocol == null || printerProtocol != 'esc_pos') {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Unsupported printer protocol: $printerProtocol'),
-        ),
-      );
+  Future<void> _printReceipt({
+    required List<CartItem> items,
+    required double totalAmount,
+    required String printerIp,
+    required int printerPort,
+    required String printerProtocol,
+    required Map<String, dynamic> billingResponse,
+    required Map<String, dynamic> customerDetails,
+    required String paymentMethod,
+  }) async {
+    if (printerProtocol != 'esc_pos') {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Unsupported printer protocol: $printerProtocol'),
+          ),
+        );
+      }
       return;
     }
 
@@ -1018,12 +1144,42 @@ class _CartPageState extends State<CartPage> {
             styles: const PosStyles(align: PosAlign.right, bold: true),
           ),
         ]);
-        if (waiterName != null) {
-          printer.text(
-            'Assigned by: $waiterName',
-            styles: const PosStyles(align: PosAlign.left),
-          );
+        // Extract KOT Number for side-by-side display
+        String kotDisplayDigits = 'N/A';
+        if (billingResponse['kotNumber'] != null) {
+          kotDisplayDigits = billingResponse['kotNumber']
+              .toString()
+              .split('-')
+              .last
+              .replaceAll('KOT', '');
+        } else if (billingResponse['doc']?['kotNumber'] != null) {
+          kotDisplayDigits = billingResponse['doc']['kotNumber']
+              .toString()
+              .split('-')
+              .last
+              .replaceAll('KOT', '');
+        } else {
+          // Fallback to parse from invoiceNumber CHI-20260207-KOT006
+          final kotRegex = RegExp(r'^[A-Z]+-\d{8}-(KOT)?(\d+)$');
+          final kotMatch = kotRegex.firstMatch(invoiceNumber);
+          if (kotMatch != null) {
+            kotDisplayDigits = kotMatch.group(2)!;
+          }
         }
+
+        printer.row([
+          PosColumn(
+            text: 'Assigned by: ${waiterName ?? 'Unknown'}',
+            width: 7,
+            styles: const PosStyles(align: PosAlign.left),
+          ),
+          PosColumn(
+            text: 'KOT NO - $kotDisplayDigits',
+            width: 5,
+            styles: const PosStyles(align: PosAlign.right, bold: true),
+          ),
+        ]);
+
         printer.hr(ch: '=');
         printer.row([
           PosColumn(
@@ -1049,7 +1205,7 @@ class _CartPageState extends State<CartPage> {
         ]);
         printer.hr(ch: '-');
 
-        for (var item in cartProvider.cartItems) {
+        for (var item in items) {
           final qtyStr = item.quantity % 1 == 0
               ? item.quantity.toStringAsFixed(0)
               : item.quantity.toStringAsFixed(2);
@@ -1081,7 +1237,7 @@ class _CartPageState extends State<CartPage> {
             styles: const PosStyles(align: PosAlign.left, bold: true),
           ),
           PosColumn(
-            text: 'TOTAL RS ${cartProvider.total.toStringAsFixed(2)}',
+            text: 'TOTAL RS ${totalAmount.toStringAsFixed(2)}',
             width: 7,
             styles: const PosStyles(
               align: PosAlign.right,
@@ -1106,9 +1262,9 @@ class _CartPageState extends State<CartPage> {
         // QR Code for Billings
         // Matches style of 'printer.text(_companyName ... bold: true)'
 
-        bool shouldShowFeedback = cartProvider.cartItems.any((item) {
+        bool shouldShowFeedback = items.any((item) {
           final dept = item.department?.trim().toLowerCase();
-          print(
+          debugPrint(
             '🧐 Item: ${item.name}, Dept: "${item.department}", Processed: "$dept"',
           );
           return dept != null && dept.isNotEmpty && dept != 'others';
@@ -1296,16 +1452,20 @@ class _CartPageState extends State<CartPage> {
         printer.cut();
         printer.disconnect();
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Receipt printed successfully')),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Receipt printed successfully')),
+          );
+        }
       } else {
         throw Exception(res.msg);
       }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Print failed: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Print failed: $e')));
+      }
     }
   }
 
@@ -1313,11 +1473,11 @@ class _CartPageState extends State<CartPage> {
   // ---------- KOT PRINTING LOGIC ----------
   // -------------------------
 
-  Future<void> _handleKOTPrinting(
-    CartProvider cartProvider,
-    dynamic billingResponse,
-    Map<String, dynamic> customerDetails,
-  ) async {
+  Future<void> _handleKOTPrinting({
+    required List<CartItem> items,
+    required dynamic billingResponse,
+    required Map<String, dynamic> customerDetails,
+  }) async {
     if (_kotPrinters == null || _kotPrinters!.isEmpty) {
       debugPrint('ℹ️ No KOT printers configured for this branch.');
       return;
@@ -1325,29 +1485,48 @@ class _CartPageState extends State<CartPage> {
 
     final groupedKots = <String, List<CartItem>>{}; // Printer IP -> Items
 
+    // 1. Build Kitchen -> PrinterIP map for faster lookup
+    final kitchenToPrinterMap = <String, String>{};
     for (var printerConfig in _kotPrinters!) {
       final ip = printerConfig['printerIp']?.toString().trim();
-      final categories = printerConfig['categories'] as List?;
-      if (ip == null || categories == null) continue;
-
-      final printerCategoryIds = categories.map((c) {
-        if (c is Map) {
-          return (c['id'] ?? c['_id'] ?? c[r'$oid'])?.toString();
+      final kitchens = printerConfig['kitchens'] as List?;
+      if (ip != null && kitchens != null) {
+        for (var k in kitchens) {
+          final kId = (k is Map)
+              ? (k['id'] ?? k['_id'] ?? k[r'$oid'])?.toString()
+              : k.toString();
+          if (kId != null) {
+            kitchenToPrinterMap[kId] = ip;
+          }
         }
-        return c.toString();
-      }).toList();
+      }
+    }
 
-      final itemsForThisPrinter = cartProvider.cartItems.where((item) {
-        return printerCategoryIds.contains(item.categoryId);
-      }).toList();
-
-      if (itemsForThisPrinter.isNotEmpty) {
-        groupedKots[ip] = itemsForThisPrinter;
+    // 2. Route items to printers based on Category -> Kitchen -> Printer
+    for (var item in items) {
+      final catId = item.categoryId;
+      if (catId != null) {
+        final kitchenId = _categoryToKitchenMap[catId];
+        if (kitchenId != null) {
+          final ip = kitchenToPrinterMap[kitchenId];
+          if (ip != null) {
+            groupedKots.putIfAbsent(ip, () => []).add(item);
+          } else {
+            debugPrint('⚠️ No printer found for kitchen: $kitchenId');
+          }
+        } else {
+          debugPrint('⚠️ No kitchen found for category: $catId');
+          // Fallback: If no specific kitchen map, try to send to ALL KOT printers?
+          // Or maybe check if there is a "default" kitchen?
+          // For now, we log it.
+        }
+      } else {
+        debugPrint('⚠️ Item ${item.name} has no category ID');
       }
     }
 
     if (groupedKots.isEmpty) {
-      debugPrint('ℹ️ No items in cart matched any KOT printer categories.');
+      debugPrint('ℹ️ No KOT items could be routed to any printer.');
       return;
     }
 
@@ -1500,20 +1679,21 @@ class _CartPageState extends State<CartPage> {
         printer.hr(ch: '=');
 
         // COLUMN HEADERS
+        // COLUMN HEADERS
         printer.row([
           PosColumn(
             text: 'ITEM',
-            width: 6,
-            styles: const PosStyles(bold: true),
-          ),
-          PosColumn(
-            text: 'NOTE',
-            width: 4,
+            width: 7,
             styles: const PosStyles(bold: true),
           ),
           PosColumn(
             text: 'QTY',
             width: 2,
+            styles: const PosStyles(bold: true, align: PosAlign.center),
+          ),
+          PosColumn(
+            text: 'NOTE',
+            width: 3,
             styles: const PosStyles(bold: true, align: PosAlign.right),
           ),
         ]);
@@ -1529,23 +1709,22 @@ class _CartPageState extends State<CartPage> {
           printer.row([
             PosColumn(
               text: '${i + 1}. ${item.name.toUpperCase()}',
-              width: 7, // Increased from 6 to 7 to accommodate larger text
+              width: 7,
               styles: const PosStyles(
                 bold: true,
-                fontType:
-                    PosFontType.fontA, // Back to FontA but keeping it bold
+                fontType: PosFontType.fontA,
                 height: PosTextSize.size1,
                 width: PosTextSize.size1,
               ),
             ),
             PosColumn(
-              text: item.specialNote ?? '-',
-              width: 3, // Reduced from 4 to 3
-              styles: const PosStyles(bold: true),
-            ),
-            PosColumn(
               text: qtyStr,
               width: 2,
+              styles: const PosStyles(bold: true, align: PosAlign.center),
+            ),
+            PosColumn(
+              text: item.specialNote ?? '-',
+              width: 3,
               styles: const PosStyles(bold: true, align: PosAlign.right),
             ),
           ]);

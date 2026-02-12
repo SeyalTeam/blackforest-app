@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/categories_page.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'dart:math';
 
 // ---------------------------------------------------------
 //  IDLE TIMEOUT WRAPPER (UNCHANGED)
@@ -126,17 +128,110 @@ class _LoginPageState extends State<LoginPage> {
     if (token != null) {
       try {
         final res = await http.get(
-          Uri.parse("https://blackforest.vseyal.com/api/users/me"),
+          Uri.parse(
+            "https://blackforest.vseyal.com/api/users/me?depth=5&showHiddenFields=true",
+          ),
           headers: {"Authorization": "Bearer $token"},
         );
 
         if (res.statusCode == 200) {
           final body = jsonDecode(res.body);
-          if (body['user'] != null) {
-            final user = body['user'];
+          final user = body is Map<String, dynamic>
+              ? (body['user'] ?? body)
+              : null;
+          if (user is Map<String, dynamic>) {
+            // Store user-level name as a secondary identifier
             final name = user['name'] ?? user['username'];
-            if (name != null && name.toString().isNotEmpty) {
+            if (name != null) {
               await prefs.setString('user_name', name.toString());
+            }
+
+            // Ensure login timestamp exists for current session
+            if (prefs.getInt('login_time') == null) {
+              await prefs.setInt(
+                'login_time',
+                DateTime.now().millisecondsSinceEpoch,
+              );
+            }
+
+            final userId =
+                user['id']?.toString() ??
+                user['_id']?.toString() ??
+                user[r'$oid']?.toString();
+            if (userId != null && userId.isNotEmpty) {
+              await prefs.setString('user_id', userId);
+            }
+
+            final role = user['role']?.toString();
+            if (role != null && role.isNotEmpty) {
+              await prefs.setString('role', role);
+            }
+
+            // Extract Branch ID and Name
+            dynamic branchRef = user["branch"];
+            String? branchId;
+            String? branchName;
+            if (branchRef is Map) {
+              branchId =
+                  (branchRef["id"] ?? branchRef["_id"] ?? branchRef["\$oid"])
+                      ?.toString();
+              branchName = branchRef["name"]?.toString();
+            } else {
+              branchId = branchRef?.toString();
+            }
+            if (branchId != null) {
+              await prefs.setString('branchId', branchId);
+              if (branchName != null) {
+                await prefs.setString('branchName', branchName);
+              }
+              debugPrint("Existing session: Branch ID recovered: $branchId");
+            } else {
+              debugPrint(
+                "Existing session: No Branch ID found in user profile.",
+              );
+            }
+
+            final emp = user['employee'];
+            if (emp is Map<String, dynamic>) {
+              final empId =
+                  emp['id']?.toString() ??
+                  emp['_id']?.toString() ??
+                  emp[r'$oid']?.toString();
+              if (empId != null && empId.isNotEmpty) {
+                await prefs.setString('employee_id', empId);
+              }
+
+              // Strictly prioritize name from employee collection
+              final empName = emp['name']?.toString();
+              if (empName != null && empName.isNotEmpty) {
+                await prefs.setString('employee_name', empName);
+              }
+
+              final empCode =
+                  emp['employeeId']?.toString() ??
+                  emp['employeeID']?.toString() ??
+                  emp['empId']?.toString();
+              if (empCode != null && empCode.isNotEmpty) {
+                await prefs.setString('employee_code', empCode);
+              }
+
+              final photo = emp['photo'];
+              String? photoUrl;
+              if (photo is Map<String, dynamic>) {
+                photoUrl =
+                    photo['thumbnailURL']?.toString() ??
+                    photo['thumbnailUrl']?.toString() ??
+                    photo['url']?.toString();
+              } else if (photo is String) {
+                photoUrl = photo;
+              }
+
+              if (photoUrl != null && photoUrl.isNotEmpty) {
+                if (photoUrl.startsWith('/')) {
+                  photoUrl = 'https://blackforest.vseyal.com$photoUrl';
+                }
+                await prefs.setString('employee_photo_url', photoUrl);
+              }
             }
           }
 
@@ -161,6 +256,7 @@ class _LoginPageState extends State<LoginPage> {
   //  IP ALERT POPUP
   // ---------------------------------------------------------
   Future<void> _showIpAlert(
+    String connectionType,
     String deviceIp,
     String branchInfo,
     String? printerIp,
@@ -169,8 +265,9 @@ class _LoginPageState extends State<LoginPage> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: const Text("IP Verification"),
+        title: const Text("Verification Success"),
         content: Text(
+          "Internet: $connectionType\n"
           "Device IP: $deviceIp\n$branchInfo\nPrinter IP: ${printerIp ?? 'Not Set'}",
         ),
         actions: [
@@ -202,10 +299,51 @@ class _LoginPageState extends State<LoginPage> {
     return dev >= start && dev <= end;
   }
 
+  Future<String> _getDeviceId() async {
+    final prefs = await SharedPreferences.getInstance();
+    String? deviceId = prefs.getString('deviceId');
+    if (deviceId == null) {
+      final random = Random();
+      deviceId =
+          'dev_${DateTime.now().millisecondsSinceEpoch}_${random.nextInt(999999)}';
+      await prefs.setString('deviceId', deviceId);
+    }
+    return deviceId;
+  }
+
   void _showError(String msg) {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.black));
+  }
+
+  Future<bool> _checkLocationPermission() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      _showError('Location services are disabled.');
+      return false;
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        _showError('Location permissions are denied');
+        return false;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      _showError(
+        'Location permissions are permanently denied. Please enable in settings.',
+      );
+      return false;
+    }
+
+    return true;
   }
 
   // ---------------------------------------------------------
@@ -218,6 +356,17 @@ class _LoginPageState extends State<LoginPage> {
 
     final info = NetworkInfo();
     String? deviceIp = await info.getWifiIP();
+
+    // Check actual connectivity type
+    final connectivityResults = await Connectivity().checkConnectivity();
+    bool isWifi = connectivityResults.contains(ConnectivityResult.wifi);
+    bool isMobile = connectivityResults.contains(ConnectivityResult.mobile);
+
+    // Fallback: if connectivity check says nothing but we have an IP, assume WiFi
+    // If it says both, prioritize WiFi for branch logic
+    if (!isWifi && !isMobile && deviceIp != null) {
+      isWifi = true;
+    }
 
     // USERNAME / EMAIL PROCESSING
     String input = _emailController.text.trim();
@@ -232,45 +381,20 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
 
-    // Location Check (Required for backend filter)
-    double? latitude;
-    double? longitude;
-    try {
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) {
-        _showError("Location services are disabled. Please enable them.");
-        setState(() => _isLoading = false);
-        return;
-      }
+    final deviceId = await _getDeviceId();
 
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) {
-          _showError("Location permissions are denied.");
-          setState(() => _isLoading = false);
-          return;
-        }
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        _showError(
-          "Location permissions are permanently denied. Please enable them in settings.",
+    // Fetch Location for Backend Logging
+    Position? currentPos;
+    if (await _checkLocationPermission()) {
+      try {
+        currentPos = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+          ),
         );
-        await Geolocator.openAppSettings();
-        setState(() => _isLoading = false);
-        return;
+      } catch (e) {
+        debugPrint("Optional location fetch failed: $e");
       }
-
-      Position position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-        ),
-      );
-      latitude = position.latitude;
-      longitude = position.longitude;
-    } catch (e) {
-      debugPrint("Error fetching location: $e");
     }
 
     try {
@@ -278,9 +402,11 @@ class _LoginPageState extends State<LoginPage> {
         Uri.parse("https://blackforest.vseyal.com/api/users/login"),
         headers: {
           "Content-Type": "application/json",
-          if (latitude != null) "x-latitude": latitude.toString(),
-          if (longitude != null) "x-longitude": longitude.toString(),
+          "x-device-id": deviceId,
           if (deviceIp != null) "x-private-ip": deviceIp,
+          if (currentPos != null) "x-latitude": currentPos.latitude.toString(),
+          if (currentPos != null)
+            "x-longitude": currentPos.longitude.toString(),
         },
         body: jsonEncode({
           "email": finalEmail,
@@ -303,6 +429,7 @@ class _LoginPageState extends State<LoginPage> {
 
         dynamic branchRef = user["branch"];
         String? branchId;
+        String? branchName;
         if (branchRef is Map) {
           branchId =
               branchRef["id"]?.toString() ??
@@ -312,12 +439,13 @@ class _LoginPageState extends State<LoginPage> {
           if (branchId == null && branchRef.containsKey("\$oid")) {
             branchId = branchRef["\$oid"]?.toString();
           }
+          branchName = branchRef["name"]?.toString();
         } else {
           branchId = branchRef?.toString();
         }
 
         if (branchId == null && role == "waiter") {
-          // Attempt to identify branch via IP or Geo-location match
+          // Attempt to identify branch
           try {
             final gRes = await http.get(
               Uri.parse(
@@ -333,54 +461,100 @@ class _LoginPageState extends State<LoginPage> {
               final settings = jsonDecode(gRes.body);
               final locations = settings['locations'] as List?;
               if (locations != null) {
-                // Find matching branch by IP OR Physical Location
-                final matchingLoc = locations.firstWhere((loc) {
-                  final locIp = loc['ipAddress']?.toString().trim();
-                  final lat2 = loc['latitude'] != null
-                      ? (loc['latitude'] as num).toDouble()
-                      : null;
-                  final lng2 = loc['longitude'] != null
-                      ? (loc['longitude'] as num).toDouble()
-                      : null;
-                  final radius = loc['radius'] != null
-                      ? (loc['radius'] as num).toInt()
-                      : 100;
+                // 1. Try IP Identification (First Priority for ALL connections)
+                if (deviceIp != null) {
+                  final ipMatchLoc = locations.firstWhere((loc) {
+                    final locIp = loc['ipAddress']?.toString().trim();
+                    return locIp != null &&
+                        locIp.isNotEmpty &&
+                        _isIpInRange(deviceIp, locIp);
+                  }, orElse: () => null);
 
-                  bool ipMatch = false;
-                  if (locIp != null && locIp.isNotEmpty && deviceIp != null) {
-                    ipMatch = _isIpInRange(deviceIp, locIp);
+                  if (ipMatchLoc != null) {
+                    final locBranch = ipMatchLoc['branch'];
+                    if (locBranch is Map) {
+                      branchId =
+                          (locBranch['id'] ??
+                                  locBranch['_id'] ??
+                                  locBranch['\$oid'])
+                              ?.toString();
+                      branchName = locBranch['name']?.toString();
+                    } else {
+                      branchId = locBranch?.toString();
+                    }
+                    debugPrint("Auto-identified branch via IP: $branchId");
                   }
-
-                  bool geoMatch = false;
-                  if (lat2 != null &&
-                      lng2 != null &&
-                      latitude != null &&
-                      longitude != null) {
-                    final double dist = Geolocator.distanceBetween(
-                      latitude,
-                      longitude,
-                      lat2,
-                      lng2,
-                    );
-                    if (dist <= radius) geoMatch = true;
-                  }
-
-                  return ipMatch || geoMatch;
-                }, orElse: () => null);
-
-                if (matchingLoc != null) {
-                  final locBranch = matchingLoc['branch'];
-                  if (locBranch is Map) {
-                    branchId =
-                        locBranch['id']?.toString() ??
-                        locBranch['_id']?.toString() ??
-                        locBranch['\$oid']?.toString();
-                  } else {
-                    branchId = locBranch?.toString();
-                  }
-                  debugPrint("Auto-identified branch for waiter: $branchId");
                 }
+
+                // 2. Try GPS Identification (Fallback for Mobile/Other only)
+                if (branchId == null && !isWifi) {
+                  Position? pos;
+                  if (await _checkLocationPermission()) {
+                    try {
+                      pos = await Geolocator.getCurrentPosition(
+                        locationSettings: const LocationSettings(
+                          accuracy: LocationAccuracy.high,
+                        ),
+                      );
+                    } catch (e) {
+                      debugPrint("GPS fetch failed during identification: $e");
+                    }
+                  }
+
+                  if (pos != null) {
+                    final geoMatchLoc = locations.firstWhere((loc) {
+                      final lat2 = loc['latitude'] != null
+                          ? (loc['latitude'] as num).toDouble()
+                          : null;
+                      final lng2 = loc['longitude'] != null
+                          ? (loc['longitude'] as num).toDouble()
+                          : null;
+                      final radius = loc['radius'] != null
+                          ? (loc['radius'] as num).toInt()
+                          : 100;
+
+                      if (lat2 != null && lng2 != null) {
+                        final dist = Geolocator.distanceBetween(
+                          pos!.latitude,
+                          pos.longitude,
+                          lat2,
+                          lng2,
+                        );
+                        return dist <= radius;
+                      }
+                      return false;
+                    }, orElse: () => null);
+
+                    if (geoMatchLoc != null) {
+                      final locBranch = geoMatchLoc['branch'];
+                      if (locBranch is Map) {
+                        branchId =
+                            (locBranch['id'] ??
+                                    locBranch['_id'] ??
+                                    locBranch['\$oid'])
+                                ?.toString();
+                      } else {
+                        branchId = locBranch?.toString();
+                      }
+                      debugPrint("Auto-identified branch via GPS: $branchId");
+                    } else {
+                      debugPrint(
+                        "GPS Identification failed: No matching location found within radius.",
+                      );
+                    }
+                  } else {
+                    debugPrint("GPS fetch failed or permission denied.");
+                  }
+                }
+              } else {
+                debugPrint(
+                  "Global branch-geo-settings returned empty locations list.",
+                );
               }
+            } else {
+              debugPrint(
+                "Failed to fetch branch-geo-settings: ${gRes.statusCode}",
+              );
             }
           } catch (e) {
             debugPrint("Error auto-identifying waiter branch: $e");
@@ -468,61 +642,88 @@ class _LoginPageState extends State<LoginPage> {
               final branch = jsonDecode(bRes.body);
               branchIpRange = branch["ipAddress"]?.toString().trim();
               printerIp = branch["printerIp"]?.toString().trim();
+              if (branchName == null) {
+                branchName = branch["name"]?.toString();
+              }
             }
           }
 
-          // IP and Geo Check
-          bool isIpMatch = false;
-          bool isGeoMatch = false;
+          // --- VERIFICATION PHASE ---
 
-          // A. IP Match Check
-          if (branchIpRange != null &&
-              branchIpRange.isNotEmpty &&
-              deviceIp != null) {
+          // 1. Try IP Verification (High Priority for BOTH WiFi and Mobile)
+          bool isIpMatch = false;
+          if (deviceIp != null &&
+              branchIpRange != null &&
+              branchIpRange.isNotEmpty) {
             isIpMatch = _isIpInRange(deviceIp, branchIpRange);
           }
 
-          // B. Geo Match Check (Secondary fallback)
-          double? branchLat;
-          double? branchLng;
-          int? branchRadius;
-
-          // Re-fetch stored settings if they were just saved in SharedPreferences or use local variables
-          final prefs = await SharedPreferences.getInstance();
-          branchLat = prefs.getDouble('branchLat');
-          branchLng = prefs.getDouble('branchLng');
-          branchRadius = prefs.getInt('branchRadius');
-
-          if (branchLat != null &&
-              branchLng != null &&
-              latitude != null &&
-              longitude != null) {
-            final double distance = Geolocator.distanceBetween(
-              latitude,
-              longitude,
-              branchLat,
-              branchLng,
+          if (isIpMatch && deviceIp != null) {
+            // SUCCESS via IP
+            await _showIpAlert(
+              isWifi ? "WiFi" : "Mobile Internet (IP Match)",
+              deviceIp,
+              "Branch IP matched",
+              printerIp,
             );
-            final int radius = branchRadius ?? 100; // Default 100m
-            if (distance <= radius) {
-              isGeoMatch = true;
-            }
-          }
+          } else if (!isWifi) {
+            // 2. Fallback to GPS Verification (Mobile Data Only)
+            final prefs = await SharedPreferences.getInstance();
+            final branchLat = prefs.getDouble('branchLat');
+            final branchLng = prefs.getDouble('branchLng');
+            final branchRadius = prefs.getInt('branchRadius') ?? 100;
 
-          if (isIpMatch || isGeoMatch) {
-            String verifyMsg = isIpMatch
-                ? "Branch IP matched"
-                : "Location verified";
-            if (isIpMatch && isGeoMatch) verifyMsg = "IP & Location verified";
-
-            await _showIpAlert(deviceIp ?? 'N/A', verifyMsg, printerIp);
-          } else {
-            // Both failed
-            String errMsg = "Access Denied: Outside Branch IP Range";
             if (branchLat != null && branchLng != null) {
-              errMsg += " and GPS Radius";
+              if (await _checkLocationPermission()) {
+                try {
+                  final pos = await Geolocator.getCurrentPosition(
+                    locationSettings: const LocationSettings(
+                      accuracy: LocationAccuracy.high,
+                    ),
+                  );
+                  final distance = Geolocator.distanceBetween(
+                    pos.latitude,
+                    pos.longitude,
+                    branchLat,
+                    branchLng,
+                  );
+
+                  if (distance <= branchRadius) {
+                    // SUCCESS via GPS
+                    await _showIpAlert(
+                      "Mobile Internet (GPS Match)",
+                      "GPS Verified",
+                      "Distance: ${distance.toStringAsFixed(1)}m",
+                      printerIp,
+                    );
+                  } else {
+                    _showError(
+                      "Access Denied: You are ${distance.toStringAsFixed(0)}m away from branch",
+                    );
+                    setState(() => _isLoading = false);
+                    return;
+                  }
+                } catch (e) {
+                  _showError("GPS Error: $e");
+                  setState(() => _isLoading = false);
+                  return;
+                }
+              } else {
+                setState(() => _isLoading = false);
+                return;
+              }
+            } else {
+              _showError("Access Denied: Branch Location not configured");
+              setState(() => _isLoading = false);
+              return;
             }
-            _showError(errMsg);
+          } else {
+            // FAILED (was WiFi or GPS not configured)
+            _showError(
+              deviceIp == null
+                  ? "WiFi IP not detected"
+                  : "Access Denied: Outside Branch IP Range",
+            );
             setState(() => _isLoading = false);
             return;
           }
@@ -534,14 +735,64 @@ class _LoginPageState extends State<LoginPage> {
         await prefs.setString("role", role);
         await prefs.setString("email", finalEmail);
         if (branchId != null) await prefs.setString("branchId", branchId);
+        if (branchName != null) await prefs.setString("branchName", branchName);
         if (deviceIp != null) await prefs.setString("lastLoginIp", deviceIp);
         if (printerIp != null) await prefs.setString("printerIp", printerIp);
-        if (user['id'] != null)
+        if (user['id'] != null) {
           await prefs.setString("user_id", user['id'].toString());
+        }
 
+        // Store user-level name as a secondary identifier
         final name = user['name'] ?? user['username'];
-        if (name != null && name.toString().isNotEmpty) {
+        if (name != null) {
           await prefs.setString('user_name', name.toString());
+        }
+
+        // Store login moment for working hours timer
+        await prefs.setInt('login_time', DateTime.now().millisecondsSinceEpoch);
+
+        // Store employee relation info if present
+        final emp = user['employee'];
+        if (emp != null) {
+          if (emp is Map) {
+            final empId =
+                emp['id']?.toString() ??
+                emp['_id']?.toString() ??
+                emp[r'$oid']?.toString();
+            if (empId != null) {
+              await prefs.setString('employee_id', empId);
+            }
+            final empName = emp['name']?.toString();
+            if (empName != null && empName.isNotEmpty) {
+              await prefs.setString('employee_name', empName);
+            }
+            final empCode =
+                emp['employeeId']?.toString() ??
+                emp['employeeID']?.toString() ??
+                emp['empId']?.toString();
+            if (empCode != null && empCode.isNotEmpty) {
+              await prefs.setString('employee_code', empCode);
+            }
+
+            final photo = emp['photo'];
+            String? photoUrl;
+            if (photo is Map) {
+              photoUrl =
+                  photo['thumbnailURL']?.toString() ??
+                  photo['thumbnailUrl']?.toString() ??
+                  photo['url']?.toString();
+            } else if (photo is String) {
+              photoUrl = photo;
+            }
+            if (photoUrl != null && photoUrl.isNotEmpty) {
+              if (photoUrl.startsWith('/')) {
+                photoUrl = 'https://blackforest.vseyal.com$photoUrl';
+              }
+              await prefs.setString('employee_photo_url', photoUrl);
+            }
+          } else {
+            await prefs.setString('employee_id', emp.toString());
+          }
         }
 
         // NAVIGATE TO CATEGORIES
@@ -568,7 +819,7 @@ class _LoginPageState extends State<LoginPage> {
         _showError(errMsg);
       }
     } catch (e) {
-      _showError("Network error: $e");
+      _showError("Network error: Check your internet");
     }
 
     if (mounted) setState(() => _isLoading = false);
@@ -619,7 +870,7 @@ class _LoginPageState extends State<LoginPage> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     const Text(
-                      "Welcome Team",
+                      "Blackforest Billing",
                       style: TextStyle(
                         fontSize: 30,
                         fontWeight: FontWeight.bold,
