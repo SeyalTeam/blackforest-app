@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/categories_page.dart';
+import 'package:blackforest_app/session_prefs.dart';
+import 'package:blackforest_app/auth_flags.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -38,7 +40,7 @@ class _IdleTimeoutWrapperState extends State<IdleTimeoutWrapper>
 
   Future<void> _logout() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
+    await clearSessionPreservingFavorites(prefs);
     if (mounted) {
       Navigator.pushReplacement(
         context,
@@ -140,6 +142,26 @@ class _LoginPageState extends State<LoginPage> {
               ? (body['user'] ?? body)
               : null;
           if (user is Map<String, dynamic>) {
+            if (isForceLoggedOutUser(user)) {
+              await clearSessionPreservingFavorites(prefs);
+              if (mounted) {
+                _showError(
+                  "Your session was ended by admin. Please login again.",
+                );
+              }
+              return;
+            }
+
+            if (isLoginBlockedUser(user)) {
+              await clearSessionPreservingFavorites(prefs);
+              if (mounted) {
+                _showError(
+                  "Login blocked by superadmin. Please contact administrator.",
+                );
+              }
+              return;
+            }
+
             // Store user-level name as a secondary identifier
             final name = user['name'] ?? user['username'];
             if (name != null) {
@@ -248,7 +270,7 @@ class _LoginPageState extends State<LoginPage> {
         }
       } catch (_) {}
 
-      await prefs.clear();
+      await clearSessionPreservingFavorites(prefs);
     }
   }
 
@@ -418,6 +440,20 @@ class _LoginPageState extends State<LoginPage> {
         final data = jsonDecode(response.body);
         final user = data["user"];
         final role = user["role"];
+
+        if (isForceLoggedOutUser(user)) {
+          _showError("Your session was ended by admin. Please try again.");
+          setState(() => _isLoading = false);
+          return;
+        }
+
+        if (isLoginBlockedUser(user)) {
+          _showError(
+            "Login blocked by superadmin. Please contact administrator.",
+          );
+          setState(() => _isLoading = false);
+          return;
+        }
 
         // Allowed roles
         const allowedRoles = ["branch", "kitchen", "cashier", "waiter"];

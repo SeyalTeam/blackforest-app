@@ -15,6 +15,8 @@ import 'package:blackforest_app/table.dart'; // Import TablePage
 import 'package:blackforest_app/kot_bills_page.dart'; // Import KotBillsPage
 import 'package:blackforest_app/home_page.dart';
 import 'package:blackforest_app/kitchen_notifications_page.dart'; // Import HomePage
+import 'package:blackforest_app/auth_flags.dart';
+import 'package:blackforest_app/session_prefs.dart';
 
 enum PageType { home, billing, cart, billsheet, table, editbill, employee }
 
@@ -45,6 +47,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   String _branchName = '';
   String _role = '';
   Timer? _sessionCheckTimer;
+  bool _isLoggingOut = false;
 
   @override
   void initState() {
@@ -119,6 +122,19 @@ class _CommonScaffoldState extends State<CommonScaffold> {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final user = data['user'];
+
+        if (isForceLoggedOutUser(user)) {
+          _logoutWithMessage("Your session was ended by admin.");
+          return;
+        }
+
+        if (isLoginBlockedUser(user)) {
+          _logoutWithMessage(
+            "Login blocked by superadmin. Please contact administrator.",
+          );
+          return;
+        }
+
         final serverDeviceId = user['deviceId'];
 
         if (serverDeviceId != null && serverDeviceId != localDeviceId) {
@@ -127,6 +143,8 @@ class _CommonScaffoldState extends State<CommonScaffold> {
           );
           _logoutWithMessage("Logged in on another device.");
         }
+      } else if (response.statusCode == 401 || response.statusCode == 403) {
+        _logoutWithMessage("Session expired. Please login again.");
       }
     } catch (e) {
       // Slient fail on network error
@@ -160,80 +178,86 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   }
 
   Future<void> _logout() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token');
-    final userId = prefs.getString('user_id');
-    if (token != null && userId != null) {
-      try {
-        final now = DateTime.now();
+    if (_isLoggingOut) return;
+    _isLoggingOut = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      final userId = prefs.getString('user_id');
+      if (token != null && userId != null) {
+        try {
+          final now = DateTime.now();
 
-        // 1. Find the log record that has an ACTIVE session
-        final searchUrl =
-            'https://blackforest.vseyal.com/api/attendance?where[user][equals]=$userId&where[activities.status][equals]=active&limit=1';
-        final searchResp = await http
-            .get(
-              Uri.parse(searchUrl),
-              headers: {'Authorization': 'Bearer $token'},
-            )
-            .timeout(const Duration(seconds: 3));
+          // 1. Find the log record that has an ACTIVE session
+          final searchUrl =
+              'https://blackforest.vseyal.com/api/attendance?where[user][equals]=$userId&where[activities.status][equals]=active&limit=1';
+          final searchResp = await http
+              .get(
+                Uri.parse(searchUrl),
+                headers: {'Authorization': 'Bearer $token'},
+              )
+              .timeout(const Duration(seconds: 3));
 
-        if (searchResp.statusCode == 200) {
-          final data = jsonDecode(searchResp.body);
-          final docs = data['docs'] as List;
-          if (docs.isNotEmpty) {
-            final attendanceDoc = docs[0];
-            final sessionId = attendanceDoc['id'];
-            final activities = List<Map<String, dynamic>>.from(
-              attendanceDoc['activities'] ?? [],
-            );
+          if (searchResp.statusCode == 200) {
+            final data = jsonDecode(searchResp.body);
+            final docs = data['docs'] as List;
+            if (docs.isNotEmpty) {
+              final attendanceDoc = docs[0];
+              final sessionId = attendanceDoc['id'];
+              final activities = List<Map<String, dynamic>>.from(
+                attendanceDoc['activities'] ?? [],
+              );
 
-            if (activities.isNotEmpty) {
-              // Find the last active session
-              for (int i = activities.length - 1; i >= 0; i--) {
-                if (activities[i]['type'] == 'session' &&
-                    activities[i]['status'] == 'active') {
-                  activities[i]['punchOut'] = now.toUtc().toIso8601String();
-                  activities[i]['status'] = 'closed';
+              if (activities.isNotEmpty) {
+                // Find the last active session
+                for (int i = activities.length - 1; i >= 0; i--) {
+                  if (activities[i]['type'] == 'session' &&
+                      activities[i]['status'] == 'active') {
+                    activities[i]['punchOut'] = now.toUtc().toIso8601String();
+                    activities[i]['status'] = 'closed';
 
-                  // Optional: calculate duration
-                  final punchIn = DateTime.parse(activities[i]['punchIn']);
-                  activities[i]['durationSeconds'] = now
-                      .difference(punchIn)
-                      .inSeconds;
-                  break;
+                    // Optional: calculate duration
+                    final punchIn = DateTime.parse(activities[i]['punchIn']);
+                    activities[i]['durationSeconds'] = now
+                        .difference(punchIn)
+                        .inSeconds;
+                    break;
+                  }
                 }
-              }
 
-              // 2. Update the document with the modified activities array
-              final updateResp = await http
-                  .patch(
-                    Uri.parse(
-                      'https://blackforest.vseyal.com/api/attendance/$sessionId',
-                    ),
-                    headers: {
-                      'Authorization': 'Bearer $token',
-                      'Content-Type': 'application/json',
-                    },
-                    body: jsonEncode({'activities': activities}),
-                  )
-                  .timeout(const Duration(seconds: 3));
+                // 2. Update the document with the modified activities array
+                final updateResp = await http
+                    .patch(
+                      Uri.parse(
+                        'https://blackforest.vseyal.com/api/attendance/$sessionId',
+                      ),
+                      headers: {
+                        'Authorization': 'Bearer $token',
+                        'Content-Type': 'application/json',
+                      },
+                      body: jsonEncode({'activities': activities}),
+                    )
+                    .timeout(const Duration(seconds: 3));
 
-              if (updateResp.statusCode != 200) {
-                debugPrint(
-                  'Failed to update daily log: ${updateResp.statusCode} ${updateResp.body}',
-                );
+                if (updateResp.statusCode != 200) {
+                  debugPrint(
+                    'Failed to update daily log: ${updateResp.statusCode} ${updateResp.body}',
+                  );
+                }
               }
             }
           }
+        } catch (e) {
+          debugPrint('Logout attendance error: $e');
         }
-      } catch (e) {
-        debugPrint('Logout attendance error: $e');
       }
-    }
 
-    await prefs.clear();
-    if (mounted) {
-      Navigator.pushReplacementNamed(context, '/login');
+      await clearSessionPreservingFavorites(prefs);
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/login');
+      }
+    } finally {
+      _isLoggingOut = false;
     }
   }
 

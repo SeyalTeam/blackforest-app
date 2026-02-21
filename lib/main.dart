@@ -9,6 +9,8 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 
 import 'package:blackforest_app/notification_service.dart';
+import 'package:blackforest_app/auth_flags.dart';
+import 'package:blackforest_app/session_prefs.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -97,6 +99,11 @@ class _MyAppState extends State<MyApp> {
                 ? (body['user'] ?? body)
                 : null;
             if (user is Map<String, dynamic>) {
+              if (isForceLoggedOutUser(user) || isLoginBlockedUser(user)) {
+                await clearSessionPreservingFavorites(prefs);
+                return const LoginPage();
+              }
+
               // --- Session Duration Check ---
               final loginTime = prefs.getInt('login_time') ?? 0;
               final role = user['role']?.toString() ?? '';
@@ -114,7 +121,7 @@ class _MyAppState extends State<MyApp> {
                 final diff = DateTime.now().millisecondsSinceEpoch - loginTime;
                 if (diff > 50400000) {
                   // 14 hours
-                  await prefs.clear();
+                  await clearSessionPreservingFavorites(prefs);
                   return const LoginPage();
                 }
               }
@@ -187,7 +194,7 @@ class _MyAppState extends State<MyApp> {
         }
       } catch (_) {}
       // Invalid: Clear prefs and fall to login
-      await prefs.clear();
+      await clearSessionPreservingFavorites(prefs);
     }
     // No valid session: Return LoginPage
     return const LoginPage();

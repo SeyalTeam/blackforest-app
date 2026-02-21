@@ -323,6 +323,19 @@ class CartProvider extends ChangeNotifier {
     _saveCurrentCart();
   }
 
+  void setCustomerDetails({String? name, String? phone}) {
+    final trimmedName = name?.trim();
+    final trimmedPhone = phone?.trim();
+
+    _customerNameMap[_currentType] =
+        (trimmedName == null || trimmedName.isEmpty) ? null : trimmedName;
+    _customerPhoneMap[_currentType] =
+        (trimmedPhone == null || trimmedPhone.isEmpty) ? null : trimmedPhone;
+
+    notifyListeners();
+    _saveCurrentCart();
+  }
+
   void loadKOTItems(
     List<CartItem> items, {
     String? billId,
@@ -921,91 +934,337 @@ class CartProvider extends ChangeNotifier {
 
   Future<Map<String, dynamic>?> fetchCustomerData(String phoneNumber) async {
     try {
+      final normalizedPhone = phoneNumber.trim();
+      if (normalizedPhone.isEmpty) return null;
+
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
       if (token == null) throw Exception('No token found');
 
-      // 1. Fetch Billings for this customer directly for robust metrics
-      final response = await http.get(
-        Uri.parse(
-          'https://blackforest.vseyal.com/api/billings?where[customerDetails.phoneNumber][equals]=$phoneNumber&where[status][not_equals]=cancelled&sort=-createdAt&limit=500&depth=4',
+      final headers = {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      };
+
+      final responses = await Future.wait([
+        http.get(
+          Uri.parse(
+            'https://blackforest.vseyal.com/api/billings?where[customerDetails.phoneNumber][equals]=$normalizedPhone&where[status][not_equals]=cancelled&sort=-createdAt&limit=500&depth=4',
+          ),
+          headers: headers,
         ),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
+        http.get(
+          Uri.parse(
+            'https://blackforest.vseyal.com/api/customers?where[phoneNumber][equals]=$normalizedPhone&limit=1&depth=0',
+          ),
+          headers: headers,
+        ),
+        http.get(
+          Uri.parse(
+            'https://blackforest.vseyal.com/api/globals/customer-offer-settings',
+          ),
+          headers: headers,
+        ),
+      ]);
+
+      final billsResponse = responses[0];
+      final customersResponse = responses[1];
+      final offerSettingsResponse = responses[2];
+
+      if (billsResponse.statusCode != 200) {
+        throw Exception('Failed to fetch metrics: ${billsResponse.statusCode}');
+      }
+
+      double toNonNegativeDouble(dynamic value) {
+        if (value is num) {
+          final parsed = value.toDouble();
+          return parsed < 0 ? 0 : parsed;
+        }
+        return 0;
+      }
+
+      final billData = jsonDecode(billsResponse.body);
+      final List<dynamic> bills = billData['docs'] ?? [];
+
+      Map<String, dynamic>? customerDoc;
+      if (customersResponse.statusCode == 200) {
+        final customerData = jsonDecode(customersResponse.body);
+        final docs = customerData['docs'];
+        if (docs is List && docs.isNotEmpty && docs.first is Map) {
+          customerDoc = Map<String, dynamic>.from(docs.first as Map);
+        }
+      }
+
+      Map<String, dynamic>? offerSettings;
+      if (offerSettingsResponse.statusCode == 200) {
+        final settingsData = jsonDecode(offerSettingsResponse.body);
+        if (settingsData is Map) {
+          offerSettings = Map<String, dynamic>.from(settingsData);
+        }
+      }
+
+      if (bills.isEmpty && customerDoc == null) {
+        return null;
+      }
+
+      double totalAmount = 0;
+      double bigBill = 0;
+      final Map<String, int> productCounts = {};
+      final Map<String, double> productAmounts = {};
+
+      for (var bill in bills) {
+        final amount = (bill['totalAmount'] as num?)?.toDouble() ?? 0.0;
+        totalAmount += amount;
+        if (amount > bigBill) bigBill = amount;
+
+        final items = bill['items'] as List? ?? [];
+        for (var item in items) {
+          final productName = item['name'] ?? 'Unknown';
+          final quantity = (item['quantity'] as num?)?.toInt() ?? 0;
+          final itemAmount = (item['subtotal'] as num?)?.toDouble() ?? 0.0;
+
+          productCounts[productName] =
+              (productCounts[productName] ?? 0) + quantity;
+          productAmounts[productName] =
+              (productAmounts[productName] ?? 0) + itemAmount;
+        }
+      }
+
+      String favouriteProductName = 'N/A';
+      int favouriteProductQty = 0;
+      double favouriteProductTotal = 0.0;
+
+      if (productCounts.isNotEmpty) {
+        final sortedProducts = productCounts.entries.toList()
+          ..sort((a, b) => b.value.compareTo(a.value));
+        favouriteProductName = sortedProducts.first.key;
+        favouriteProductQty = sortedProducts.first.value;
+        favouriteProductTotal = productAmounts[favouriteProductName] ?? 0.0;
+      }
+
+      final lastBill = bills.isNotEmpty ? bills.first : null;
+      final lastBillCustomer = lastBill?['customerDetails'];
+      String customerName = normalizedPhone;
+      if (customerDoc?['name'] is String &&
+          (customerDoc!['name'] as String).trim().isNotEmpty) {
+        customerName = (customerDoc['name'] as String).trim();
+      } else if (lastBillCustomer is Map &&
+          lastBillCustomer['name'] != null &&
+          lastBillCustomer['name'].toString().trim().isNotEmpty) {
+        customerName = lastBillCustomer['name'].toString().trim();
+      }
+
+      final branch = lastBill?['branch'];
+      final lastBranch = (branch is Map) ? branch['name'] ?? 'N/A' : 'N/A';
+
+      final rewardPoints = toNonNegativeDouble(customerDoc?['rewardPoints']);
+      final rewardProgressAmount = toNonNegativeDouble(
+        customerDoc?['rewardProgressAmount'],
       );
+      final offerEnabled = offerSettings?['enabled'] == true;
+      final pointsNeededForOffer = toNonNegativeDouble(
+        offerSettings?['pointsNeededForOffer'],
+      );
+      final offerAmount = toNonNegativeDouble(offerSettings?['offerAmount']);
+      final spendAmountPerStep = toNonNegativeDouble(
+        offerSettings?['spendAmountPerStep'],
+      );
+      final pointsPerStep = toNonNegativeDouble(
+        offerSettings?['pointsPerStep'],
+      );
+      final resetOnRedeem = offerSettings?['resetOnRedeem'] == true;
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final List<dynamic> bills = data['docs'] ?? [];
-        if (bills.isEmpty) return null;
+      final completedBills =
+          bills
+              .where(
+                (raw) =>
+                    raw is Map &&
+                    (raw['status']?.toString().toLowerCase() == 'completed'),
+              )
+              .toList()
+            ..sort((a, b) {
+              final aDate =
+                  DateTime.tryParse(
+                    (a is Map ? a['createdAt'] : null)?.toString() ?? '',
+                  ) ??
+                  DateTime.fromMillisecondsSinceEpoch(0);
+              final bDate =
+                  DateTime.tryParse(
+                    (b is Map ? b['createdAt'] : null)?.toString() ?? '',
+                  ) ??
+                  DateTime.fromMillisecondsSinceEpoch(0);
+              return aDate.compareTo(bDate);
+            });
 
-        double totalAmount = 0;
-        double bigBill = 0;
-        Map<String, int> productCounts = {};
-        Map<String, double> productAmounts = {};
+      final completedSpendAmount = completedBills.fold<double>(0.0, (sum, raw) {
+        if (raw is! Map) return sum;
+        final bill = Map<String, dynamic>.from(raw);
+        return sum +
+            toNonNegativeDouble(bill['grossAmount'] ?? bill['totalAmount']);
+      });
 
-        for (var bill in bills) {
-          final amount = (bill['totalAmount'] as num?)?.toDouble() ?? 0.0;
-          totalAmount += amount;
-          if (amount > bigBill) bigBill = amount;
+      // History-based reward recompute from completed bills (to align legacy customers).
+      double historyDerivedRewardPoints = 0;
+      double historyDerivedProgressAmount = 0;
+      if (offerEnabled && spendAmountPerStep > 0 && pointsPerStep > 0) {
+        for (final raw in completedBills) {
+          if (raw is! Map) continue;
+          final bill = Map<String, dynamic>.from(raw);
 
-          // Count products for "Favourite" logic
-          final items = bill['items'] as List? ?? [];
-          for (var item in items) {
-            final productName = item['name'] ?? 'Unknown';
-            final quantity = (item['quantity'] as num?)?.toInt() ?? 0;
-            final itemAmount = (item['subtotal'] as num?)?.toDouble() ?? 0.0;
+          final grossAmount = toNonNegativeDouble(
+            bill['grossAmount'] ?? bill['totalAmount'],
+          );
+          final offerDiscount = toNonNegativeDouble(
+            bill['customerOfferDiscount'],
+          );
+          final offerWasApplied =
+              bill['customerOfferApplied'] == true && offerDiscount > 0;
 
-            productCounts[productName] =
-                (productCounts[productName] ?? 0) + quantity;
-            productAmounts[productName] =
-                (productAmounts[productName] ?? 0) + itemAmount;
+          if (offerWasApplied && resetOnRedeem) {
+            historyDerivedRewardPoints = 0;
+            historyDerivedProgressAmount = 0;
+            continue;
+          }
+
+          final totalProgress = historyDerivedProgressAmount + grossAmount;
+          final completedSteps = (totalProgress / spendAmountPerStep).floor();
+          final earnedPoints = completedSteps * pointsPerStep;
+          final consumedAmount = completedSteps * spendAmountPerStep;
+
+          historyDerivedRewardPoints += earnedPoints;
+          historyDerivedProgressAmount = double.parse(
+            (totalProgress - consumedAmount)
+                .clamp(0, double.infinity)
+                .toStringAsFixed(2),
+          );
+        }
+      }
+
+      final historyBasedEligible =
+          offerEnabled &&
+          pointsNeededForOffer > 0 &&
+          historyDerivedRewardPoints >= pointsNeededForOffer;
+
+      bool historySyncAttempted = false;
+      bool historySyncFailed = false;
+      bool historySyncApplied = false;
+
+      // Auto-sync customer reward fields from history when backend values are behind.
+      final customerID = customerDoc?['id']?.toString();
+      if (offerEnabled && customerID != null && customerID.isNotEmpty) {
+        final serverEligible =
+            customerDoc?['isOfferEligible'] == true ||
+            (pointsNeededForOffer > 0 && rewardPoints >= pointsNeededForOffer);
+
+        final needsSync =
+            (rewardPoints - historyDerivedRewardPoints).abs() >= 0.01 ||
+            (rewardProgressAmount - historyDerivedProgressAmount).abs() >=
+                0.01 ||
+            serverEligible != historyBasedEligible;
+
+        if (needsSync) {
+          historySyncAttempted = true;
+          try {
+            final syncResponse = await http.patch(
+              Uri.parse(
+                'https://blackforest.vseyal.com/api/customers/$customerID',
+              ),
+              headers: headers,
+              body: jsonEncode({
+                'rewardPoints': historyDerivedRewardPoints,
+                'rewardProgressAmount': historyDerivedProgressAmount,
+                'isOfferEligible': historyBasedEligible,
+              }),
+            );
+
+            if (syncResponse.statusCode == 200) {
+              historySyncApplied = true;
+            } else {
+              historySyncFailed = true;
+            }
+          } catch (_) {
+            historySyncFailed = true;
           }
         }
-
-        // Find favourite product
-        String favouriteProductName = 'N/A';
-        int favouriteProductQty = 0;
-        double favouriteProductTotal = 0.0;
-
-        if (productCounts.isNotEmpty) {
-          final sortedProducts = productCounts.entries.toList()
-            ..sort((a, b) => b.value.compareTo(a.value));
-          favouriteProductName = sortedProducts.first.key;
-          favouriteProductQty = sortedProducts.first.value;
-          favouriteProductTotal = productAmounts[favouriteProductName] ?? 0.0;
-        }
-
-        final lastBill = bills.first; // Sorted by -createdAt
-        final customerDetails = lastBill['customerDetails'];
-        final customerName = (customerDetails is Map)
-            ? (customerDetails['name'] ??
-                  customerDetails['phoneNumber'] ??
-                  'Unknown')
-            : 'Unknown';
-        final branch = lastBill['branch'];
-        final lastBranch = (branch is Map) ? branch['name'] ?? 'N/A' : 'N/A';
-
-        return {
-          'name': customerName,
-          'phoneNumber': phoneNumber,
-          'totalBills': data['totalDocs'] ?? bills.length,
-          'totalAmount': totalAmount,
-          'bigBill': bigBill,
-          'favouriteProduct': favouriteProductName,
-          'favouriteProductQty': favouriteProductQty,
-          'favouriteProductAmount': favouriteProductTotal,
-          'lastBillAmount':
-              (lastBill['totalAmount'] as num?)?.toDouble() ?? 0.0,
-          'lastBillDate': lastBill['createdAt'],
-          'lastBranch': lastBranch,
-          'bills': bills,
-        };
-      } else {
-        throw Exception('Failed to fetch metrics: ${response.statusCode}');
       }
+
+      final effectiveRewardPoints = historySyncApplied
+          ? historyDerivedRewardPoints
+          : rewardPoints;
+      final effectiveRewardProgressAmount = historySyncApplied
+          ? historyDerivedProgressAmount
+          : rewardProgressAmount;
+      final effectiveOfferEligible =
+          offerEnabled &&
+          ((historySyncApplied && historyBasedEligible) ||
+              (customerDoc?['isOfferEligible'] == true) ||
+              (pointsNeededForOffer > 0 &&
+                  effectiveRewardPoints >= pointsNeededForOffer));
+
+      final remainingPointsForOffer =
+          pointsNeededForOffer > effectiveRewardPoints
+          ? pointsNeededForOffer - effectiveRewardPoints
+          : 0.0;
+
+      double remainingSpendForOffer = 0;
+      if (remainingPointsForOffer > 0 &&
+          spendAmountPerStep > 0 &&
+          pointsPerStep > 0) {
+        final stepsNeeded = (remainingPointsForOffer / pointsPerStep).ceil();
+        final progressRemainder =
+            effectiveRewardProgressAmount % spendAmountPerStep;
+
+        for (var step = 0; step < stepsNeeded; step++) {
+          if (step == 0) {
+            final neededForFirstStep = spendAmountPerStep - progressRemainder;
+            remainingSpendForOffer += neededForFirstStep > 0
+                ? neededForFirstStep
+                : 0;
+          } else {
+            remainingSpendForOffer += spendAmountPerStep;
+          }
+        }
+      }
+
+      return {
+        'name': customerName,
+        'phoneNumber': normalizedPhone,
+        'totalBills': billData['totalDocs'] ?? bills.length,
+        'totalAmount': totalAmount,
+        'bigBill': bigBill,
+        'favouriteProduct': favouriteProductName,
+        'favouriteProductQty': favouriteProductQty,
+        'favouriteProductAmount': favouriteProductTotal,
+        'lastBillAmount': (lastBill?['totalAmount'] as num?)?.toDouble() ?? 0.0,
+        'lastBillDate': lastBill?['createdAt'],
+        'lastBranch': lastBranch,
+        'bills': bills,
+        'offer': {
+          'enabled': offerEnabled,
+          'rewardPoints': effectiveRewardPoints,
+          'rewardProgressAmount': effectiveRewardProgressAmount,
+          'pointsNeededForOffer': pointsNeededForOffer,
+          'remainingPointsForOffer': remainingPointsForOffer,
+          'offerAmount': offerAmount,
+          'isOfferEligible': effectiveOfferEligible,
+          'spendAmountPerStep': spendAmountPerStep,
+          'pointsPerStep': pointsPerStep,
+          'remainingSpendForOffer': remainingSpendForOffer,
+          'completedBillsCount': completedBills.length,
+          'completedSpendAmount': completedSpendAmount,
+          'allBillsCount': bills.length,
+          'allBillsSpendAmount': totalAmount,
+          'historyDerivedRewardPoints': historyDerivedRewardPoints,
+          'historyDerivedProgressAmount': historyDerivedProgressAmount,
+          'historyBasedEligible': historyBasedEligible,
+          'historySyncAttempted': historySyncAttempted,
+          'historySyncFailed': historySyncFailed,
+          'historySyncApplied': historySyncApplied,
+          'totalOffersRedeemed': toNonNegativeDouble(
+            customerDoc?['totalOffersRedeemed'],
+          ).toInt(),
+        },
+      };
     } catch (e) {
       debugPrint("Error fetching customer data: $e");
       rethrow;

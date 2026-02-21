@@ -8,6 +8,13 @@ import 'package:network_info_plus/network_info_plus.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:blackforest_app/cart_provider.dart';
 
+class _ProductsCacheEntry {
+  final List<dynamic> products;
+  final DateTime fetchedAt;
+
+  const _ProductsCacheEntry({required this.products, required this.fetchedAt});
+}
+
 class ProductsPage extends StatefulWidget {
   final String categoryId;
   final String categoryName;
@@ -25,10 +32,37 @@ class ProductsPage extends StatefulWidget {
 }
 
 class _ProductsPageState extends State<ProductsPage> {
+  static const Duration _productsCacheTtl = Duration(seconds: 90);
+  static final Map<String, _ProductsCacheEntry> _productsCache = {};
+
   List<dynamic> _products = [];
   bool _isLoading = true;
   String? _branchId;
   String? _userRole;
+
+  String _cacheKey() {
+    final scope = widget.sourcePage == PageType.table ? 'table' : 'billing';
+    return '$scope|${widget.categoryId}|${_branchId ?? ''}|${_userRole ?? ''}';
+  }
+
+  List<dynamic>? _readProductsCache() {
+    final entry = _productsCache[_cacheKey()];
+    if (entry == null) return null;
+    final isExpired =
+        DateTime.now().difference(entry.fetchedAt) > _productsCacheTtl;
+    if (isExpired) {
+      _productsCache.remove(_cacheKey());
+      return null;
+    }
+    return List<dynamic>.from(entry.products);
+  }
+
+  void _writeProductsCache(List<dynamic> products) {
+    _productsCache[_cacheKey()] = _ProductsCacheEntry(
+      products: List<dynamic>.from(products),
+      fetchedAt: DateTime.now(),
+    );
+  }
 
   @override
   void initState() {
@@ -46,18 +80,32 @@ class _ProductsPageState extends State<ProductsPage> {
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final user = data['user'] ?? data;
-        setState(() {
-          _userRole = user['role'];
-        });
+        final prefs = await SharedPreferences.getInstance();
+        final role = user['role']?.toString();
+        if (role != null && role.isNotEmpty) {
+          await prefs.setString('role', role);
+        }
+
+        String? branchId;
         if (user['role'] == 'branch' && user['branch'] != null) {
-          setState(() {
-            _branchId = (user['branch'] is Map)
-                ? user['branch']['id']
-                : user['branch'];
-          });
+          branchId = (user['branch'] is Map)
+              ? user['branch']['id']?.toString()
+              : user['branch']?.toString();
         } else if (user['role'] == 'waiter') {
           await _fetchWaiterBranch(token);
         }
+
+        if (branchId != null && branchId.isNotEmpty) {
+          await prefs.setString('branchId', branchId);
+        }
+
+        if (!mounted) return;
+        setState(() {
+          _userRole = role;
+          if (branchId != null && branchId.isNotEmpty) {
+            _branchId = branchId;
+          }
+        });
       }
     } catch (e) {
       // Handle silently
@@ -189,13 +237,31 @@ class _ProductsPageState extends State<ProductsPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('No token found. Please login again.')),
         );
+        setState(() {
+          _isLoading = false;
+        });
         return;
       }
-      if (_branchId == null && _userRole == null) {
+
+      _userRole ??= prefs.getString('role');
+      _branchId ??= prefs.getString('branchId');
+
+      final cachedProducts = _readProductsCache();
+      if (cachedProducts != null) {
+        if (!mounted) return;
+        setState(() {
+          _products = cachedProducts;
+          _isLoading = false;
+        });
+        return;
+      }
+
+      if (_userRole == null || (_userRole == 'waiter' && _branchId == null)) {
         await _fetchUserData(token);
       }
+
       // Updated: Fetch all products in the category without restricting to branch overrides
-      String url =
+      final url =
           'https://blackforest.vseyal.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=2';
       final response = await http.get(
         Uri.parse(url),
@@ -243,7 +309,9 @@ class _ProductsPageState extends State<ProductsPage> {
         if (!mounted) return;
         setState(() {
           _products = fetchedProducts;
+          _isLoading = false;
         });
+        _writeProductsCache(List<dynamic>.from(fetchedProducts));
       } else {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -251,16 +319,19 @@ class _ProductsPageState extends State<ProductsPage> {
             content: Text('Failed to fetch products: ${response.statusCode}'),
           ),
         );
+        setState(() {
+          _isLoading = false;
+        });
       }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Network error: Check your internet')),
       );
+      setState(() {
+        _isLoading = false;
+      });
     }
-    setState(() {
-      _isLoading = false;
-    });
   }
 
   /// Add or update product in cart

@@ -122,9 +122,11 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
                   horizontal: 12,
                 ),
                 decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.1),
+                  color: Colors.green.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.green.withOpacity(0.2)),
+                  border: Border.all(
+                    color: Colors.green.withValues(alpha: 0.2),
+                  ),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -165,20 +167,75 @@ class ReceiptContent extends StatefulWidget {
 }
 
 class _ReceiptContentState extends State<ReceiptContent> {
+  static final Map<String, Map<String, dynamic>?> _reviewCacheByBillId = {};
+  static final Map<String, Future<Map<String, dynamic>?>>
+  _reviewFutureByBillId = {};
+
   Map<String, dynamic>? _reviewData;
   bool _isLoadingReview = true;
 
   @override
   void initState() {
     super.initState();
+    final billId = _extractBillId(widget.bill);
+    if (billId != null && _reviewCacheByBillId.containsKey(billId)) {
+      _reviewData = _reviewCacheByBillId[billId];
+      _isLoadingReview = false;
+      return;
+    }
+    if (billId == null || billId.isEmpty) {
+      _isLoadingReview = false;
+      return;
+    }
     _fetchReview();
   }
 
   Future<void> _fetchReview() async {
+    final billId = _extractBillId(widget.bill);
+    if (billId == null || billId.isEmpty) {
+      if (mounted) {
+        setState(() => _isLoadingReview = false);
+      }
+      return;
+    }
+
+    if (_reviewCacheByBillId.containsKey(billId)) {
+      if (mounted) {
+        setState(() {
+          _reviewData = _reviewCacheByBillId[billId];
+          _isLoadingReview = false;
+        });
+      }
+      return;
+    }
+
+    final future = _reviewFutureByBillId[billId] ??= _fetchReviewForBill(
+      billId,
+    );
+    final data = await future;
+    _reviewFutureByBillId.remove(billId);
+    _reviewCacheByBillId[billId] = data;
+
+    if (mounted) {
+      setState(() {
+        _reviewData = data;
+        _isLoadingReview = false;
+      });
+    }
+  }
+
+  String? _extractBillId(dynamic bill) {
+    if (bill is! Map) return null;
+    return (bill['id'] ?? bill['_id'] ?? bill[r'$oid'])?.toString();
+  }
+
+  Future<Map<String, dynamic>?> _fetchReviewForBill(String billId) async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
-      final billId = widget.bill['id'];
+      if (token == null || token.isEmpty) {
+        return null;
+      }
 
       final res = await http.get(
         Uri.parse(
@@ -189,12 +246,12 @@ class _ReceiptContentState extends State<ReceiptContent> {
 
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
-        if (data['docs'] != null && data['docs'].isNotEmpty) {
-          if (mounted) setState(() => _reviewData = data['docs'][0]);
+        if (data['docs'] is List && (data['docs'] as List).isNotEmpty) {
+          return data['docs'][0] as Map<String, dynamic>;
         }
       }
     } catch (_) {}
-    if (mounted) setState(() => _isLoadingReview = false);
+    return null;
   }
 
   @override

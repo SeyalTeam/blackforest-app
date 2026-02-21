@@ -10,6 +10,16 @@ import 'package:blackforest_app/cart_provider.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:geolocator/geolocator.dart';
 
+class _CategoriesCacheEntry {
+  final List<dynamic> categories;
+  final DateTime fetchedAt;
+
+  const _CategoriesCacheEntry({
+    required this.categories,
+    required this.fetchedAt,
+  });
+}
+
 class CategoriesPage extends StatefulWidget {
   final PageType sourcePage;
 
@@ -20,16 +30,173 @@ class CategoriesPage extends StatefulWidget {
 }
 
 class _CategoriesPageState extends State<CategoriesPage> {
+  static const Duration _categoriesCacheTtl = Duration(seconds: 90);
+  static final Map<String, _CategoriesCacheEntry> _categoriesCache = {};
+
   List<dynamic> _categories = [];
   bool _isLoading = true;
   String _errorMessage = '';
   String? _companyId;
   String? _userRole;
+  String? _currentUserId;
+  List<String> _favoriteCategoryIds = <String>[];
+
+  String _categoriesCacheKey(String filterQuery) =>
+      '${_favoritesScope()}|$filterQuery';
+
+  List<dynamic>? _readCategoriesCache(String filterQuery) {
+    final key = _categoriesCacheKey(filterQuery);
+    final entry = _categoriesCache[key];
+    if (entry == null) return null;
+    final expired =
+        DateTime.now().difference(entry.fetchedAt) > _categoriesCacheTtl;
+    if (expired) {
+      _categoriesCache.remove(key);
+      return null;
+    }
+    return List<dynamic>.from(entry.categories);
+  }
+
+  void _writeCategoriesCache(String filterQuery, List<dynamic> categories) {
+    final key = _categoriesCacheKey(filterQuery);
+    _categoriesCache[key] = _CategoriesCacheEntry(
+      categories: List<dynamic>.from(categories),
+      fetchedAt: DateTime.now(),
+    );
+  }
 
   @override
   void initState() {
     super.initState();
     _fetchCategories();
+  }
+
+  String _favoritesScope() {
+    if (widget.sourcePage == PageType.table) {
+      return 'table';
+    }
+    return 'billing';
+  }
+
+  String _favoriteCategoriesKey(String userId) =>
+      'favorite_category_ids_${_favoritesScope()}_$userId';
+
+  Future<void> _loadFavoriteCategories({String? preferredUserId}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final userId =
+        preferredUserId ?? _currentUserId ?? prefs.getString('user_id');
+
+    if (userId == null || userId.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _currentUserId = null;
+        _favoriteCategoryIds = <String>[];
+      });
+      return;
+    }
+
+    final stored =
+        prefs.getStringList(_favoriteCategoriesKey(userId)) ?? <String>[];
+    final normalizedFavorites = <String>[];
+    for (final id in stored) {
+      final cleanedId = id.trim();
+      if (cleanedId.isEmpty || normalizedFavorites.contains(cleanedId)) {
+        continue;
+      }
+      normalizedFavorites.add(cleanedId);
+    }
+
+    if (normalizedFavorites.length != stored.length) {
+      await prefs.setStringList(
+        _favoriteCategoriesKey(userId),
+        normalizedFavorites,
+      );
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _currentUserId = userId;
+      _favoriteCategoryIds = normalizedFavorites;
+    });
+  }
+
+  List<dynamic> _orderedCategories() {
+    if (_categories.isEmpty || _favoriteCategoryIds.isEmpty) {
+      return _categories;
+    }
+
+    final Map<String, dynamic> categoriesById = {};
+    final List<dynamic> nonFavoriteCategories = [];
+
+    for (final category in _categories) {
+      final categoryId = category['id']?.toString() ?? '';
+      if (categoryId.isNotEmpty) {
+        categoriesById[categoryId] = category;
+      }
+      if (!_favoriteCategoryIds.contains(categoryId)) {
+        nonFavoriteCategories.add(category);
+      }
+    }
+
+    final List<dynamic> favoriteCategories = [];
+    for (final favoriteId in _favoriteCategoryIds) {
+      final category = categoriesById[favoriteId];
+      if (category != null) {
+        favoriteCategories.add(category);
+      }
+    }
+
+    return <dynamic>[...favoriteCategories, ...nonFavoriteCategories];
+  }
+
+  Future<void> _saveFavoriteCategories() async {
+    if (_currentUserId == null || _currentUserId!.isEmpty) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      _favoriteCategoriesKey(_currentUserId!),
+      _favoriteCategoryIds.toList(),
+    );
+  }
+
+  Future<void> _toggleFavoriteCategory(
+    String categoryId,
+    String categoryName,
+  ) async {
+    if (categoryId.isEmpty) return;
+
+    if (_currentUserId == null || _currentUserId!.isEmpty) {
+      await _loadFavoriteCategories();
+    }
+    if (_currentUserId == null || _currentUserId!.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to save favorites. Please login again.'),
+        ),
+      );
+      return;
+    }
+
+    if (_favoriteCategoryIds.contains(categoryId)) {
+      setState(() {
+        _favoriteCategoryIds.remove(categoryId);
+      });
+      await _saveFavoriteCategories();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$categoryName removed from favorites')),
+      );
+      return;
+    }
+
+    setState(() {
+      _favoriteCategoryIds.add(categoryId);
+    });
+    await _saveFavoriteCategories();
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$categoryName added to favorites')));
   }
 
   Future<void> _fetchUserData(String token) async {
@@ -42,39 +209,62 @@ class _CategoriesPageState extends State<CategoriesPage> {
         final Map<String, dynamic> data = jsonDecode(response.body);
         final user = data['user'] ?? data; // Depending on response structure
         final prefs = await SharedPreferences.getInstance();
+        final userId =
+            user['id']?.toString() ??
+            user['_id']?.toString() ??
+            user['\$oid']?.toString();
+
+        if (userId != null && userId.isNotEmpty) {
+          await prefs.setString('user_id', userId);
+        }
+
+        final role = user['role']?.toString();
+        if (role != null && role.isNotEmpty) {
+          await prefs.setString('role', role);
+        }
+
+        // Extract Branch ID if present in user profile
+        dynamic branchRef = user['branch'];
+        String? bId;
+        if (branchRef is Map) {
+          bId = (branchRef['id'] ?? branchRef['_id'] ?? branchRef['\$oid'])
+              ?.toString();
+        } else {
+          bId = branchRef?.toString();
+        }
+        if (bId != null && bId.isNotEmpty) {
+          await prefs.setString('branchId', bId);
+        }
+
+        String? detectedCompanyId;
+        if (user['role'] == 'company' && user['company'] != null) {
+          final comp = user['company'];
+          detectedCompanyId = comp is Map
+              ? (comp['id'] ?? comp['_id'] ?? comp[r'$oid'])?.toString()
+              : comp.toString();
+        } else if (user['role'] == 'branch' &&
+            user['branch'] != null &&
+            user['branch']['company'] != null) {
+          final comp = user['branch']['company'];
+          detectedCompanyId = comp is Map
+              ? (comp['id'] ?? comp['_id'] ?? comp[r'$oid'])?.toString()
+              : comp.toString();
+        }
+        if (detectedCompanyId != null && detectedCompanyId.isNotEmpty) {
+          await prefs.setString('company_id', detectedCompanyId);
+        }
+
+        if (!mounted) return;
+
         setState(() {
-          _userRole = user['role'];
-
-          // Extract Branch ID if present in user profile
-          dynamic branchRef = user['branch'];
-          String? bId;
-          if (branchRef is Map) {
-            bId = (branchRef['id'] ?? branchRef['_id'] ?? branchRef['\$oid'])
-                ?.toString();
-          } else {
-            bId = branchRef?.toString();
-          }
-          if (bId != null) {
-            prefs.setString('branchId', bId);
-          }
-
-          if (user['role'] == 'company' && user['company'] != null) {
-            final comp = user['company'];
-            _companyId = comp is Map
-                ? (comp['id'] ?? comp['_id'] ?? comp[r'$oid'])?.toString()
-                : comp.toString();
-          } else if (user['role'] == 'branch' &&
-              user['branch'] != null &&
-              user['branch']['company'] != null) {
-            final comp = user['branch']['company'];
-            _companyId = comp is Map
-                ? (comp['id'] ?? comp['_id'] ?? comp[r'$oid'])?.toString()
-                : comp.toString();
-          }
+          _userRole = role;
+          _currentUserId = userId;
+          _companyId = detectedCompanyId;
         });
         debugPrint(
           "User Role: $_userRole, Company ID: $_companyId, Branch ID: ${prefs.getString('branchId')}",
         );
+        await _loadFavoriteCategories(preferredUserId: userId);
       } else {
         // Handle error silently or log
       }
@@ -131,6 +321,30 @@ class _CategoriesPageState extends State<CategoriesPage> {
     return true;
   }
 
+  Future<String?> _fetchCompanyIdFromBranch(
+    String token,
+    String branchId,
+  ) async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+          'https://blackforest.vseyal.com/api/branches/$branchId?depth=1',
+        ),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode != 200) return null;
+      final branch = jsonDecode(response.body);
+      final company = branch['company'];
+      if (company is Map) {
+        return (company['id'] ?? company['_id'] ?? company['\$oid'])
+            ?.toString();
+      }
+      return company?.toString();
+    } catch (e) {
+      return null;
+    }
+  }
+
   Future<List<String>> _fetchMatchingCompanyIds(
     String token,
     String? deviceIp, {
@@ -142,6 +356,17 @@ class _CategoriesPageState extends State<CategoriesPage> {
     List<String> companyIds = [];
     try {
       Set<String> uniqueCompanyIds = {};
+
+      // Fast path: when branch is known we can derive company directly.
+      if (branchId != null && branchId.isNotEmpty) {
+        final directCompanyId = await _fetchCompanyIdFromBranch(
+          token,
+          branchId,
+        );
+        if (directCompanyId != null && directCompanyId.isNotEmpty) {
+          return [directCompanyId];
+        }
+      }
 
       // 1. Fetch Current GPS Position once for matching
       Position? currentPos;
@@ -406,7 +631,15 @@ class _CategoriesPageState extends State<CategoriesPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
+      _userRole ??= prefs.getString('role');
+      _companyId ??= prefs.getString('company_id');
+      final storedUserId = prefs.getString('user_id');
+      if (storedUserId != _currentUserId) {
+        await _loadFavoriteCategories(preferredUserId: storedUserId);
+      }
+
       if (token == null) {
+        if (!mounted) return;
         setState(() {
           _errorMessage = 'No token found. Please login again.';
           _isLoading = false;
@@ -418,93 +651,75 @@ class _CategoriesPageState extends State<CategoriesPage> {
       }
 
       final branchId = prefs.getString('branchId');
-      List<String>? authorizedCategoryIds;
-
-      // Only combine kitchen categories for Table flow
-      if (widget.sourcePage == PageType.table) {
-        authorizedCategoryIds = []; // Enforce strict filtering for Table
-        if (branchId != null) {
-          try {
-            final kRes = await http.get(
-              Uri.parse(
-                'https://blackforest.vseyal.com/api/kitchens?where[branches][contains]=$branchId&limit=100',
-              ),
-              headers: {'Authorization': 'Bearer $token'},
-            );
-            if (kRes.statusCode == 200) {
-              final data = jsonDecode(kRes.body);
-              final kitchens = data['docs'] as List?;
-              if (kitchens != null) {
-                Set<String> catIds = {};
-                for (var kitchen in kitchens) {
-                  final cats = kitchen['categories'] as List?;
-                  if (cats != null) {
-                    for (var c in cats) {
-                      if (c is Map) {
-                        catIds.add(c['id'].toString());
-                      } else {
-                        catIds.add(c.toString());
-                      }
-                    }
-                  }
-                }
-                authorizedCategoryIds = catIds.toList();
-              }
-            }
-          } catch (e) {
-            debugPrint("Error fetching kitchen categories: $e");
-          }
-        }
-      }
 
       // Fetch user data if not already fetched
       if (_userRole == null) {
         await _fetchUserData(token);
       }
       if (!mounted) return;
+      _userRole ??= prefs.getString('role');
+      _companyId ??= prefs.getString('company_id');
+
       String filterQuery = 'where[isBilling][equals]=true';
       // Role-based company filter
       if (_userRole != 'superadmin') {
         String? companyFilter;
         if (_userRole == 'waiter') {
-          final branchId = prefs.getString('branchId');
-          String? deviceIp = await _fetchDeviceIp();
-
-          List<String> matchingCompanyIds = await _fetchMatchingCompanyIds(
-            token,
-            deviceIp,
-            branchId: branchId,
-          );
-          if (matchingCompanyIds.isNotEmpty) {
-            companyFilter =
-                '&where[company][in]=${matchingCompanyIds.join(',')}';
-          } else {
-            setState(() {
-              _errorMessage =
-                  'No matching branches for your connection or location.';
-              _isLoading = false;
-            });
-            return;
+          String? waiterCompanyId = _companyId ?? prefs.getString('company_id');
+          if ((waiterCompanyId == null || waiterCompanyId.isEmpty) &&
+              branchId != null) {
+            waiterCompanyId = await _fetchCompanyIdFromBranch(token, branchId);
+            if (waiterCompanyId != null && waiterCompanyId.isNotEmpty) {
+              await prefs.setString('company_id', waiterCompanyId);
+              _companyId = waiterCompanyId;
+            }
           }
-        } else if (_companyId != null) {
+
+          if (waiterCompanyId != null && waiterCompanyId.isNotEmpty) {
+            companyFilter = '&where[company][in]=$waiterCompanyId';
+          } else {
+            final deviceIp = await _fetchDeviceIp();
+            final matchingCompanyIds = await _fetchMatchingCompanyIds(
+              token,
+              deviceIp,
+              branchId: branchId,
+            );
+            if (matchingCompanyIds.isNotEmpty) {
+              companyFilter =
+                  '&where[company][in]=${matchingCompanyIds.join(',')}';
+              final firstMatch = matchingCompanyIds.first;
+              _companyId = firstMatch;
+              await prefs.setString('company_id', firstMatch);
+            } else {
+              setState(() {
+                _errorMessage =
+                    'No matching branches for your connection or location.';
+                _isLoading = false;
+              });
+              return;
+            }
+          }
+        } else if (_companyId != null && _companyId!.isNotEmpty) {
           companyFilter = '&where[company][contains]=$_companyId';
+        } else {
+          final storedCompanyId = prefs.getString('company_id');
+          if (storedCompanyId != null && storedCompanyId.isNotEmpty) {
+            _companyId = storedCompanyId;
+            companyFilter = '&where[company][contains]=$storedCompanyId';
+          }
         }
         if (companyFilter != null) {
           filterQuery += companyFilter;
         }
       }
 
-      // Add Kitchen Category Filter if applicable
-      if (authorizedCategoryIds != null) {
-        if (authorizedCategoryIds.isEmpty) {
-          setState(() {
-            _categories = [];
-            _isLoading = false;
-            _errorMessage = 'No categories assigned to branch kitchens.';
-          });
-          return;
-        }
-        filterQuery += '&where[id][in]=${authorizedCategoryIds.join(',')}';
+      final cachedCategories = _readCategoriesCache(filterQuery);
+      if (cachedCategories != null) {
+        setState(() {
+          _categories = cachedCategories;
+          _isLoading = false;
+        });
+        return;
       }
 
       final response = await http.get(
@@ -516,10 +731,12 @@ class _CategoriesPageState extends State<CategoriesPage> {
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         if (!mounted) return;
+        final docs = List<dynamic>.from(data['docs'] ?? []);
         setState(() {
-          _categories = data['docs'] ?? [];
+          _categories = docs;
           _isLoading = false;
         });
+        _writeCategoriesCache(filterQuery, docs);
       } else {
         if (!mounted) return;
         setState(() {
@@ -549,6 +766,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
       if (token == null) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('No token found. Please login again.')),
         );
@@ -662,6 +880,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
               )
             : LayoutBuilder(
                 builder: (context, constraints) {
+                  final orderedCategories = _orderedCategories();
                   final width = constraints.maxWidth;
                   final crossAxisCount = (width > 600)
                       ? 5
@@ -674,9 +893,17 @@ class _CategoriesPageState extends State<CategoriesPage> {
                       mainAxisSpacing: 10,
                       childAspectRatio: 0.75, // Rectangular
                     ),
-                    itemCount: _categories.length,
+                    itemCount: orderedCategories.length,
                     itemBuilder: (context, index) {
-                      final category = _categories[index];
+                      final category = orderedCategories[index];
+                      final String categoryId =
+                          category['id']?.toString() ?? '';
+                      final String categoryName =
+                          category['name']?.toString() ?? 'Unknown';
+                      final isFavorite = _favoriteCategoryIds.contains(
+                        categoryId,
+                      );
+
                       String? imageUrl;
                       if (category['image'] != null &&
                           category['image']['url'] != null) {
@@ -693,13 +920,15 @@ class _CategoriesPageState extends State<CategoriesPage> {
                             context,
                             MaterialPageRoute(
                               builder: (context) => ProductsPage(
-                                categoryId: category['id'],
-                                categoryName: category['name'],
+                                categoryId: categoryId,
+                                categoryName: categoryName,
                                 sourcePage: widget.sourcePage,
                               ),
                             ),
                           );
                         },
+                        onLongPress: () =>
+                            _toggleFavoriteCategory(categoryId, categoryName),
                         child: Container(
                           decoration: BoxDecoration(
                             borderRadius: BorderRadius.circular(8),
@@ -712,55 +941,80 @@ class _CategoriesPageState extends State<CategoriesPage> {
                               ),
                             ],
                           ),
-                          child: Column(
+                          child: Stack(
                             children: [
-                              Expanded(
-                                flex: 8, // 80% image
-                                child: ClipRRect(
-                                  borderRadius: const BorderRadius.vertical(
-                                    top: Radius.circular(8),
-                                  ),
-                                  child: CachedNetworkImage(
-                                    imageUrl: imageUrl,
-                                    fit: BoxFit.cover,
-                                    width: double.infinity,
-                                    placeholder: (context, url) => const Center(
-                                      child: CircularProgressIndicator(),
-                                    ),
-                                    errorWidget: (context, url, error) =>
-                                        const Center(
-                                          child: Text(
-                                            'No Image',
-                                            style: TextStyle(
-                                              color: Colors.grey,
+                              Column(
+                                children: [
+                                  Expanded(
+                                    flex: 8, // 80% image
+                                    child: ClipRRect(
+                                      borderRadius: const BorderRadius.vertical(
+                                        top: Radius.circular(8),
+                                      ),
+                                      child: CachedNetworkImage(
+                                        imageUrl: imageUrl,
+                                        fit: BoxFit.cover,
+                                        width: double.infinity,
+                                        placeholder: (context, url) =>
+                                            const Center(
+                                              child:
+                                                  CircularProgressIndicator(),
                                             ),
-                                          ),
+                                        errorWidget: (context, url, error) =>
+                                            const Center(
+                                              child: Text(
+                                                'No Image',
+                                                style: TextStyle(
+                                                  color: Colors.grey,
+                                                ),
+                                              ),
+                                            ),
+                                      ),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    flex: 2, // 20% name
+                                    child: Container(
+                                      width: double.infinity,
+                                      decoration: const BoxDecoration(
+                                        color: Colors.black,
+                                        borderRadius: BorderRadius.vertical(
+                                          bottom: Radius.circular(8),
                                         ),
-                                  ),
-                                ),
-                              ),
-                              Expanded(
-                                flex: 2, // 20% name
-                                child: Container(
-                                  width: double.infinity,
-                                  decoration: const BoxDecoration(
-                                    color: Colors.black,
-                                    borderRadius: BorderRadius.vertical(
-                                      bottom: Radius.circular(8),
+                                      ),
+                                      alignment: Alignment.center,
+                                      child: Text(
+                                        categoryName,
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                        textAlign: TextAlign.center,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
                                     ),
                                   ),
-                                  alignment: Alignment.center,
-                                  child: Text(
-                                    category['name'] ?? 'Unknown',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.bold,
+                                ],
+                              ),
+                              if (isFavorite)
+                                Positioned(
+                                  top: 8,
+                                  right: 8,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(4),
+                                    decoration: BoxDecoration(
+                                      color: Colors.black.withValues(
+                                        alpha: 0.35,
+                                      ),
+                                      shape: BoxShape.circle,
                                     ),
-                                    textAlign: TextAlign.center,
-                                    overflow: TextOverflow.ellipsis,
+                                    child: Icon(
+                                      Icons.star,
+                                      size: 20,
+                                      color: Colors.yellow.shade700,
+                                    ),
                                   ),
                                 ),
-                              ),
                             ],
                           ),
                         ),

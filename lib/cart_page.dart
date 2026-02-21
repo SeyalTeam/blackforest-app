@@ -529,9 +529,127 @@ class _CartPageState extends State<CartPage> {
             text: cartProvider.customerPhone ?? '',
           );
           Timer? debounceTimer;
+          Map<String, dynamic>? customerLookupData;
+          bool isLookupInProgress = false;
+          String? lookupError;
+          bool applyCustomerOffer = false;
+          bool didAutoLookup = false;
+
+          double readMoney(dynamic value) {
+            if (value is num) {
+              final parsed = value.toDouble();
+              return parsed < 0 ? 0 : parsed;
+            }
+            return 0;
+          }
+
+          Map<String, dynamic>? readOfferData(
+            Map<String, dynamic>? customerData,
+          ) {
+            if (customerData == null) return null;
+            final raw = customerData['offer'];
+            if (raw is Map) {
+              return Map<String, dynamic>.from(raw);
+            }
+            return null;
+          }
+
+          Future<void> lookupCustomer(
+            String rawPhone,
+            void Function(void Function()) setDialogState,
+          ) async {
+            final phone = rawPhone.trim();
+            if (phone.length < 10) {
+              setDialogState(() {
+                customerLookupData = null;
+                lookupError = null;
+                isLookupInProgress = false;
+                applyCustomerOffer = false;
+              });
+              return;
+            }
+
+            setDialogState(() {
+              lookupError = null;
+              isLookupInProgress = true;
+            });
+
+            try {
+              final data = await cartProvider.fetchCustomerData(phone);
+              if (phoneCtrl.text.trim() != phone) return;
+
+              setDialogState(() {
+                customerLookupData = data;
+                isLookupInProgress = false;
+                lookupError = null;
+
+                if (data != null) {
+                  final fetchedName = data['name']?.toString().trim() ?? '';
+                  if (fetchedName.isNotEmpty && nameCtrl.text.trim().isEmpty) {
+                    nameCtrl.text = fetchedName;
+                  }
+                }
+
+                final offerData = readOfferData(data);
+                final eligible =
+                    offerData?['enabled'] == true &&
+                    offerData?['isOfferEligible'] == true;
+                applyCustomerOffer = eligible;
+              });
+            } catch (_) {
+              if (phoneCtrl.text.trim() != phone) return;
+              setDialogState(() {
+                customerLookupData = null;
+                isLookupInProgress = false;
+                lookupError = 'Unable to fetch customer details';
+                applyCustomerOffer = false;
+              });
+            }
+          }
 
           return StatefulBuilder(
             builder: (context, setDialogState) {
+              if (!didAutoLookup && phoneCtrl.text.trim().length >= 10) {
+                didAutoLookup = true;
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  lookupCustomer(phoneCtrl.text, setDialogState);
+                });
+              }
+
+              final offerData = readOfferData(customerLookupData);
+              final offerEnabled = offerData?['enabled'] == true;
+              final offerEligible =
+                  offerData?['enabled'] == true &&
+                  offerData?['isOfferEligible'] == true;
+              final offerAmount = readMoney(offerData?['offerAmount']);
+              final rewardPoints = readMoney(offerData?['rewardPoints']);
+              final pointsNeeded = readMoney(
+                offerData?['pointsNeededForOffer'],
+              );
+              final remainingPoints = readMoney(
+                offerData?['remainingPointsForOffer'],
+              );
+              final remainingSpend = readMoney(
+                offerData?['remainingSpendForOffer'],
+              );
+              final historyBasedEligible =
+                  offerData?['historyBasedEligible'] == true;
+              final historySyncFailed = offerData?['historySyncFailed'] == true;
+              final historySyncApplied =
+                  offerData?['historySyncApplied'] == true;
+              final completedBillsCount =
+                  (offerData?['completedBillsCount'] as num?)?.toInt() ?? 0;
+              final completedSpendAmount = readMoney(
+                offerData?['completedSpendAmount'],
+              );
+              final billTotal = cartProvider.total;
+              final previewDiscount = applyCustomerOffer && offerEligible
+                  ? (offerAmount > billTotal ? billTotal : offerAmount)
+                  : 0.0;
+              final previewPayable = (billTotal - previewDiscount)
+                  .clamp(0.0, double.infinity)
+                  .toDouble();
+
               return Dialog(
                 backgroundColor: const Color(0xFF1E1E1E),
                 shape: RoundedRectangleBorder(
@@ -581,32 +699,12 @@ class _CartPageState extends State<CartPage> {
                               keyboardType: TextInputType.phone,
                               style: const TextStyle(color: Colors.white),
                               onChanged: (val) {
-                                setDialogState(
-                                  () {},
-                                ); // Refresh button visibility immediately
-                                if (val.length >= 10) {
-                                  debounceTimer?.cancel();
-                                  debounceTimer = Timer(
-                                    const Duration(milliseconds: 600),
-                                    () async {
-                                      if (nameCtrl.text.trim().isEmpty) {
-                                        try {
-                                          final data = await cartProvider
-                                              .fetchCustomerData(val.trim());
-                                          if (data != null &&
-                                              data['name'] != null &&
-                                              nameCtrl.text.trim().isEmpty) {
-                                            setDialogState(() {
-                                              nameCtrl.text = data['name'];
-                                            });
-                                          }
-                                        } catch (e) {
-                                          debugPrint("Lookup failed: $e");
-                                        }
-                                      }
-                                    },
-                                  );
-                                }
+                                setDialogState(() {});
+                                debounceTimer?.cancel();
+                                debounceTimer = Timer(
+                                  const Duration(milliseconds: 500),
+                                  () => lookupCustomer(val, setDialogState),
+                                );
                               },
                               decoration: const InputDecoration(
                                 contentPadding: EdgeInsets.symmetric(
@@ -619,6 +717,29 @@ class _CartPageState extends State<CartPage> {
                               ),
                             ),
                           ),
+                          if (isLookupInProgress) ...[
+                            const SizedBox(height: 10),
+                            const Center(
+                              child: SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Color(0xFF0A84FF),
+                                ),
+                              ),
+                            ),
+                          ],
+                          if (lookupError != null) ...[
+                            const SizedBox(height: 10),
+                            Text(
+                              lookupError!,
+                              style: const TextStyle(
+                                color: Colors.redAccent,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 18),
                           Text(
                             "Customer Name",
@@ -652,15 +773,190 @@ class _CartPageState extends State<CartPage> {
                               ),
                             ),
                           ),
+                          if (customerLookupData != null) ...[
+                            const SizedBox(height: 14),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF121212),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.12),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Customer: ${customerLookupData!['name'] ?? 'N/A'}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    'History: ${customerLookupData!['totalBills'] ?? 0} bills | ₹${readMoney(customerLookupData!['totalAmount']).toStringAsFixed(2)} spent',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                          if (offerEnabled) ...[
+                            const SizedBox(height: 12),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF0F1A11),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: const Color(
+                                    0xFF2EBF3B,
+                                  ).withValues(alpha: 0.45),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Customer Credit Offer',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    'Points: ${rewardPoints.toStringAsFixed(0)} / ${pointsNeeded.toStringAsFixed(0)}',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Completed bills used: $completedBillsCount | ₹${completedSpendAmount.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  const Text(
+                                    'Only completed bills earn points.',
+                                    style: TextStyle(
+                                      color: Colors.white54,
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                  Text(
+                                    offerEligible
+                                        ? 'Eligible: Offer discount ₹${offerAmount.toStringAsFixed(2)}'
+                                        : 'Need ${remainingPoints.toStringAsFixed(0)} more points',
+                                    style: TextStyle(
+                                      color: offerEligible
+                                          ? const Color(0xFF2EBF3B)
+                                          : Colors.orangeAccent,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  if (!offerEligible && remainingSpend > 0)
+                                    Text(
+                                      'Spend ₹${remainingSpend.toStringAsFixed(2)} more to unlock offer',
+                                      style: const TextStyle(
+                                        color: Colors.orangeAccent,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  if (!offerEligible && historyBasedEligible)
+                                    Text(
+                                      historySyncFailed
+                                          ? 'History shows eligible, but points sync failed. Please refresh or contact admin.'
+                                          : 'Syncing history points... please wait and retry.',
+                                      style: const TextStyle(
+                                        color: Colors.orangeAccent,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  if (historySyncApplied)
+                                    const Text(
+                                      'Points synced from completed history.',
+                                      style: TextStyle(
+                                        color: Color(0xFF2EBF3B),
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  const SizedBox(height: 8),
+                                  IgnorePointer(
+                                    ignoring: !offerEligible,
+                                    child: Opacity(
+                                      opacity: offerEligible ? 1 : 0.5,
+                                      child: CheckboxListTile(
+                                        contentPadding: EdgeInsets.zero,
+                                        dense: true,
+                                        controlAffinity:
+                                            ListTileControlAffinity.leading,
+                                        title: const Text(
+                                          'Apply customer offer on this bill',
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                        value: applyCustomerOffer,
+                                        onChanged: (value) {
+                                          setDialogState(() {
+                                            applyCustomerOffer = value == true;
+                                          });
+                                        },
+                                        activeColor: const Color(0xFF2EBF3B),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    'Bill total: ₹${billTotal.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Offer discount: ₹${previewDiscount.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      color: Color(0xFF2EBF3B),
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Remaining payable: ₹${previewPayable.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 28),
                           Row(
                             children: [
                               Expanded(
                                 child: OutlinedButton(
-                                  onPressed: () => Navigator.pop(
-                                    context,
-                                    <String, dynamic>{},
-                                  ),
+                                  onPressed: () {
+                                    debounceTimer?.cancel();
+                                    Navigator.pop(context, <String, dynamic>{});
+                                  },
                                   style: OutlinedButton.styleFrom(
                                     foregroundColor: Colors.white70,
                                     side: BorderSide(color: Colors.white24),
@@ -704,9 +1000,13 @@ class _CartPageState extends State<CartPage> {
                                       );
                                       return;
                                     }
+                                    debounceTimer?.cancel();
                                     Navigator.pop(context, <String, dynamic>{
                                       'name': nameCtrl.text,
                                       'phone': phoneCtrl.text,
+                                      'applyCustomerOffer':
+                                          offerEligible && applyCustomerOffer,
+                                      'previewPayable': previewPayable,
                                     });
                                   },
                                   style: ElevatedButton.styleFrom(
@@ -781,7 +1081,10 @@ class _CartPageState extends State<CartPage> {
                       top: 8,
                       child: IconButton(
                         icon: const Icon(Icons.close, color: Colors.white54),
-                        onPressed: () => Navigator.pop(context, null),
+                        onPressed: () {
+                          debounceTimer?.cancel();
+                          Navigator.pop(context, null);
+                        },
                       ),
                     ),
                   ],
@@ -803,6 +1106,10 @@ class _CartPageState extends State<CartPage> {
         'phone': cartProvider.customerPhone ?? '',
       };
     }
+
+    final shouldApplyCustomerOffer =
+        status == 'completed' &&
+        (customerDetails['applyCustomerOffer'] == true);
 
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -865,6 +1172,7 @@ class _CartPageState extends State<CartPage> {
             )
             .map((item) => '${item.name}: ${item.specialNote}')
             .join(', '),
+        'applyCustomerOffer': shouldApplyCustomerOffer,
         'status': status,
       };
 
@@ -897,6 +1205,18 @@ class _CartPageState extends State<CartPage> {
       final billingResponse = jsonDecode(response.body);
       debugPrint('📦 BILL RESPONSE: $billingResponse');
 
+      double billedTotal = cartProvider.total;
+      if (billingResponse is Map) {
+        final responseTotal = billingResponse['totalAmount'];
+        final responseDocTotal = billingResponse['doc']?['totalAmount'];
+
+        if (responseTotal is num) {
+          billedTotal = responseTotal.toDouble();
+        } else if (responseDocTotal is num) {
+          billedTotal = responseDocTotal.toDouble();
+        }
+      }
+
       if (response.statusCode == 201 || response.statusCode == 200) {
         // Play success sound (non-blocking)
         try {
@@ -922,7 +1242,7 @@ class _CartPageState extends State<CartPage> {
         } else {
           _printReceipt(
             items: mergedItems,
-            totalAmount: cartProvider.total,
+            totalAmount: billedTotal,
             printerIp: cartProvider.printerIp!,
             printerPort: cartProvider.printerPort,
             printerProtocol: cartProvider.printerProtocol ?? 'esc_pos',

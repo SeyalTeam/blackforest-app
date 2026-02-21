@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:blackforest_app/categories_page.dart';
 import 'package:blackforest_app/cart_page.dart';
+import 'package:blackforest_app/customer_history_dialog.dart';
 
 class TablePage extends StatefulWidget {
   const TablePage({super.key});
@@ -22,7 +23,8 @@ class _TablePageState extends State<TablePage> {
   String? _errorMessage;
   String? _branchId;
   String? _token;
-  List<dynamic> _pendingBills = [];
+  final Map<String, dynamic> _pendingBillsByTableKey = {};
+  bool _isHandlingTableTap = false;
   Timer? _timer;
 
   @override
@@ -75,7 +77,7 @@ class _TablePageState extends State<TablePage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest.vseyal.com/api/tables?limit=200&depth=1',
+          'https://blackforest.vseyal.com/api/tables?where[branch][equals]=$_branchId&limit=1&depth=1',
         ),
         headers: {'Authorization': 'Bearer $_token'},
       );
@@ -83,18 +85,7 @@ class _TablePageState extends State<TablePage> {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final List<dynamic> allDocs = data['docs'] ?? [];
-
-        // Find the doc that matches OUR branch ID
-        final branchDoc = allDocs.firstWhere((doc) {
-          final b = doc['branch'];
-          String? bId;
-          if (b is Map) {
-            bId = b['id']?.toString() ?? b['_id']?.toString();
-          } else {
-            bId = b?.toString();
-          }
-          return bId == _branchId;
-        }, orElse: () => null);
+        final dynamic branchDoc = allDocs.isNotEmpty ? allDocs.first : null;
 
         setState(() {
           if (branchDoc != null) {
@@ -143,9 +134,21 @@ class _TablePageState extends State<TablePage> {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
+        final docs = List<dynamic>.from(data['docs'] ?? []);
+        final nextByTableKey = <String, dynamic>{};
+        for (final bill in docs) {
+          final details = bill['tableDetails'];
+          if (details == null) continue;
+          final tableNumber = details['tableNumber']?.toString();
+          final section = details['section']?.toString();
+          if (tableNumber == null || section == null) continue;
+          nextByTableKey[_tableKey(tableNumber, section)] = bill;
+        }
         if (mounted) {
           setState(() {
-            _pendingBills = data['docs'] ?? [];
+            _pendingBillsByTableKey
+              ..clear()
+              ..addAll(nextByTableKey);
           });
         }
       }
@@ -271,8 +274,9 @@ class _TablePageState extends State<TablePage> {
     if (runningBill == null) return const Color(0xFFEEEEEE);
 
     final items = runningBill['items'] as List?;
-    if (items == null || items.isEmpty)
+    if (items == null || items.isEmpty) {
       return const Color(0xFFFFF176); // Default to Yellow (Ordered)
+    }
 
     // Map statuses to priority (1 = lowest, 4 = highest)
     int lowestPriority = 4;
@@ -361,24 +365,21 @@ class _TablePageState extends State<TablePage> {
       itemBuilder: (context, index) {
         final tableNumber = index + 1;
 
-        final runningBill = _pendingBills.firstWhere((bill) {
-          final td = bill['tableDetails'];
-          if (td == null) return false;
-          return td['tableNumber']?.toString() == tableNumber.toString() &&
-              td['section']?.toString() == sectionName;
-        }, orElse: () => null);
+        final runningBill =
+            _pendingBillsByTableKey[_tableKey(
+              tableNumber.toString(),
+              sectionName,
+            )];
         final isRunning = runningBill != null;
 
         return GestureDetector(
           onTap: () => _handleTableTap(
-            context,
             runningBill,
             tableNumber,
             sectionName,
             openCart: false,
           ),
           onDoubleTap: () => _handleTableTap(
-            context,
             runningBill,
             tableNumber,
             sectionName,
@@ -515,109 +516,447 @@ class _TablePageState extends State<TablePage> {
     );
   }
 
+  Future<Map<String, dynamic>?> _showCustomerDetailsDialog(
+    CartProvider cartProvider,
+  ) async {
+    final nameCtrl = TextEditingController(
+      text: cartProvider.customerName ?? '',
+    );
+    final phoneCtrl = TextEditingController(
+      text: cartProvider.customerPhone ?? '',
+    );
+    Timer? debounceTimer;
+    bool isDialogActive = true;
+    String latestLookupPhone = '';
+
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return Dialog(
+              backgroundColor: const Color(0xFF1E1E1E),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  ConstrainedBox(
+                    constraints: BoxConstraints(
+                      maxHeight:
+                          MediaQuery.of(dialogContext).size.height * 0.78,
+                    ),
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Center(
+                            child: Text(
+                              "Customer Details",
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          const Text(
+                            "Phone Number",
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF121212),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: const Color(
+                                  0xFF0A84FF,
+                                ).withValues(alpha: 0.5),
+                              ),
+                            ),
+                            child: TextField(
+                              controller: phoneCtrl,
+                              keyboardType: TextInputType.phone,
+                              style: const TextStyle(color: Colors.white),
+                              onChanged: (val) {
+                                setDialogState(() {});
+                                if (val.length >= 10) {
+                                  final lookupPhone = val.trim();
+                                  latestLookupPhone = lookupPhone;
+                                  debounceTimer?.cancel();
+                                  debounceTimer = Timer(
+                                    const Duration(milliseconds: 600),
+                                    () async {
+                                      if (!isDialogActive ||
+                                          lookupPhone != latestLookupPhone ||
+                                          nameCtrl.text.trim().isNotEmpty) {
+                                        return;
+                                      }
+
+                                      try {
+                                        final data = await cartProvider
+                                            .fetchCustomerData(lookupPhone);
+                                        if (!isDialogActive ||
+                                            !mounted ||
+                                            lookupPhone !=
+                                                phoneCtrl.text.trim() ||
+                                            nameCtrl.text.trim().isNotEmpty) {
+                                          return;
+                                        }
+                                        if (data != null &&
+                                            data['name'] != null) {
+                                          nameCtrl.text = data['name']
+                                              .toString();
+                                        }
+                                      } catch (e) {
+                                        debugPrint("Lookup failed: $e");
+                                      }
+                                    },
+                                  );
+                                } else {
+                                  latestLookupPhone = '';
+                                  debounceTimer?.cancel();
+                                }
+                              },
+                              decoration: const InputDecoration(
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 14,
+                                ),
+                                border: InputBorder.none,
+                                hintText: "Enter phone number",
+                                hintStyle: TextStyle(color: Colors.white38),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 18),
+                          const Text(
+                            "Customer Name",
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Container(
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF121212),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: const Color(
+                                  0xFF0A84FF,
+                                ).withValues(alpha: 0.5),
+                              ),
+                            ),
+                            child: TextField(
+                              controller: nameCtrl,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: const InputDecoration(
+                                contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 14,
+                                ),
+                                border: InputBorder.none,
+                                hintText: "Enter customer name",
+                                hintStyle: TextStyle(color: Colors.white38),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 28),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: () {
+                                    isDialogActive = false;
+                                    debounceTimer?.cancel();
+                                    Navigator.pop(
+                                      dialogContext,
+                                      <String, dynamic>{},
+                                    );
+                                  },
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.white70,
+                                    side: const BorderSide(
+                                      color: Colors.white24,
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 12,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                  ),
+                                  child: const Text("Skip"),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: () {
+                                    if (phoneCtrl.text.trim().isEmpty ||
+                                        nameCtrl.text.trim().isEmpty) {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            "Please enter phone and customer name or use Skip",
+                                          ),
+                                        ),
+                                      );
+                                      return;
+                                    }
+
+                                    isDialogActive = false;
+                                    debounceTimer?.cancel();
+                                    Navigator.pop(
+                                      dialogContext,
+                                      <String, dynamic>{
+                                        'name': nameCtrl.text.trim(),
+                                        'phone': phoneCtrl.text.trim(),
+                                      },
+                                    );
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF0A84FF),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 12,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                  ),
+                                  child: const Text(
+                                    "Submit",
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          if (phoneCtrl.text.length >= 10) ...[
+                            const SizedBox(height: 20),
+                            Center(
+                              child: InkWell(
+                                onTap: () {
+                                  if (!dialogContext.mounted) return;
+                                  showDialog(
+                                    context: dialogContext,
+                                    builder: (context) => CustomerHistoryDialog(
+                                      phoneNumber: phoneCtrl.text.trim(),
+                                    ),
+                                  );
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 8,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.green.shade700,
+                                    borderRadius: BorderRadius.circular(20),
+                                  ),
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.history,
+                                        color: Colors.white,
+                                        size: 18,
+                                      ),
+                                      SizedBox(width: 8),
+                                      Text(
+                                        "Customer History",
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    right: 8,
+                    top: 8,
+                    child: IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white54),
+                      onPressed: () {
+                        isDialogActive = false;
+                        debounceTimer?.cancel();
+                        Navigator.pop(dialogContext, null);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    isDialogActive = false;
+    debounceTimer?.cancel();
+    nameCtrl.dispose();
+    phoneCtrl.dispose();
+    return result;
+  }
+
   void _handleTableTap(
-    BuildContext context,
     dynamic runningBill,
     int tableNumber,
     String sectionName, {
     required bool openCart,
-  }) {
-    final isRunning = runningBill != null;
+  }) async {
+    if (_isHandlingTableTap) return;
+    _isHandlingTableTap = true;
 
-    if (isRunning) {
-      // If running, we should "recall" it
-      final cartProvider = Provider.of<CartProvider>(context, listen: false);
-      final itemsList = (runningBill['items'] as List)
-          .where((item) => item['status']?.toString() != 'cancelled')
-          .toList();
-      final List<CartItem> recalledItems = itemsList.map((item) {
-        final prod = item['product'];
-        String? cid;
-        final String pid = (prod is Map)
-            ? (prod['id'] ?? prod['_id'] ?? prod[r'$oid']).toString()
-            : prod.toString();
-        String? imageUrl;
-        String? dept;
-        if (prod is Map) {
-          if (prod['images'] != null && (prod['images'] as List).isNotEmpty) {
-            final img = prod['images'][0]['image'];
-            if (img != null && img['url'] != null) {
-              imageUrl = img['url'];
-              if (imageUrl != null && imageUrl.startsWith('/')) {
-                imageUrl = 'https://blackforest.vseyal.com$imageUrl';
+    final isRunning = runningBill != null;
+    final cartProvider = Provider.of<CartProvider>(context, listen: false);
+
+    try {
+      if (isRunning) {
+        // If running, we should "recall" it
+        final itemsList = (runningBill['items'] as List)
+            .where((item) => item['status']?.toString() != 'cancelled')
+            .toList();
+        final List<CartItem> recalledItems = itemsList.map((item) {
+          final prod = item['product'];
+          String? cid;
+          final String pid = (prod is Map)
+              ? (prod['id'] ?? prod['_id'] ?? prod[r'$oid']).toString()
+              : prod.toString();
+          String? imageUrl;
+          String? dept;
+          if (prod is Map) {
+            if (prod['images'] != null && (prod['images'] as List).isNotEmpty) {
+              final img = prod['images'][0]['image'];
+              if (img != null && img['url'] != null) {
+                imageUrl = img['url'];
+                if (imageUrl != null && imageUrl.startsWith('/')) {
+                  imageUrl = 'https://blackforest.vseyal.com$imageUrl';
+                }
               }
             }
+            // Get department
+            if (prod['department'] != null) {
+              dept = (prod['department'] is Map)
+                  ? prod['department']['name']?.toString()
+                  : prod['department'].toString();
+            } else if (prod['category'] != null &&
+                prod['category'] is Map &&
+                prod['category']['department'] != null) {
+              var catDept = prod['category']['department'];
+              dept = (catDept is Map)
+                  ? catDept['name']?.toString()
+                  : catDept.toString();
+            }
           }
-          // Get department
-          if (prod['department'] != null) {
-            dept = (prod['department'] is Map)
-                ? prod['department']['name']?.toString()
-                : prod['department'].toString();
-          } else if (prod['category'] != null &&
-              prod['category'] is Map &&
-              prod['category']['department'] != null) {
-            var catDept = prod['category']['department'];
-            dept = (catDept is Map)
-                ? catDept['name']?.toString()
-                : catDept.toString();
+
+          if (prod is Map && prod['category'] != null) {
+            final cat = prod['category'];
+            cid = (cat is Map)
+                ? (cat['id'] ?? cat['_id'] ?? cat[r'$oid']).toString()
+                : cat.toString();
           }
-        }
 
-        if (prod is Map && prod['category'] != null) {
-          final cat = prod['category'];
-          cid = (cat is Map)
-              ? (cat['id'] ?? cat['_id'] ?? cat[r'$oid']).toString()
-              : cat.toString();
-        }
+          return CartItem(
+            id: pid,
+            name: item['name'] ?? 'Unknown',
+            price: (item['unitPrice'] ?? item['price'] ?? 0.0).toDouble(),
+            imageUrl: imageUrl,
+            quantity: (item['quantity'] ?? 0.0).toDouble(),
+            unit: item['unit']?.toString(),
+            department: dept,
+            categoryId: cid,
+            specialNote: item['specialNote'] ?? item['note'] ?? item['notes'],
+            status: item['status']?.toString(),
+          );
+        }).toList();
 
-        return CartItem(
-          id: pid,
-          name: item['name'] ?? 'Unknown',
-          price: (item['unitPrice'] ?? item['price'] ?? 0.0).toDouble(),
-          imageUrl: imageUrl,
-          quantity: (item['quantity'] ?? 0.0).toDouble(),
-          unit: item['unit']?.toString(),
-          department: dept,
-          categoryId: cid,
-          specialNote: item['specialNote'] ?? item['note'] ?? item['notes'],
-          status: item['status']?.toString(),
+        final customer = runningBill['customerDetails'] ?? {};
+        final tableDetails = runningBill['tableDetails'] ?? {};
+
+        cartProvider.loadKOTItems(
+          recalledItems,
+          billId: runningBill['id'],
+          cName: customer['name'],
+          cPhone: customer['phoneNumber'],
+          tName: tableDetails['tableNumber']?.toString(),
+          tSection: tableDetails['section']?.toString(),
         );
-      }).toList();
 
-      final customer = runningBill['customerDetails'] ?? {};
-      final tableDetails = runningBill['tableDetails'] ?? {};
+        // Clear notifications for this bill since we are opening its cart
+        cartProvider.markBillAsRead(runningBill['id']);
+      } else {
+        cartProvider.setSelectedTable(tableNumber.toString(), sectionName);
 
-      cartProvider.loadKOTItems(
-        recalledItems,
-        billId: runningBill['id'],
-        cName: customer['name'],
-        cPhone: customer['phoneNumber'],
-        tName: tableDetails['tableNumber']?.toString(),
-        tSection: tableDetails['section']?.toString(),
-      );
+        if (!openCart) {
+          final customerDetails = await _showCustomerDetailsDialog(
+            cartProvider,
+          );
+          if (!mounted) return;
+          if (customerDetails == null) return;
 
-      // Clear notifications for this bill since we are opening its cart
-      cartProvider.markBillAsRead(runningBill['id']);
-    } else {
-      final cartProvider = Provider.of<CartProvider>(context, listen: false);
-      cartProvider.setSelectedTable(tableNumber.toString(), sectionName);
+          if (customerDetails.isEmpty) {
+            cartProvider.setCustomerDetails();
+          } else {
+            cartProvider.setCustomerDetails(
+              name: customerDetails['name']?.toString(),
+              phone: customerDetails['phone']?.toString(),
+            );
+          }
+        }
+      }
+
+      if (!mounted) return;
+      // Let dialog overlay fully dispose before route push.
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+      if (!mounted) return;
+
+      if (openCart) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const CartPage()),
+        );
+      } else {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) =>
+                const CategoriesPage(sourcePage: PageType.table),
+          ),
+        );
+      }
+    } finally {
+      _isHandlingTableTap = false;
     }
+  }
 
-    if (openCart) {
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => const CartPage()),
-      );
-    } else {
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(
-          builder: (context) =>
-              const CategoriesPage(sourcePage: PageType.table),
-        ),
-        (route) => false,
-      );
-    }
+  String _tableKey(String tableNumber, String sectionName) {
+    return '$tableNumber|$sectionName';
   }
 }
 
@@ -641,11 +980,11 @@ class DashedBorderPainter extends CustomPainter {
         ),
       );
 
-    for (final Metric in path.computeMetrics()) {
+    for (final metric in path.computeMetrics()) {
       double distance = 0;
-      while (distance < Metric.length) {
+      while (distance < metric.length) {
         canvas.drawPath(
-          Metric.extractPath(distance, distance + dashWidth),
+          metric.extractPath(distance, distance + dashWidth),
           paint,
         );
         distance += dashWidth + dashSpace;
