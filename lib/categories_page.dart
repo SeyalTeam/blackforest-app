@@ -838,6 +838,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
     if (cartProvider.selectedTable != null) {
       title =
           'Table: ${cartProvider.selectedTable} (${cartProvider.selectedSection})';
+    } else if (cartProvider.isSharedTableOrder) {
+      title = CartProvider.sharedTablesSectionName;
     }
     PageType pageType = widget.sourcePage;
 

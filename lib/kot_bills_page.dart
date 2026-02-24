@@ -170,6 +170,15 @@ class _KotBillsPageState extends State<KotBillsPage> {
     List<CartItem> recalledItems = (bill['items'] as List)
         .where((item) => item['status']?.toString() != 'cancelled')
         .map((item) {
+          double toSafeDouble(dynamic value) {
+            if (value is num) return value.toDouble();
+            if (value is String) return double.tryParse(value) ?? 0.0;
+            return 0.0;
+          }
+
+          final itemMap = item is Map
+              ? Map<String, dynamic>.from(item)
+              : <String, dynamic>{};
           final prod = item['product'];
           String? cid;
           final String pid = (prod is Map)
@@ -208,17 +217,68 @@ class _KotBillsPageState extends State<KotBillsPage> {
             }
           }
 
+          final isOfferFreeItem = itemMap['isOfferFreeItem'] == true;
+          final notesValue = (itemMap['notes'] ?? itemMap['specialNote'] ?? '')
+              .toString()
+              .trim();
+          final isRandomCustomerOfferItem =
+              itemMap['isRandomCustomerOfferItem'] == true ||
+              notesValue.toUpperCase() == 'RANDOM CUSTOMER OFFER';
+          final isReadOnlyOfferItem =
+              isOfferFreeItem || isRandomCustomerOfferItem;
+          final hasEffectiveUnitPrice = itemMap.containsKey(
+            'effectiveUnitPrice',
+          );
+          final effectiveUnitPrice = hasEffectiveUnitPrice
+              ? (isReadOnlyOfferItem
+                    ? 0.0
+                    : toSafeDouble(itemMap['effectiveUnitPrice']))
+              : null;
+          final hasSubtotal = itemMap.containsKey('subtotal');
+          final lineSubtotal = isRandomCustomerOfferItem
+              ? 0.0
+              : hasSubtotal
+              ? toSafeDouble(itemMap['subtotal'])
+              : null;
+
           return CartItem(
             id: pid,
+            billingItemId: item['id']?.toString(),
             name: item['name'] ?? 'Unknown',
-            price: (item['unitPrice'] ?? item['price'] ?? 0.0).toDouble(),
+            price: isReadOnlyOfferItem
+                ? 0.0
+                : toSafeDouble(
+                    itemMap['effectiveUnitPrice'] ??
+                        itemMap['unitPrice'] ??
+                        itemMap['price'],
+                  ),
             imageUrl: imageUrl,
-            quantity: (item['quantity'] ?? 0.0).toDouble(),
+            quantity: isRandomCustomerOfferItem
+                ? 1.0
+                : toSafeDouble(item['quantity']),
             unit: item['unit']?.toString(),
             department: dept,
             categoryId: cid, // Needed for KOT printer routing
             specialNote: item['specialNote'] ?? item['note'] ?? item['notes'],
             status: item['status']?.toString(), // Preserve status
+            isOfferFreeItem: isOfferFreeItem,
+            offerRuleKey: item['offerRuleKey']?.toString(),
+            offerTriggerProductId: (item['offerTriggerProduct'] is Map)
+                ? item['offerTriggerProduct']['id']?.toString()
+                : item['offerTriggerProduct']?.toString(),
+            isRandomCustomerOfferItem: isRandomCustomerOfferItem,
+            randomCustomerOfferCampaignCode:
+                itemMap['randomCustomerOfferCampaignCode']?.toString(),
+            isPriceOfferApplied: itemMap['isPriceOfferApplied'] == true,
+            priceOfferRuleKey: itemMap['priceOfferRuleKey']?.toString(),
+            priceOfferDiscountPerUnit: toSafeDouble(
+              itemMap['priceOfferDiscountPerUnit'],
+            ),
+            priceOfferAppliedUnits: toSafeDouble(
+              itemMap['priceOfferAppliedUnits'],
+            ),
+            effectiveUnitPrice: effectiveUnitPrice,
+            lineSubtotal: lineSubtotal,
           );
         })
         .toList();

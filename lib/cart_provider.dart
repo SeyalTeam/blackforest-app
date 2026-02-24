@@ -8,6 +8,7 @@ import 'package:blackforest_app/cart_page.dart';
 
 class CartItem {
   final String id;
+  final String? billingItemId; // Billing sub-item id from server
   final String name;
   final double price;
   final String? imageUrl;
@@ -17,9 +18,21 @@ class CartItem {
   final String? categoryId; // ✅ For KOT routing
   String? specialNote; // ✅ Optional note for KOT
   final String? status; // ✅ New field for item status
+  final bool isOfferFreeItem;
+  final String? offerRuleKey;
+  final String? offerTriggerProductId;
+  final bool isRandomCustomerOfferItem;
+  final String? randomCustomerOfferCampaignCode;
+  final bool isPriceOfferApplied;
+  final String? priceOfferRuleKey;
+  final double priceOfferDiscountPerUnit;
+  final double priceOfferAppliedUnits;
+  final double? effectiveUnitPrice;
+  final double? lineSubtotal;
 
   CartItem({
     required this.id,
+    this.billingItemId,
     required this.name,
     required this.price,
     this.imageUrl,
@@ -29,6 +42,17 @@ class CartItem {
     this.categoryId,
     this.specialNote,
     this.status,
+    this.isOfferFreeItem = false,
+    this.offerRuleKey,
+    this.offerTriggerProductId,
+    this.isRandomCustomerOfferItem = false,
+    this.randomCustomerOfferCampaignCode,
+    this.isPriceOfferApplied = false,
+    this.priceOfferRuleKey,
+    this.priceOfferDiscountPerUnit = 0,
+    this.priceOfferAppliedUnits = 0,
+    this.effectiveUnitPrice,
+    this.lineSubtotal,
   });
 
   factory CartItem.fromProduct(
@@ -85,12 +109,24 @@ class CartItem {
       categoryId: categoryId,
       specialNote: null,
       status: null, // New items carry no status until submitted
+      isOfferFreeItem: false,
+      offerRuleKey: null,
+      offerTriggerProductId: null,
+      isRandomCustomerOfferItem: false,
+      randomCustomerOfferCampaignCode: null,
+      isPriceOfferApplied: false,
+      priceOfferRuleKey: null,
+      priceOfferDiscountPerUnit: 0,
+      priceOfferAppliedUnits: 0,
+      effectiveUnitPrice: null,
+      lineSubtotal: null,
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
       'id': id,
+      'billingItemId': billingItemId,
       'name': name,
       'price': price,
       'imageUrl': imageUrl,
@@ -100,28 +136,158 @@ class CartItem {
       'categoryId': categoryId,
       'specialNote': specialNote,
       'status': status,
+      'isOfferFreeItem': isOfferFreeItem,
+      'offerRuleKey': offerRuleKey,
+      'offerTriggerProductId': offerTriggerProductId,
+      'isRandomCustomerOfferItem': isRandomCustomerOfferItem,
+      'randomCustomerOfferCampaignCode': randomCustomerOfferCampaignCode,
+      'isPriceOfferApplied': isPriceOfferApplied,
+      'priceOfferRuleKey': priceOfferRuleKey,
+      'priceOfferDiscountPerUnit': priceOfferDiscountPerUnit,
+      'priceOfferAppliedUnits': priceOfferAppliedUnits,
+      'effectiveUnitPrice': effectiveUnitPrice,
+      'lineSubtotal': lineSubtotal,
     };
   }
 
   factory CartItem.fromJson(Map<String, dynamic> json) {
+    double toSafeDouble(dynamic value) {
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value) ?? 0.0;
+      return 0.0;
+    }
+
+    double? toSafeNullableDouble(dynamic value) {
+      if (value == null) return null;
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value);
+      return null;
+    }
+
     return CartItem(
       id: json['id'],
+      billingItemId: json['billingItemId']?.toString(),
       name: json['name'],
-      price: json['price'],
+      price: toSafeDouble(json['price']),
       imageUrl: json['imageUrl'],
-      quantity: json['quantity'],
+      quantity: toSafeDouble(json['quantity']),
       unit: json['unit'],
       department: json['department'],
       categoryId: json['categoryId'],
       specialNote: json['specialNote'],
       status: json['status'],
+      isOfferFreeItem: json['isOfferFreeItem'] == true,
+      offerRuleKey: json['offerRuleKey']?.toString(),
+      offerTriggerProductId: json['offerTriggerProductId']?.toString(),
+      isRandomCustomerOfferItem: json['isRandomCustomerOfferItem'] == true,
+      randomCustomerOfferCampaignCode: json['randomCustomerOfferCampaignCode']
+          ?.toString(),
+      isPriceOfferApplied: json['isPriceOfferApplied'] == true,
+      priceOfferRuleKey: json['priceOfferRuleKey']?.toString(),
+      priceOfferDiscountPerUnit: toSafeDouble(
+        json['priceOfferDiscountPerUnit'],
+      ),
+      priceOfferAppliedUnits: toSafeDouble(json['priceOfferAppliedUnits']),
+      effectiveUnitPrice: toSafeNullableDouble(json['effectiveUnitPrice']),
+      lineSubtotal: toSafeNullableDouble(json['lineSubtotal']),
     );
   }
+
+  Map<String, dynamic> toBillingPayload({
+    bool includeSubtotal = true,
+    bool includeBranchOverride = false,
+    bool branchOverrideValue = false,
+  }) {
+    final isForcedRandomOfferItem = isRandomCustomerOfferItem;
+    final payloadQuantity = isForcedRandomOfferItem ? 1.0 : quantity;
+    final payloadUnitPrice = isForcedRandomOfferItem ? 0.0 : price;
+    final payloadSubtotal = isForcedRandomOfferItem
+        ? 0.0
+        : (lineSubtotal ?? (price * quantity));
+
+    final payload = <String, dynamic>{
+      'product': id,
+      'name': name,
+      'quantity': payloadQuantity,
+      'unitPrice': payloadUnitPrice,
+      'status': status,
+      'specialNote': specialNote,
+    };
+
+    if (billingItemId != null && billingItemId!.isNotEmpty) {
+      payload['id'] = billingItemId;
+    }
+
+    if (includeSubtotal) {
+      payload['subtotal'] = payloadSubtotal;
+    }
+
+    if (includeBranchOverride) {
+      payload['branchOverride'] = branchOverrideValue;
+    }
+
+    if (unit != null && unit!.isNotEmpty) {
+      payload['unit'] = unit;
+    }
+
+    if (isOfferFreeItem) {
+      payload['isOfferFreeItem'] = true;
+    }
+
+    if (offerRuleKey != null && offerRuleKey!.isNotEmpty) {
+      payload['offerRuleKey'] = offerRuleKey;
+    }
+
+    if (offerTriggerProductId != null && offerTriggerProductId!.isNotEmpty) {
+      payload['offerTriggerProduct'] = offerTriggerProductId;
+    }
+
+    if (isRandomCustomerOfferItem) {
+      payload['isRandomCustomerOfferItem'] = true;
+      payload['quantity'] = 1.0;
+      payload['unitPrice'] = 0.0;
+      if (includeSubtotal) {
+        payload['subtotal'] = 0.0;
+      }
+      payload['effectiveUnitPrice'] = 0.0;
+    }
+
+    if (randomCustomerOfferCampaignCode != null &&
+        randomCustomerOfferCampaignCode!.isNotEmpty) {
+      payload['randomCustomerOfferCampaignCode'] =
+          randomCustomerOfferCampaignCode;
+    }
+
+    if (isPriceOfferApplied) {
+      payload['isPriceOfferApplied'] = true;
+    }
+
+    if (priceOfferRuleKey != null && priceOfferRuleKey!.isNotEmpty) {
+      payload['priceOfferRuleKey'] = priceOfferRuleKey;
+    }
+
+    if (priceOfferDiscountPerUnit > 0) {
+      payload['priceOfferDiscountPerUnit'] = priceOfferDiscountPerUnit;
+    }
+
+    if (priceOfferAppliedUnits > 0) {
+      payload['priceOfferAppliedUnits'] = priceOfferAppliedUnits;
+    }
+
+    if (effectiveUnitPrice != null) {
+      payload['effectiveUnitPrice'] = effectiveUnitPrice;
+    }
+
+    return payload;
+  }
+
+  double get lineTotal => lineSubtotal ?? (price * quantity);
 }
 
 enum CartType { billing, table }
 
 class CartProvider extends ChangeNotifier {
+  static const String sharedTablesSectionName = 'Shared Tables';
   CartType _currentType = CartType.billing;
 
   // New Items (Draft)
@@ -210,7 +376,7 @@ class CartProvider extends ChangeNotifier {
 
   double get total => (cartItems + recalledItems).fold(
     0.0,
-    (sum, item) => sum + (item.price * item.quantity),
+    (sum, item) => sum + item.lineTotal,
   );
 
   String? get recalledBillId => _recalledBillIdMap[_currentType];
@@ -220,6 +386,8 @@ class CartProvider extends ChangeNotifier {
   String? get customerPhone => _customerPhoneMap[_currentType];
   String? get selectedTable => _selectedTableMap[_currentType];
   String? get selectedSection => _selectedSectionMap[_currentType];
+  bool get isSharedTableOrder =>
+      _isSharedTablesSection(_selectedSectionMap[_currentType]);
 
   // Shared getters
   String? get printerIp => _printerIp;
@@ -308,6 +476,20 @@ class CartProvider extends ChangeNotifier {
     _saveCurrentCart();
   }
 
+  bool _isSharedTablesSection(String? section) {
+    return (section ?? '').trim().toLowerCase() ==
+        sharedTablesSectionName.toLowerCase();
+  }
+
+  void startSharedTableOrder() {
+    _itemsMap[_currentType]!.clear();
+    _recalledItemsMap[_currentType]!.clear();
+    _clearMetadata(_currentType);
+    _selectedSectionMap[_currentType] = sharedTablesSectionName;
+    notifyListeners();
+    _saveCurrentCart();
+  }
+
   void setSelectedTable(String? table, String? section) {
     // If switching tables or starting a new selection, clear existing cart data for that type
     if (_selectedTableMap[_currentType] != table ||
@@ -317,6 +499,13 @@ class CartProvider extends ChangeNotifier {
       _clearMetadata(_currentType);
     }
 
+    _selectedTableMap[_currentType] = table;
+    _selectedSectionMap[_currentType] = section;
+    notifyListeners();
+    _saveCurrentCart();
+  }
+
+  void setSelectedTableMetadata(String? table, String? section) {
     _selectedTableMap[_currentType] = table;
     _selectedSectionMap[_currentType] = section;
     notifyListeners();
@@ -473,25 +662,14 @@ class CartProvider extends ChangeNotifier {
       // Merge items for submission
       final mergedItems = [...recalledItems, ...cartItems];
 
-      final items = mergedItems
-          .map(
-            (item) => {
-              'product': item.id,
-              'quantity': item.quantity,
-              'price': item.price,
-              'unit': item.unit,
-              'specialNote': item.specialNote,
-              'status': item.status,
-            },
-          )
-          .toList();
+      final items = mergedItems.map((item) => item.toBillingPayload()).toList();
 
-      final body = jsonEncode({
+      final hasTableDetailsForSubmit =
+          _currentType == CartType.table &&
+          ((selectedSection?.trim().isNotEmpty ?? false) ||
+              (selectedTable?.trim().isNotEmpty ?? false));
+      final payload = <String, dynamic>{
         'branch': _branchId,
-        'tableDetails': {
-          'section': selectedSection,
-          'tableNumber': selectedTable,
-        },
         'items': items,
         'totalAmount': total,
         'notes': cartItems
@@ -501,7 +679,14 @@ class CartProvider extends ChangeNotifier {
             )
             .map((item) => '${item.name}: ${item.specialNote}')
             .join(', '),
-      });
+      };
+      if (hasTableDetailsForSubmit) {
+        payload['tableDetails'] = {
+          'section': selectedSection,
+          'tableNumber': selectedTable,
+        };
+      }
+      final body = jsonEncode(payload);
 
       final response = await http.post(
         Uri.parse('https://blackforest.vseyal.com/api/billings'),
@@ -542,11 +727,21 @@ class CartProvider extends ChangeNotifier {
     if (index < 0 || index >= list.length) return;
 
     final item = list[index];
+    if (item.isOfferFreeItem || item.isRandomCustomerOfferItem) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Offer items are read-only'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+      return;
+    }
     final oldStatus = item.status;
 
     // 1. Optimistic Update
     final updatedItem = CartItem(
       id: item.id,
+      billingItemId: item.billingItemId,
       name: item.name,
       price: item.price,
       imageUrl: item.imageUrl,
@@ -556,6 +751,17 @@ class CartProvider extends ChangeNotifier {
       categoryId: item.categoryId,
       specialNote: item.specialNote,
       status: newStatus,
+      isOfferFreeItem: item.isOfferFreeItem,
+      offerRuleKey: item.offerRuleKey,
+      offerTriggerProductId: item.offerTriggerProductId,
+      isRandomCustomerOfferItem: item.isRandomCustomerOfferItem,
+      randomCustomerOfferCampaignCode: item.randomCustomerOfferCampaignCode,
+      isPriceOfferApplied: item.isPriceOfferApplied,
+      priceOfferRuleKey: item.priceOfferRuleKey,
+      priceOfferDiscountPerUnit: item.priceOfferDiscountPerUnit,
+      priceOfferAppliedUnits: item.priceOfferAppliedUnits,
+      effectiveUnitPrice: item.effectiveUnitPrice,
+      lineSubtotal: item.lineSubtotal,
     );
     list[index] = updatedItem;
     notifyListeners();
@@ -571,20 +777,7 @@ class CartProvider extends ChangeNotifier {
 
       // Construct the full updated items list for the PATCH request
       // We must map ALL recalled items back to the API format
-      final itemsPayload = list
-          .map(
-            (i) => {
-              'product': i.id,
-              'name': i.name, // ✅ Required by server
-              'quantity': i.quantity,
-              'price': i.price,
-              'unitPrice': i.price, // ✅ Required by server
-              'unit': i.unit,
-              'specialNote': i.specialNote,
-              'status': i.status, // use the updated status
-            },
-          )
-          .toList();
+      final itemsPayload = list.map((i) => i.toBillingPayload()).toList();
 
       final response = await http.patch(
         Uri.parse('https://blackforest.vseyal.com/api/billings/$billId'),
@@ -619,6 +812,7 @@ class CartProvider extends ChangeNotifier {
       // 3. Revert on Failure
       list[index] = CartItem(
         id: item.id,
+        billingItemId: item.billingItemId,
         name: item.name,
         price: item.price,
         imageUrl: item.imageUrl,
@@ -628,6 +822,17 @@ class CartProvider extends ChangeNotifier {
         categoryId: item.categoryId,
         specialNote: item.specialNote,
         status: oldStatus,
+        isOfferFreeItem: item.isOfferFreeItem,
+        offerRuleKey: item.offerRuleKey,
+        offerTriggerProductId: item.offerTriggerProductId,
+        isRandomCustomerOfferItem: item.isRandomCustomerOfferItem,
+        randomCustomerOfferCampaignCode: item.randomCustomerOfferCampaignCode,
+        isPriceOfferApplied: item.isPriceOfferApplied,
+        priceOfferRuleKey: item.priceOfferRuleKey,
+        priceOfferDiscountPerUnit: item.priceOfferDiscountPerUnit,
+        priceOfferAppliedUnits: item.priceOfferAppliedUnits,
+        effectiveUnitPrice: item.effectiveUnitPrice,
+        lineSubtotal: item.lineSubtotal,
       );
       notifyListeners();
 
@@ -662,40 +867,147 @@ class CartProvider extends ChangeNotifier {
         final List<dynamic> serverItems = data['items'] ?? [];
         final localRecalled = _recalledItemsMap[_currentType]!;
 
+        double toSafeDouble(dynamic value) {
+          if (value is num) return value.toDouble();
+          if (value is String) {
+            return double.tryParse(value) ?? 0.0;
+          }
+          return 0.0;
+        }
+
         bool changed = false;
         final Set<int> matchedIndices = {};
 
         for (var sItem in serverItems) {
+          final serverItemID = sItem['id']?.toString();
           final pid = (sItem['product'] is Map)
-              ? sItem['product']['id']
-              : sItem['product'];
+              ? sItem['product']['id']?.toString()
+              : sItem['product']?.toString();
           final sStatus = sItem['status']?.toString().toLowerCase();
+          final sIsOfferFreeItem = sItem['isOfferFreeItem'] == true;
+          final sNotesValue = (sItem['notes'] ?? sItem['specialNote'] ?? '')
+              .toString()
+              .trim();
+          final sIsRandomCustomerOfferItem =
+              sItem['isRandomCustomerOfferItem'] == true ||
+              sNotesValue.toUpperCase() == 'RANDOM CUSTOMER OFFER';
+          final sRandomCustomerOfferCampaignCode =
+              sItem['randomCustomerOfferCampaignCode']?.toString();
+          final sIsReadOnlyOfferItem =
+              sIsOfferFreeItem || sIsRandomCustomerOfferItem;
+          final sOfferRuleKey = sItem['offerRuleKey']?.toString();
+          final sOfferTriggerProduct = sItem['offerTriggerProduct'];
+          final sOfferTriggerProductId = sOfferTriggerProduct is Map
+              ? sOfferTriggerProduct['id']?.toString()
+              : sOfferTriggerProduct?.toString();
+          final sIsPriceOfferApplied = sItem['isPriceOfferApplied'] == true;
+          final sPriceOfferRuleKey = sItem['priceOfferRuleKey']?.toString();
+          final sPriceOfferDiscountPerUnit = toSafeDouble(
+            sItem['priceOfferDiscountPerUnit'],
+          );
+          final sPriceOfferAppliedUnits = toSafeDouble(
+            sItem['priceOfferAppliedUnits'],
+          );
+          final hasEffectiveUnitPrice =
+              sItem is Map && sItem.containsKey('effectiveUnitPrice');
+          final sEffectiveUnitPrice = hasEffectiveUnitPrice
+              ? (sIsReadOnlyOfferItem
+                    ? 0.0
+                    : toSafeDouble(sItem['effectiveUnitPrice']))
+              : null;
+          final hasSubtotal = sItem is Map && sItem.containsKey('subtotal');
+          final sSubtotal = sIsRandomCustomerOfferItem
+              ? 0.0
+              : hasSubtotal
+              ? toSafeDouble(sItem['subtotal'])
+              : null;
+          final sQuantity = sIsRandomCustomerOfferItem
+              ? 1.0
+              : toSafeDouble(sItem['quantity']);
+          final sPrice = sIsReadOnlyOfferItem
+              ? 0.0
+              : toSafeDouble(
+                  sItem['effectiveUnitPrice'] ??
+                      sItem['unitPrice'] ??
+                      sItem['price'],
+                );
 
-          // Find matching local item by product id that hasn't been matched yet
-          // This correctly handles multiple entries of "Tea" with different statuses
+          // Prefer matching by billing sub-item ID, fallback to product ID.
           int idx = -1;
-          for (int i = 0; i < localRecalled.length; i++) {
-            if (!matchedIndices.contains(i) && localRecalled[i].id == pid) {
-              idx = i;
-              matchedIndices.add(i);
-              break;
+          if (serverItemID != null && serverItemID.isNotEmpty) {
+            for (int i = 0; i < localRecalled.length; i++) {
+              if (!matchedIndices.contains(i) &&
+                  localRecalled[i].billingItemId == serverItemID) {
+                idx = i;
+                matchedIndices.add(i);
+                break;
+              }
+            }
+          }
+          if (idx == -1) {
+            for (int i = 0; i < localRecalled.length; i++) {
+              if (!matchedIndices.contains(i) && localRecalled[i].id == pid) {
+                idx = i;
+                matchedIndices.add(i);
+                break;
+              }
             }
           }
 
           if (idx != -1) {
             final lItem = localRecalled[idx];
-            if (lItem.status != sStatus) {
+            final shouldUpdate =
+                lItem.status != sStatus ||
+                lItem.isOfferFreeItem != sIsOfferFreeItem ||
+                lItem.isRandomCustomerOfferItem != sIsRandomCustomerOfferItem ||
+                lItem.randomCustomerOfferCampaignCode !=
+                    sRandomCustomerOfferCampaignCode ||
+                lItem.offerRuleKey != sOfferRuleKey ||
+                lItem.offerTriggerProductId != sOfferTriggerProductId ||
+                lItem.isPriceOfferApplied != sIsPriceOfferApplied ||
+                lItem.priceOfferRuleKey != sPriceOfferRuleKey ||
+                (lItem.priceOfferDiscountPerUnit - sPriceOfferDiscountPerUnit)
+                        .abs() >
+                    0.001 ||
+                (lItem.priceOfferAppliedUnits - sPriceOfferAppliedUnits).abs() >
+                    0.001 ||
+                (lItem.effectiveUnitPrice ?? -1) !=
+                    (sEffectiveUnitPrice ?? -1) ||
+                ((lItem.lineSubtotal ?? -1) - (sSubtotal ?? -1)).abs() >
+                    0.001 ||
+                lItem.billingItemId != serverItemID ||
+                (lItem.price - sPrice).abs() > 0.001 ||
+                (lItem.quantity - sQuantity).abs() > 0.001;
+            if (shouldUpdate) {
+              final updatedQuantity = sQuantity > 0
+                  ? sQuantity
+                  : lItem.quantity;
+              final updatedLineSubtotal =
+                  sSubtotal ?? (sPrice * updatedQuantity);
               localRecalled[idx] = CartItem(
                 id: lItem.id,
+                billingItemId: serverItemID ?? lItem.billingItemId,
                 name: lItem.name,
-                price: lItem.price,
+                price: sPrice,
                 imageUrl: lItem.imageUrl,
-                quantity: lItem.quantity,
+                quantity: updatedQuantity,
                 unit: lItem.unit,
                 department: lItem.department,
                 categoryId: lItem.categoryId,
                 specialNote: lItem.specialNote,
                 status: sStatus,
+                isOfferFreeItem: sIsOfferFreeItem,
+                offerRuleKey: sOfferRuleKey,
+                offerTriggerProductId: sOfferTriggerProductId,
+                isRandomCustomerOfferItem: sIsRandomCustomerOfferItem,
+                randomCustomerOfferCampaignCode:
+                    sRandomCustomerOfferCampaignCode,
+                isPriceOfferApplied: sIsPriceOfferApplied,
+                priceOfferRuleKey: sPriceOfferRuleKey,
+                priceOfferDiscountPerUnit: sPriceOfferDiscountPerUnit,
+                priceOfferAppliedUnits: sPriceOfferAppliedUnits,
+                effectiveUnitPrice: sEffectiveUnitPrice,
+                lineSubtotal: updatedLineSubtotal,
               );
               changed = true;
             }
@@ -868,9 +1180,20 @@ class CartProvider extends ChangeNotifier {
       markBillAsRead(billId);
       final bill = jsonDecode(response.body);
 
+      double toSafeDouble(dynamic value) {
+        if (value is num) return value.toDouble();
+        if (value is String) {
+          return double.tryParse(value) ?? 0.0;
+        }
+        return 0.0;
+      }
+
       List<CartItem> recalledItems = (bill['items'] as List)
           .where((item) => item['status']?.toString() != 'cancelled')
           .map((item) {
+            final itemMap = item is Map
+                ? Map<String, dynamic>.from(item)
+                : <String, dynamic>{};
             final prod = item['product'];
             final String pid = (prod is Map)
                 ? (prod['id'] ?? prod['_id'] ?? prod[r'$oid']).toString()
@@ -903,17 +1226,69 @@ class CartProvider extends ChangeNotifier {
               }
             }
 
+            final isOfferFreeItem = itemMap['isOfferFreeItem'] == true;
+            final notesValue =
+                (itemMap['notes'] ?? itemMap['specialNote'] ?? '')
+                    .toString()
+                    .trim();
+            final isRandomCustomerOfferItem =
+                itemMap['isRandomCustomerOfferItem'] == true ||
+                notesValue.toUpperCase() == 'RANDOM CUSTOMER OFFER';
+            final isReadOnlyOfferItem =
+                isOfferFreeItem || isRandomCustomerOfferItem;
+            final hasSubtotal = itemMap.containsKey('subtotal');
+            final lineSubtotal = isRandomCustomerOfferItem
+                ? 0.0
+                : hasSubtotal
+                ? toSafeDouble(itemMap['subtotal'])
+                : null;
+            final hasEffectiveUnitPrice = itemMap.containsKey(
+              'effectiveUnitPrice',
+            );
+            final effectiveUnitPrice = hasEffectiveUnitPrice
+                ? (isReadOnlyOfferItem
+                      ? 0.0
+                      : toSafeDouble(itemMap['effectiveUnitPrice']))
+                : null;
+
             return CartItem(
               id: pid,
+              billingItemId: item['id']?.toString(),
               name: item['name'] ?? 'Unknown',
-              price: (item['unitPrice'] ?? item['price'] ?? 0.0).toDouble(),
+              price: isReadOnlyOfferItem
+                  ? 0.0
+                  : toSafeDouble(
+                      itemMap['effectiveUnitPrice'] ??
+                          itemMap['unitPrice'] ??
+                          itemMap['price'],
+                    ),
               imageUrl: imageUrl,
-              quantity: (item['quantity'] ?? 0.0).toDouble(),
+              quantity: isRandomCustomerOfferItem
+                  ? 1.0
+                  : toSafeDouble(item['quantity']),
               unit: item['unit']?.toString(),
               department: dept,
               categoryId: cid,
-              specialNote: item['specialNote'],
+              specialNote: item['specialNote'] ?? item['notes'] ?? item['note'],
               status: item['status']?.toString(),
+              isOfferFreeItem: isOfferFreeItem,
+              offerRuleKey: item['offerRuleKey']?.toString(),
+              offerTriggerProductId: (item['offerTriggerProduct'] is Map)
+                  ? item['offerTriggerProduct']['id']?.toString()
+                  : item['offerTriggerProduct']?.toString(),
+              isRandomCustomerOfferItem: isRandomCustomerOfferItem,
+              randomCustomerOfferCampaignCode:
+                  itemMap['randomCustomerOfferCampaignCode']?.toString(),
+              isPriceOfferApplied: itemMap['isPriceOfferApplied'] == true,
+              priceOfferRuleKey: itemMap['priceOfferRuleKey']?.toString(),
+              priceOfferDiscountPerUnit: toSafeDouble(
+                itemMap['priceOfferDiscountPerUnit'],
+              ),
+              priceOfferAppliedUnits: toSafeDouble(
+                itemMap['priceOfferAppliedUnits'],
+              ),
+              effectiveUnitPrice: effectiveUnitPrice,
+              lineSubtotal: lineSubtotal,
             );
           })
           .toList();
@@ -922,8 +1297,9 @@ class CartProvider extends ChangeNotifier {
       loadKOTItems(
         recalledItems,
         billId: billId,
-        cName: bill['customerName'],
-        cPhone: bill['customerPhone'],
+        cName: bill['customerDetails']?['name'] ?? bill['customerName'],
+        cPhone:
+            bill['customerDetails']?['phoneNumber'] ?? bill['customerPhone'],
         tName: bill['table']?['name'],
         tSection: bill['table']?['section']?['name'],
       );
@@ -932,7 +1308,12 @@ class CartProvider extends ChangeNotifier {
     }
   }
 
-  Future<Map<String, dynamic>?> fetchCustomerData(String phoneNumber) async {
+  Future<Map<String, dynamic>?> fetchCustomerData(
+    String phoneNumber, {
+    bool? isTableOrder,
+    String? tableSection,
+    String? tableNumber,
+  }) async {
     try {
       final normalizedPhone = phoneNumber.trim();
       if (normalizedPhone.isEmpty) return null;
@@ -1003,8 +1384,30 @@ class CartProvider extends ChangeNotifier {
         }
       }
 
-      if (bills.isEmpty && customerDoc == null) {
-        return null;
+      final isNewCustomer = customerDoc == null;
+
+      bool toBoolWithDefault(dynamic value, {bool defaultValue = true}) {
+        if (value is bool) return value;
+        return defaultValue;
+      }
+
+      final normalizedSection = (tableSection ?? '').trim();
+      final normalizedTableNumber = (tableNumber ?? '').trim();
+      final hasRequestTableDetails =
+          normalizedSection.isNotEmpty || normalizedTableNumber.isNotEmpty;
+      final hasLocalTableDetails =
+          (selectedSection?.trim().isNotEmpty ?? false) ||
+          (selectedTable?.trim().isNotEmpty ?? false);
+      final effectiveIsTableOrder =
+          isTableOrder ??
+          (hasRequestTableDetails ||
+              (_currentType == CartType.table && hasLocalTableDetails));
+
+      bool allowForCurrentOrderType({
+        required bool allowOnBillings,
+        required bool allowOnTableOrders,
+      }) {
+        return effectiveIsTableOrder ? allowOnTableOrders : allowOnBillings;
       }
 
       double totalAmount = 0;
@@ -1044,7 +1447,7 @@ class CartProvider extends ChangeNotifier {
 
       final lastBill = bills.isNotEmpty ? bills.first : null;
       final lastBillCustomer = lastBill?['customerDetails'];
-      String customerName = normalizedPhone;
+      String customerName = isNewCustomer ? '' : normalizedPhone;
       if (customerDoc?['name'] is String &&
           (customerDoc!['name'] as String).trim().isNotEmpty) {
         customerName = (customerDoc['name'] as String).trim();
@@ -1061,7 +1464,18 @@ class CartProvider extends ChangeNotifier {
       final rewardProgressAmount = toNonNegativeDouble(
         customerDoc?['rewardProgressAmount'],
       );
-      final offerEnabled = offerSettings?['enabled'] == true;
+      final allowCustomerCreditOfferOnBillings = toBoolWithDefault(
+        offerSettings?['allowCustomerCreditOfferOnBillings'],
+      );
+      final allowCustomerCreditOfferOnTableOrders = toBoolWithDefault(
+        offerSettings?['allowCustomerCreditOfferOnTableOrders'],
+      );
+      final offerEnabled =
+          offerSettings?['enabled'] == true &&
+          allowForCurrentOrderType(
+            allowOnBillings: allowCustomerCreditOfferOnBillings,
+            allowOnTableOrders: allowCustomerCreditOfferOnTableOrders,
+          );
       final pointsNeededForOffer = toNonNegativeDouble(
         offerSettings?['pointsNeededForOffer'],
       );
@@ -1073,6 +1487,713 @@ class CartProvider extends ChangeNotifier {
         offerSettings?['pointsPerStep'],
       );
       final resetOnRedeem = offerSettings?['resetOnRedeem'] == true;
+      final allowProductToProductOfferOnBillings = toBoolWithDefault(
+        offerSettings?['allowProductToProductOfferOnBillings'],
+      );
+      final allowProductToProductOfferOnTableOrders = toBoolWithDefault(
+        offerSettings?['allowProductToProductOfferOnTableOrders'],
+      );
+      final enableProductToProductOffer =
+          offerSettings?['enableProductToProductOffer'] == true &&
+          allowForCurrentOrderType(
+            allowOnBillings: allowProductToProductOfferOnBillings,
+            allowOnTableOrders: allowProductToProductOfferOnTableOrders,
+          );
+      final rawProductToProductOffers =
+          offerSettings?['productToProductOffers'];
+      final allowProductPriceOfferOnBillings = toBoolWithDefault(
+        offerSettings?['allowProductPriceOfferOnBillings'],
+      );
+      final allowProductPriceOfferOnTableOrders = toBoolWithDefault(
+        offerSettings?['allowProductPriceOfferOnTableOrders'],
+      );
+      final enableProductPriceOffer =
+          offerSettings?['enableProductPriceOffer'] == true &&
+          allowForCurrentOrderType(
+            allowOnBillings: allowProductPriceOfferOnBillings,
+            allowOnTableOrders: allowProductPriceOfferOnTableOrders,
+          );
+      final rawProductPriceOffers = offerSettings?['productPriceOffers'];
+      final allowTotalPercentageOfferOnBillings = toBoolWithDefault(
+        offerSettings?['allowTotalPercentageOfferOnBillings'],
+      );
+      final allowTotalPercentageOfferOnTableOrders = toBoolWithDefault(
+        offerSettings?['allowTotalPercentageOfferOnTableOrders'],
+      );
+      final enableTotalPercentageOffer =
+          offerSettings?['enableTotalPercentageOffer'] == true &&
+          allowForCurrentOrderType(
+            allowOnBillings: allowTotalPercentageOfferOnBillings,
+            allowOnTableOrders: allowTotalPercentageOfferOnTableOrders,
+          );
+      final totalPercentageOfferPercent = toNonNegativeDouble(
+        offerSettings?['totalPercentageOfferPercent'],
+      );
+      final totalPercentageOfferMaxOfferCount = toNonNegativeDouble(
+        offerSettings?['totalPercentageOfferMaxOfferCount'],
+      );
+      final totalPercentageOfferMaxCustomerCount = toNonNegativeDouble(
+        offerSettings?['totalPercentageOfferMaxCustomerCount'],
+      );
+      final totalPercentageOfferMaxUsagePerCustomer = toNonNegativeDouble(
+        offerSettings?['totalPercentageOfferMaxUsagePerCustomer'],
+      );
+      final totalPercentageOfferGivenCount = toNonNegativeDouble(
+        offerSettings?['totalPercentageOfferGivenCount'],
+      );
+      final totalPercentageOfferCustomerCount = toNonNegativeDouble(
+        offerSettings?['totalPercentageOfferCustomerCount'],
+      );
+      final rawTotalPercentageOfferCustomers =
+          offerSettings?['totalPercentageOfferCustomers'];
+      final rawTotalPercentageOfferCustomerUsage =
+          offerSettings?['totalPercentageOfferCustomerUsage'];
+      final allowRandomCustomerProductOfferOnBillings = toBoolWithDefault(
+        offerSettings?['allowRandomCustomerProductOfferOnBillings'],
+      );
+      final allowRandomCustomerProductOfferOnTableOrders = toBoolWithDefault(
+        offerSettings?['allowRandomCustomerProductOfferOnTableOrders'],
+      );
+      final enableRandomCustomerProductOffer =
+          offerSettings?['enableRandomCustomerProductOffer'] == true &&
+          allowForCurrentOrderType(
+            allowOnBillings: allowRandomCustomerProductOfferOnBillings,
+            allowOnTableOrders: allowRandomCustomerProductOfferOnTableOrders,
+          );
+      final randomCustomerOfferCampaignCode =
+          offerSettings?['randomCustomerOfferCampaignCode']
+              ?.toString()
+              .trim() ??
+          '';
+      final randomCustomerOfferTimezone =
+          offerSettings?['randomCustomerOfferTimezone']?.toString().trim() ??
+          '';
+      final rawRandomCustomerOfferProducts =
+          offerSettings?['randomCustomerOfferProducts'];
+      final lookupPhoneKey = normalizedPhone.replaceAll(RegExp(r'[^0-9]'), '');
+
+      String? relationId(dynamic value) {
+        if (value == null) return null;
+        if (value is String) return value;
+        if (value is num) return value.toString();
+        if (value is Map) {
+          final map = Map<String, dynamic>.from(value);
+          final id = map['id'] ?? map['_id'] ?? map[r'$oid'];
+          if (id is String) return id;
+          if (id is num) return id.toString();
+        }
+        return null;
+      }
+
+      String relationName(dynamic value, {String fallback = 'Unknown'}) {
+        if (value is Map) {
+          final map = Map<String, dynamic>.from(value);
+          final name = map['name']?.toString().trim() ?? '';
+          if (name.isNotEmpty) return name;
+        }
+        return fallback;
+      }
+
+      List<String> relationIds(dynamic value) {
+        if (value == null) return const <String>[];
+        if (value is String) {
+          return value.trim().isEmpty ? const <String>[] : [value.trim()];
+        }
+        if (value is num) return [value.toString()];
+        if (value is List) {
+          final ids = <String>[];
+          for (final entry in value) {
+            ids.addAll(relationIds(entry));
+          }
+          return ids.toSet().toList();
+        }
+        if (value is Map) {
+          final map = Map<String, dynamic>.from(value);
+          final id = relationId(map);
+          if (id != null && id.trim().isNotEmpty) return [id.trim()];
+        }
+        return const <String>[];
+      }
+
+      String relationPhone(dynamic value) {
+        if (value == null) return '';
+        if (value is String || value is num) {
+          return value.toString().replaceAll(RegExp(r'[^0-9]'), '');
+        }
+        if (value is Map) {
+          final map = Map<String, dynamic>.from(value);
+          final directPhone =
+              map['phoneNumber'] ?? map['phone'] ?? map['mobile'];
+          if (directPhone != null) {
+            return directPhone.toString().replaceAll(RegExp(r'[^0-9]'), '');
+          }
+          final customer = map['customer'];
+          if (customer is Map) {
+            final customerPhone =
+                customer['phoneNumber'] ??
+                customer['phone'] ??
+                customer['mobile'];
+            if (customerPhone != null) {
+              return customerPhone.toString().replaceAll(RegExp(r'[^0-9]'), '');
+            }
+          }
+        }
+        return '';
+      }
+
+      double relationPrice(dynamic value) {
+        if (value is! Map) return 0;
+        final map = Map<String, dynamic>.from(value);
+
+        final defaultPrice = map['defaultPriceDetails'];
+        if (defaultPrice is Map) {
+          final parsed = toNonNegativeDouble(defaultPrice['price']);
+          if (parsed > 0) return parsed;
+        }
+
+        final branchOverrides = map['branchOverrides'];
+        if (branchOverrides is List) {
+          for (final raw in branchOverrides) {
+            if (raw is! Map) continue;
+            final override = Map<String, dynamic>.from(raw);
+            final branchId = relationId(override['branch']);
+            if (_branchId != null && branchId == _branchId) {
+              final branchPrice = toNonNegativeDouble(override['price']);
+              if (branchPrice > 0) return branchPrice;
+            }
+          }
+        }
+
+        return 0;
+      }
+
+      final customerID = relationId(customerDoc);
+      final customerRandomOfferCampaignCode =
+          customerDoc?['randomCustomerOfferCampaignCode']?.toString().trim() ??
+          '';
+      final customerRandomOfferRedeemed =
+          customerDoc?['randomCustomerOfferRedeemed'] == true;
+      final alreadyRedeemedRandomOfferInCampaign =
+          customerRandomOfferRedeemed &&
+          customerRandomOfferCampaignCode.isNotEmpty &&
+          customerRandomOfferCampaignCode == randomCustomerOfferCampaignCode;
+      final totalPercentageOfferCustomers = relationIds(
+        rawTotalPercentageOfferCustomers,
+      );
+      final canIdentifyCustomerForPercentage = customerID != null;
+      final totalPercentageOfferCustomerUsageRows = <Map<String, dynamic>>[];
+      double totalPercentageOfferUsageForCustomer = 0;
+      if (rawTotalPercentageOfferCustomerUsage is List) {
+        for (final usageRaw in rawTotalPercentageOfferCustomerUsage) {
+          if (usageRaw is! Map) continue;
+          final usageMap = Map<String, dynamic>.from(usageRaw);
+          final usageCustomerId = relationId(usageMap['customer']);
+          final usageCount = toNonNegativeDouble(
+            usageMap['usageCount'] ??
+                usageMap['count'] ??
+                usageMap['usedCount'] ??
+                usageMap['offerCount'],
+          );
+          totalPercentageOfferCustomerUsageRows.add({
+            'customerId': usageCustomerId,
+            'usageCount': usageCount,
+          });
+          if (customerID != null && usageCustomerId == customerID) {
+            totalPercentageOfferUsageForCustomer = usageCount;
+          }
+        }
+      }
+      final totalPercentageOfferHasCustomerLimit =
+          totalPercentageOfferMaxCustomerCount > 0;
+      final totalPercentageOfferHasUsageLimit =
+          totalPercentageOfferMaxUsagePerCustomer > 0;
+      final totalPercentageOfferRequiresCustomer =
+          totalPercentageOfferHasCustomerLimit ||
+          totalPercentageOfferHasUsageLimit;
+      final totalPercentageOfferBlockedWithoutCustomer =
+          totalPercentageOfferRequiresCustomer &&
+          !canIdentifyCustomerForPercentage;
+      final totalPercentageOfferGlobalRemaining =
+          totalPercentageOfferMaxOfferCount > 0
+          ? (totalPercentageOfferMaxOfferCount - totalPercentageOfferGivenCount)
+                .clamp(0, double.infinity)
+                .toDouble()
+          : 0.0;
+      final totalPercentageOfferCustomerRemaining =
+          totalPercentageOfferMaxCustomerCount > 0
+          ? (totalPercentageOfferMaxCustomerCount -
+                    totalPercentageOfferCustomerCount)
+                .clamp(0, double.infinity)
+                .toDouble()
+          : 0.0;
+      final totalPercentageOfferUsageRemaining =
+          totalPercentageOfferMaxUsagePerCustomer > 0
+          ? (totalPercentageOfferMaxUsagePerCustomer -
+                    totalPercentageOfferUsageForCustomer)
+                .clamp(0, double.infinity)
+                .toDouble()
+          : 0.0;
+      final totalPercentageOfferGlobalLimitReached =
+          totalPercentageOfferMaxOfferCount > 0 &&
+          totalPercentageOfferGivenCount >= totalPercentageOfferMaxOfferCount;
+      final totalPercentageOfferCustomerLimitReached =
+          totalPercentageOfferHasCustomerLimit &&
+          totalPercentageOfferCustomerCount >=
+              totalPercentageOfferMaxCustomerCount;
+      final totalPercentageOfferUsageLimitReached =
+          totalPercentageOfferHasUsageLimit &&
+          totalPercentageOfferUsageForCustomer >=
+              totalPercentageOfferMaxUsagePerCustomer;
+      final totalPercentageOfferAlreadyCountedForCustomer =
+          customerID != null &&
+          totalPercentageOfferCustomers.contains(customerID);
+
+      final currentBillItems = [...recalledItems, ...cartItems];
+      final Map<String, double> billedQtyByProduct = {};
+      final Map<String, double> billedPriceByProduct = {};
+
+      for (final item in currentBillItems) {
+        if (item.id.isEmpty ||
+            item.isOfferFreeItem ||
+            item.isRandomCustomerOfferItem) {
+          continue;
+        }
+        billedQtyByProduct[item.id] =
+            (billedQtyByProduct[item.id] ?? 0) + item.quantity;
+        billedPriceByProduct[item.id] ??= item.price;
+      }
+
+      final List<Map<String, dynamic>> productOfferMatches = [];
+      int enabledProductOfferRules = 0;
+      if (enableProductToProductOffer && rawProductToProductOffers is List) {
+        for (final raw in rawProductToProductOffers) {
+          if (raw is! Map) continue;
+          final rule = Map<String, dynamic>.from(raw);
+          if (rule['enabled'] != true) continue;
+          final ruleAllowOnBillings = toBoolWithDefault(
+            rule['allowOnBillings'],
+          );
+          final ruleAllowOnTableOrders = toBoolWithDefault(
+            rule['allowOnTableOrders'],
+          );
+          if (!allowForCurrentOrderType(
+            allowOnBillings: ruleAllowOnBillings,
+            allowOnTableOrders: ruleAllowOnTableOrders,
+          )) {
+            continue;
+          }
+          enabledProductOfferRules += 1;
+
+          final buyProduct = rule['buyProduct'];
+          final freeProduct = rule['freeProduct'];
+
+          final buyProductId = relationId(buyProduct);
+          final freeProductId = relationId(freeProduct);
+          if (buyProductId == null || freeProductId == null) continue;
+
+          final buyQtyStepRaw = toNonNegativeDouble(rule['buyQuantity']);
+          final freeQtyStepRaw = toNonNegativeDouble(rule['freeQuantity']);
+          final buyQtyStep = buyQtyStepRaw > 0 ? buyQtyStepRaw : 1.0;
+          final freeQtyStep = freeQtyStepRaw > 0 ? freeQtyStepRaw : 1.0;
+          final maxCustomerCount = toNonNegativeDouble(
+            rule['maxCustomerCount'],
+          );
+          final maxUsagePerCustomer = toNonNegativeDouble(
+            rule['maxUsagePerCustomer'],
+          );
+          final usageLimitEnabled = maxUsagePerCustomer > 0;
+          final customerCountLimitEnabled = maxCustomerCount > 0;
+          final requiresExistingCustomer =
+              usageLimitEnabled || customerCountLimitEnabled;
+          const nextBillMessage =
+              'This offer will be available from next bill after customer is created.';
+          final blockedForNewCustomer =
+              isNewCustomer && requiresExistingCustomer;
+          final rawOfferCustomerUsage = rule['offerCustomerUsage'];
+          final List<Map<String, dynamic>> offerCustomerUsage = [];
+          double customerUsageCount = 0;
+
+          if (rawOfferCustomerUsage is List) {
+            for (final usageRaw in rawOfferCustomerUsage) {
+              if (usageRaw is! Map) continue;
+              final usageMap = Map<String, dynamic>.from(usageRaw);
+              final usagePhone = relationPhone(usageMap);
+              final usageCount = toNonNegativeDouble(
+                usageMap['usageCount'] ??
+                    usageMap['count'] ??
+                    usageMap['usedCount'] ??
+                    usageMap['offerCount'],
+              );
+              offerCustomerUsage.add({
+                'phoneNumber': usagePhone,
+                'usageCount': usageCount,
+              });
+              if (lookupPhoneKey.isNotEmpty && usagePhone == lookupPhoneKey) {
+                customerUsageCount = usageCount;
+              }
+            }
+          }
+
+          final usageLimitReached =
+              usageLimitEnabled && customerUsageCount >= maxUsagePerCustomer;
+          final customerUsageRemaining = usageLimitEnabled
+              ? (maxUsagePerCustomer - customerUsageCount)
+                    .clamp(0, double.infinity)
+                    .toDouble()
+              : 0.0;
+
+          final buyQtyInCart = toNonNegativeDouble(
+            billedQtyByProduct[buyProductId],
+          );
+          if (buyQtyInCart <= 0) continue;
+
+          final appliedCycles = (buyQtyInCart / buyQtyStep).floor();
+          final predictedFreeQuantity = appliedCycles * freeQtyStep;
+          final remainder = buyQtyInCart % buyQtyStep;
+          final remainingBuyQuantity = predictedFreeQuantity > 0
+              ? 0.0
+              : (buyQtyStep - remainder).clamp(0, double.infinity).toDouble();
+
+          final buyName = relationName(buyProduct, fallback: 'Buy Product');
+          final freeName = relationName(freeProduct, fallback: 'Free Product');
+          final buyUnitPrice =
+              billedPriceByProduct[buyProductId] ?? relationPrice(buyProduct);
+          final freeUnitPrice = relationPrice(freeProduct);
+          final estimatedDiscount = double.parse(
+            (predictedFreeQuantity * freeUnitPrice).toStringAsFixed(2),
+          );
+
+          productOfferMatches.add({
+            'ruleKey':
+                relationId(rule['id']) ??
+                '$buyProductId:$freeProductId:${buyQtyStep.toStringAsFixed(2)}:${freeQtyStep.toStringAsFixed(2)}',
+            'buyProductId': buyProductId,
+            'buyProductName': buyName,
+            'buyQuantityStep': buyQtyStep,
+            'buyQuantityInCart': buyQtyInCart,
+            'buyUnitPrice': buyUnitPrice,
+            'freeProductId': freeProductId,
+            'freeProductName': freeName,
+            'freeQuantityStep': freeQtyStep,
+            'freeUnitPrice': freeUnitPrice,
+            'predictedFreeQuantity': predictedFreeQuantity,
+            'estimatedDiscount': estimatedDiscount,
+            'remainingBuyQuantity': remainingBuyQuantity,
+            'eligible':
+                predictedFreeQuantity > 0 &&
+                !usageLimitReached &&
+                !blockedForNewCustomer,
+            'maxCustomerCount': maxCustomerCount,
+            'maxUsagePerCustomer': maxUsagePerCustomer,
+            'customerCountLimitEnabled': customerCountLimitEnabled,
+            'requiresExistingCustomer': requiresExistingCustomer,
+            'blockedForNewCustomer': blockedForNewCustomer,
+            'nextBillMessage': blockedForNewCustomer ? nextBillMessage : null,
+            'usageLimitEnabled': usageLimitEnabled,
+            'usageLimitReached': usageLimitReached,
+            'customerUsageCount': customerUsageCount,
+            'customerUsageRemaining': customerUsageRemaining,
+            'offerCustomerUsage': offerCustomerUsage,
+            'allowOnBillings': ruleAllowOnBillings,
+            'allowOnTableOrders': ruleAllowOnTableOrders,
+          });
+        }
+      }
+
+      final List<Map<String, dynamic>> productPriceOfferMatches = [];
+      int enabledProductPriceOfferRules = 0;
+      if (enableProductPriceOffer && rawProductPriceOffers is List) {
+        for (final raw in rawProductPriceOffers) {
+          if (raw is! Map) continue;
+          final rule = Map<String, dynamic>.from(raw);
+          if (rule['enabled'] != true) continue;
+          final ruleAllowOnBillings = toBoolWithDefault(
+            rule['allowOnBillings'],
+          );
+          final ruleAllowOnTableOrders = toBoolWithDefault(
+            rule['allowOnTableOrders'],
+          );
+          if (!allowForCurrentOrderType(
+            allowOnBillings: ruleAllowOnBillings,
+            allowOnTableOrders: ruleAllowOnTableOrders,
+          )) {
+            continue;
+          }
+          enabledProductPriceOfferRules += 1;
+
+          final productRef =
+              rule['product'] ?? rule['buyProduct'] ?? rule['productId'];
+          final productId =
+              relationId(productRef) ?? rule['productId']?.toString();
+          if (productId == null || productId.isEmpty) continue;
+
+          final quantityInCart = toNonNegativeDouble(
+            billedQtyByProduct[productId],
+          );
+          if (quantityInCart <= 0) continue;
+
+          final productName = relationName(productRef, fallback: 'Product');
+          final baseUnitPrice =
+              billedPriceByProduct[productId] ?? relationPrice(productRef);
+
+          final explicitDiscount = toNonNegativeDouble(
+            rule['discountPerUnit'] ??
+                rule['offerAmount'] ??
+                rule['discountAmount'] ??
+                rule['discount'],
+          );
+          double offerUnitPrice = toNonNegativeDouble(
+            rule['offerPrice'] ??
+                rule['priceAfterDiscount'] ??
+                rule['effectiveUnitPrice'],
+          );
+          double discountPerUnit = explicitDiscount;
+
+          if (discountPerUnit <= 0 &&
+              baseUnitPrice > 0 &&
+              offerUnitPrice > 0 &&
+              offerUnitPrice < baseUnitPrice) {
+            discountPerUnit = baseUnitPrice - offerUnitPrice;
+          }
+
+          if (offerUnitPrice <= 0 && baseUnitPrice > 0 && discountPerUnit > 0) {
+            offerUnitPrice = (baseUnitPrice - discountPerUnit)
+                .clamp(0, double.infinity)
+                .toDouble();
+          }
+
+          final maxCustomerCount = toNonNegativeDouble(
+            rule['maxCustomerCount'],
+          );
+          final maxUsagePerCustomer = toNonNegativeDouble(
+            rule['maxUsagePerCustomer'],
+          );
+          final usageLimitEnabled = maxUsagePerCustomer > 0;
+          final customerCountLimitEnabled = maxCustomerCount > 0;
+          final requiresExistingCustomer =
+              usageLimitEnabled || customerCountLimitEnabled;
+          const nextBillMessage =
+              'This offer will be available from next bill after customer is created.';
+          final blockedForNewCustomer =
+              isNewCustomer && requiresExistingCustomer;
+          final rawOfferCustomerUsage = rule['offerCustomerUsage'];
+          final List<Map<String, dynamic>> offerCustomerUsage = [];
+          double customerUsageCount = 0;
+
+          if (rawOfferCustomerUsage is List) {
+            for (final usageRaw in rawOfferCustomerUsage) {
+              if (usageRaw is! Map) continue;
+              final usageMap = Map<String, dynamic>.from(usageRaw);
+              final usagePhone = relationPhone(usageMap);
+              final usageCount = toNonNegativeDouble(
+                usageMap['usageCount'] ??
+                    usageMap['count'] ??
+                    usageMap['usedCount'] ??
+                    usageMap['offerCount'],
+              );
+              offerCustomerUsage.add({
+                'phoneNumber': usagePhone,
+                'usageCount': usageCount,
+              });
+              if (lookupPhoneKey.isNotEmpty && usagePhone == lookupPhoneKey) {
+                customerUsageCount = usageCount;
+              }
+            }
+          }
+
+          final usageLimitReached =
+              usageLimitEnabled && customerUsageCount >= maxUsagePerCustomer;
+          final customerUsageRemaining = usageLimitEnabled
+              ? (maxUsagePerCustomer - customerUsageCount)
+                    .clamp(0, double.infinity)
+                    .toDouble()
+              : 0.0;
+          final predictedAppliedUnits = usageLimitEnabled
+              ? (quantityInCart < customerUsageRemaining
+                    ? quantityInCart
+                    : customerUsageRemaining)
+              : quantityInCart;
+          final predictedDiscountTotal =
+              predictedAppliedUnits > 0 && discountPerUnit > 0
+              ? double.parse(
+                  (predictedAppliedUnits * discountPerUnit).toStringAsFixed(2),
+                )
+              : 0.0;
+          final predictedSubtotal = double.parse(
+            (baseUnitPrice * quantityInCart - predictedDiscountTotal)
+                .clamp(0, double.infinity)
+                .toStringAsFixed(2),
+          );
+          final predictedEffectiveUnitPrice = quantityInCart > 0
+              ? double.parse(
+                  (predictedSubtotal / quantityInCart).toStringAsFixed(4),
+                )
+              : baseUnitPrice;
+
+          productPriceOfferMatches.add({
+            'ruleKey':
+                relationId(rule['id']) ??
+                '$productId:${discountPerUnit.toStringAsFixed(2)}',
+            'productId': productId,
+            'productName': productName,
+            'quantityInCart': quantityInCart,
+            'baseUnitPrice': baseUnitPrice,
+            'discountPerUnit': discountPerUnit,
+            'offerUnitPrice': offerUnitPrice,
+            'predictedAppliedUnits': predictedAppliedUnits,
+            'predictedDiscountTotal': predictedDiscountTotal,
+            'predictedSubtotal': predictedSubtotal,
+            'predictedEffectiveUnitPrice': predictedEffectiveUnitPrice,
+            'maxCustomerCount': maxCustomerCount,
+            'maxUsagePerCustomer': maxUsagePerCustomer,
+            'customerCountLimitEnabled': customerCountLimitEnabled,
+            'requiresExistingCustomer': requiresExistingCustomer,
+            'blockedForNewCustomer': blockedForNewCustomer,
+            'nextBillMessage': blockedForNewCustomer ? nextBillMessage : null,
+            'usageLimitEnabled': usageLimitEnabled,
+            'usageLimitReached': usageLimitReached,
+            'customerUsageCount': customerUsageCount,
+            'customerUsageRemaining': customerUsageRemaining,
+            'offerCustomerUsage': offerCustomerUsage,
+            'eligible':
+                predictedAppliedUnits > 0 &&
+                discountPerUnit > 0 &&
+                !blockedForNewCustomer,
+            'allowOnBillings': ruleAllowOnBillings,
+            'allowOnTableOrders': ruleAllowOnTableOrders,
+          });
+        }
+      }
+
+      final List<Map<String, dynamic>> randomCustomerOfferMatches = [];
+      int enabledRandomCustomerOfferRules = 0;
+      if (enableRandomCustomerProductOffer &&
+          rawRandomCustomerOfferProducts is List) {
+        for (final raw in rawRandomCustomerOfferProducts) {
+          if (raw is! Map) continue;
+          final rule = Map<String, dynamic>.from(raw);
+          if (rule['enabled'] != true) continue;
+          final ruleAllowOnBillings = toBoolWithDefault(
+            rule['allowOnBillings'],
+          );
+          final ruleAllowOnTableOrders = toBoolWithDefault(
+            rule['allowOnTableOrders'],
+          );
+          if (!allowForCurrentOrderType(
+            allowOnBillings: ruleAllowOnBillings,
+            allowOnTableOrders: ruleAllowOnTableOrders,
+          )) {
+            continue;
+          }
+          enabledRandomCustomerOfferRules += 1;
+
+          final productRef = rule['product'];
+          final productId = relationId(productRef);
+          final productName = relationName(
+            productRef,
+            fallback: productId ?? 'Random Offer Product',
+          );
+          final winnerCount = toNonNegativeDouble(rule['winnerCount']);
+          final redeemedCount = toNonNegativeDouble(rule['redeemedCount']);
+          final assignedCount = toNonNegativeDouble(rule['assignedCount']);
+          final remainingCount = (winnerCount - redeemedCount)
+              .clamp(0, double.infinity)
+              .toDouble();
+          final maxUsagePerCustomer = toNonNegativeDouble(
+            rule['maxUsagePerCustomer'],
+          );
+          final usageLimitEnabled = maxUsagePerCustomer > 0;
+
+          double customerUsageCount = 0;
+          final rawOfferCustomerUsage = rule['offerCustomerUsage'];
+          if (rawOfferCustomerUsage is List) {
+            for (final usageRaw in rawOfferCustomerUsage) {
+              if (usageRaw is! Map) continue;
+              final usageMap = Map<String, dynamic>.from(usageRaw);
+              final usageCustomerId = relationId(usageMap['customer']);
+              final usageCount = toNonNegativeDouble(
+                usageMap['usageCount'] ??
+                    usageMap['count'] ??
+                    usageMap['usedCount'] ??
+                    usageMap['offerCount'],
+              );
+              if (customerID != null && usageCustomerId == customerID) {
+                customerUsageCount = usageCount;
+              }
+            }
+          }
+
+          final usageLimitReached =
+              usageLimitEnabled && customerUsageCount >= maxUsagePerCustomer;
+          final customerUsageRemaining = usageLimitEnabled
+              ? (maxUsagePerCustomer - customerUsageCount)
+                    .clamp(0, double.infinity)
+                    .toDouble()
+              : 0.0;
+
+          final selectedCustomers = relationIds(rule['selectedCustomers']);
+          final selectedForCustomer =
+              customerID != null && selectedCustomers.contains(customerID);
+          final eligible =
+              remainingCount > 0 &&
+              !usageLimitReached &&
+              !alreadyRedeemedRandomOfferInCampaign;
+
+          randomCustomerOfferMatches.add({
+            'ruleKey':
+                relationId(rule['id']) ?? '$productId:${winnerCount.toInt()}',
+            'productId': productId,
+            'productName': productName,
+            'winnerCount': winnerCount,
+            'assignedCount': assignedCount,
+            'redeemedCount': redeemedCount,
+            'remainingCount': remainingCount,
+            'maxUsagePerCustomer': maxUsagePerCustomer,
+            'usageLimitEnabled': usageLimitEnabled,
+            'usageLimitReached': usageLimitReached,
+            'customerUsageCount': customerUsageCount,
+            'customerUsageRemaining': customerUsageRemaining,
+            'selectedForCustomer': selectedForCustomer,
+            'availableFromDate': rule['availableFromDate'],
+            'availableToDate': rule['availableToDate'],
+            'dailyStartTime': rule['dailyStartTime']?.toString(),
+            'dailyEndTime': rule['dailyEndTime']?.toString(),
+            'eligible': eligible,
+            'allowOnBillings': ruleAllowOnBillings,
+            'allowOnTableOrders': ruleAllowOnTableOrders,
+          });
+        }
+      }
+
+      int deterministicIndex(String seed, int length) {
+        if (length <= 0) return -1;
+        var hash = 0;
+        for (final codeUnit in seed.codeUnits) {
+          hash = (hash * 31 + codeUnit) & 0x7fffffff;
+        }
+        return hash % length;
+      }
+
+      final eligibleRandomCustomerOfferMatches = randomCustomerOfferMatches
+          .where((match) => match['eligible'] == true)
+          .toList();
+      final randomCustomerOfferEligible = randomCustomerOfferMatches.any(
+        (match) => match['eligible'] == true,
+      );
+      Map<String, dynamic>? selectedRandomCustomerOfferMatch;
+      if (eligibleRandomCustomerOfferMatches.isNotEmpty) {
+        final seed =
+            '$lookupPhoneKey:${randomCustomerOfferCampaignCode.trim()}:random-preview';
+        final index = deterministicIndex(
+          seed,
+          eligibleRandomCustomerOfferMatches.length,
+        );
+        if (index >= 0) {
+          selectedRandomCustomerOfferMatch = Map<String, dynamic>.from(
+            eligibleRandomCustomerOfferMatches[index],
+          );
+        }
+      }
 
       final completedBills =
           bills
@@ -1142,62 +2263,30 @@ class CartProvider extends ChangeNotifier {
 
       final historyBasedEligible =
           offerEnabled &&
+          !isNewCustomer &&
           pointsNeededForOffer > 0 &&
           historyDerivedRewardPoints >= pointsNeededForOffer;
 
-      bool historySyncAttempted = false;
-      bool historySyncFailed = false;
-      bool historySyncApplied = false;
+      // Keep customer lookup read-only. Backend decides and applies final offer.
+      const historySyncAttempted = false;
+      const historySyncFailed = false;
+      const historySyncApplied = false;
+      final historySnapshotAhead =
+          historyDerivedRewardPoints > rewardPoints ||
+          historyDerivedProgressAmount > rewardProgressAmount;
+      final useHistorySnapshot = historySnapshotAhead;
 
-      // Auto-sync customer reward fields from history when backend values are behind.
-      final customerID = customerDoc?['id']?.toString();
-      if (offerEnabled && customerID != null && customerID.isNotEmpty) {
-        final serverEligible =
-            customerDoc?['isOfferEligible'] == true ||
-            (pointsNeededForOffer > 0 && rewardPoints >= pointsNeededForOffer);
-
-        final needsSync =
-            (rewardPoints - historyDerivedRewardPoints).abs() >= 0.01 ||
-            (rewardProgressAmount - historyDerivedProgressAmount).abs() >=
-                0.01 ||
-            serverEligible != historyBasedEligible;
-
-        if (needsSync) {
-          historySyncAttempted = true;
-          try {
-            final syncResponse = await http.patch(
-              Uri.parse(
-                'https://blackforest.vseyal.com/api/customers/$customerID',
-              ),
-              headers: headers,
-              body: jsonEncode({
-                'rewardPoints': historyDerivedRewardPoints,
-                'rewardProgressAmount': historyDerivedProgressAmount,
-                'isOfferEligible': historyBasedEligible,
-              }),
-            );
-
-            if (syncResponse.statusCode == 200) {
-              historySyncApplied = true;
-            } else {
-              historySyncFailed = true;
-            }
-          } catch (_) {
-            historySyncFailed = true;
-          }
-        }
-      }
-
-      final effectiveRewardPoints = historySyncApplied
+      final effectiveRewardPoints = useHistorySnapshot
           ? historyDerivedRewardPoints
           : rewardPoints;
-      final effectiveRewardProgressAmount = historySyncApplied
+      final effectiveRewardProgressAmount = useHistorySnapshot
           ? historyDerivedProgressAmount
           : rewardProgressAmount;
       final effectiveOfferEligible =
           offerEnabled &&
-          ((historySyncApplied && historyBasedEligible) ||
-              (customerDoc?['isOfferEligible'] == true) ||
+          !isNewCustomer &&
+          (historyBasedEligible ||
+              (customerDoc['isOfferEligible'] == true) ||
               (pointsNeededForOffer > 0 &&
                   effectiveRewardPoints >= pointsNeededForOffer));
 
@@ -1227,8 +2316,10 @@ class CartProvider extends ChangeNotifier {
       }
 
       return {
+        'orderType': effectiveIsTableOrder ? 'table' : 'billing',
         'name': customerName,
         'phoneNumber': normalizedPhone,
+        'isNewCustomer': isNewCustomer,
         'totalBills': billData['totalDocs'] ?? bills.length,
         'totalAmount': totalAmount,
         'bigBill': bigBill,
@@ -1241,6 +2332,8 @@ class CartProvider extends ChangeNotifier {
         'bills': bills,
         'offer': {
           'enabled': offerEnabled,
+          'allowOnBillings': allowCustomerCreditOfferOnBillings,
+          'allowOnTableOrders': allowCustomerCreditOfferOnTableOrders,
           'rewardPoints': effectiveRewardPoints,
           'rewardProgressAmount': effectiveRewardProgressAmount,
           'pointsNeededForOffer': pointsNeededForOffer,
@@ -1263,6 +2356,57 @@ class CartProvider extends ChangeNotifier {
           'totalOffersRedeemed': toNonNegativeDouble(
             customerDoc?['totalOffersRedeemed'],
           ).toInt(),
+        },
+        'productOfferPreview': {
+          'enabled': enableProductToProductOffer,
+          'allowOnBillings': allowProductToProductOfferOnBillings,
+          'allowOnTableOrders': allowProductToProductOfferOnTableOrders,
+          'rulesConfigured': enabledProductOfferRules,
+          'matches': productOfferMatches,
+        },
+        'productPriceOfferPreview': {
+          'enabled': enableProductPriceOffer,
+          'allowOnBillings': allowProductPriceOfferOnBillings,
+          'allowOnTableOrders': allowProductPriceOfferOnTableOrders,
+          'rulesConfigured': enabledProductPriceOfferRules,
+          'matches': productPriceOfferMatches,
+        },
+        'totalPercentageOfferPreview': {
+          'enabled': enableTotalPercentageOffer,
+          'allowOnBillings': allowTotalPercentageOfferOnBillings,
+          'allowOnTableOrders': allowTotalPercentageOfferOnTableOrders,
+          'discountPercent': totalPercentageOfferPercent,
+          'maxOfferCount': totalPercentageOfferMaxOfferCount,
+          'maxCustomerCount': totalPercentageOfferMaxCustomerCount,
+          'maxUsagePerCustomer': totalPercentageOfferMaxUsagePerCustomer,
+          'givenCount': totalPercentageOfferGivenCount,
+          'customerCount': totalPercentageOfferCustomerCount,
+          'globalRemaining': totalPercentageOfferGlobalRemaining,
+          'customerRemaining': totalPercentageOfferCustomerRemaining,
+          'usageForCustomer': totalPercentageOfferUsageForCustomer,
+          'usageRemaining': totalPercentageOfferUsageRemaining,
+          'requiresCustomer': totalPercentageOfferRequiresCustomer,
+          'blockedWithoutCustomer': totalPercentageOfferBlockedWithoutCustomer,
+          'globalLimitReached': totalPercentageOfferGlobalLimitReached,
+          'customerLimitReached': totalPercentageOfferCustomerLimitReached,
+          'usageLimitReached': totalPercentageOfferUsageLimitReached,
+          'alreadyCountedForCustomer':
+              totalPercentageOfferAlreadyCountedForCustomer,
+          'customerUsageRows': totalPercentageOfferCustomerUsageRows,
+          'finalValidationByServer': true,
+        },
+        'randomCustomerOfferPreview': {
+          'enabled': enableRandomCustomerProductOffer,
+          'allowOnBillings': allowRandomCustomerProductOfferOnBillings,
+          'allowOnTableOrders': allowRandomCustomerProductOfferOnTableOrders,
+          'rulesConfigured': enabledRandomCustomerOfferRules,
+          'campaignCode': randomCustomerOfferCampaignCode,
+          'timezone': randomCustomerOfferTimezone,
+          'alreadyRedeemedInCampaign': alreadyRedeemedRandomOfferInCampaign,
+          'isEligible': randomCustomerOfferEligible,
+          'matches': randomCustomerOfferMatches,
+          'selectedMatch': selectedRandomCustomerOfferMatch,
+          'finalValidationByServer': true,
         },
       };
     } catch (e) {

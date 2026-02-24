@@ -41,6 +41,7 @@ class _CartPageState extends State<CartPage> {
   List<dynamic>? _kotPrinters; // Store KOT printer configs
   Timer? _refreshTimer;
   final Map<String, String> _categoryToKitchenMap = {}; // ID mapping
+  final TextEditingController _sharedTableController = TextEditingController();
 
   @override
   void initState() {
@@ -52,6 +53,7 @@ class _CartPageState extends State<CartPage> {
   @override
   void dispose() {
     _refreshTimer?.cancel();
+    _sharedTableController.dispose();
     super.dispose();
   }
 
@@ -534,6 +536,7 @@ class _CartPageState extends State<CartPage> {
           String? lookupError;
           bool applyCustomerOffer = false;
           bool didAutoLookup = false;
+          int offerPageIndex = 0;
 
           double readMoney(dynamic value) {
             if (value is num) {
@@ -552,6 +555,93 @@ class _CartPageState extends State<CartPage> {
               return Map<String, dynamic>.from(raw);
             }
             return null;
+          }
+
+          Map<String, dynamic>? readProductOfferData(
+            Map<String, dynamic>? customerData,
+          ) {
+            if (customerData == null) return null;
+            final raw = customerData['productOfferPreview'];
+            if (raw is Map) {
+              return Map<String, dynamic>.from(raw);
+            }
+            return null;
+          }
+
+          List<Map<String, dynamic>> readProductOfferMatches(
+            Map<String, dynamic>? customerData,
+          ) {
+            final preview = readProductOfferData(customerData);
+            final matches = preview?['matches'];
+            if (matches is! List) return const <Map<String, dynamic>>[];
+            return matches
+                .whereType<Map>()
+                .map((raw) => Map<String, dynamic>.from(raw))
+                .toList();
+          }
+
+          Map<String, dynamic>? readProductPriceOfferData(
+            Map<String, dynamic>? customerData,
+          ) {
+            if (customerData == null) return null;
+            final raw = customerData['productPriceOfferPreview'];
+            if (raw is Map) {
+              return Map<String, dynamic>.from(raw);
+            }
+            return null;
+          }
+
+          List<Map<String, dynamic>> readProductPriceOfferMatches(
+            Map<String, dynamic>? customerData,
+          ) {
+            final preview = readProductPriceOfferData(customerData);
+            final matches = preview?['matches'];
+            if (matches is! List) return const <Map<String, dynamic>>[];
+            return matches
+                .whereType<Map>()
+                .map((raw) => Map<String, dynamic>.from(raw))
+                .toList();
+          }
+
+          Map<String, dynamic>? readTotalPercentageOfferData(
+            Map<String, dynamic>? customerData,
+          ) {
+            if (customerData == null) return null;
+            final raw = customerData['totalPercentageOfferPreview'];
+            if (raw is Map) {
+              return Map<String, dynamic>.from(raw);
+            }
+            return null;
+          }
+
+          Map<String, dynamic>? readRandomCustomerOfferData(
+            Map<String, dynamic>? customerData,
+          ) {
+            if (customerData == null) return null;
+            final raw = customerData['randomCustomerOfferPreview'];
+            if (raw is Map) {
+              return Map<String, dynamic>.from(raw);
+            }
+            return null;
+          }
+
+          List<Map<String, dynamic>> readRandomCustomerOfferMatches(
+            Map<String, dynamic>? customerData,
+          ) {
+            final preview = readRandomCustomerOfferData(customerData);
+            final matches = preview?['matches'];
+            if (matches is! List) return const <Map<String, dynamic>>[];
+            return matches
+                .whereType<Map>()
+                .map((raw) => Map<String, dynamic>.from(raw))
+                .toList();
+          }
+
+          String formatQty(double value) {
+            if (value % 1 == 0) {
+              return value.toInt().toString();
+            }
+            return value.toStringAsFixed(2);
           }
 
           Future<void> lookupCustomer(
@@ -575,7 +665,18 @@ class _CartPageState extends State<CartPage> {
             });
 
             try {
-              final data = await cartProvider.fetchCustomerData(phone);
+              final activeTableNumber =
+                  cartProvider.selectedTable?.trim() ?? '';
+              final activeSection = cartProvider.selectedSection?.trim() ?? '';
+              final lookupIsTableOrder =
+                  cartProvider.currentType == CartType.table &&
+                  (activeTableNumber.isNotEmpty || activeSection.isNotEmpty);
+              final data = await cartProvider.fetchCustomerData(
+                phone,
+                isTableOrder: lookupIsTableOrder,
+                tableSection: activeSection,
+                tableNumber: activeTableNumber,
+              );
               if (phoneCtrl.text.trim() != phone) return;
 
               setDialogState(() {
@@ -585,7 +686,10 @@ class _CartPageState extends State<CartPage> {
 
                 if (data != null) {
                   final fetchedName = data['name']?.toString().trim() ?? '';
-                  if (fetchedName.isNotEmpty && nameCtrl.text.trim().isEmpty) {
+                  final isNewCustomerLookup = data['isNewCustomer'] == true;
+                  if (!isNewCustomerLookup &&
+                      fetchedName.isNotEmpty &&
+                      nameCtrl.text.trim().isEmpty) {
                     nameCtrl.text = fetchedName;
                   }
                 }
@@ -593,7 +697,8 @@ class _CartPageState extends State<CartPage> {
                 final offerData = readOfferData(data);
                 final eligible =
                     offerData?['enabled'] == true &&
-                    offerData?['isOfferEligible'] == true;
+                    (offerData?['isOfferEligible'] == true ||
+                        offerData?['historyBasedEligible'] == true);
                 applyCustomerOffer = eligible;
               });
             } catch (_) {
@@ -617,10 +722,92 @@ class _CartPageState extends State<CartPage> {
               }
 
               final offerData = readOfferData(customerLookupData);
+              final productOfferData = readProductOfferData(customerLookupData);
+              final productOfferMatches = readProductOfferMatches(
+                customerLookupData,
+              );
+              final isNewCustomer =
+                  customerLookupData?['isNewCustomer'] == true;
+              final productPriceOfferData = readProductPriceOfferData(
+                customerLookupData,
+              );
+              final productPriceOfferMatches = readProductPriceOfferMatches(
+                customerLookupData,
+              );
+              final totalPercentageOfferData = readTotalPercentageOfferData(
+                customerLookupData,
+              );
+              final randomCustomerOfferData = readRandomCustomerOfferData(
+                customerLookupData,
+              );
+              final randomCustomerOfferMatches = readRandomCustomerOfferMatches(
+                customerLookupData,
+              );
+              final randomCustomerOfferSelectedMatchRaw =
+                  randomCustomerOfferData?['selectedMatch'];
+              Map<String, dynamic>? randomCustomerOfferSelectedMatch;
+              if (randomCustomerOfferSelectedMatchRaw is Map) {
+                randomCustomerOfferSelectedMatch = Map<String, dynamic>.from(
+                  randomCustomerOfferSelectedMatchRaw,
+                );
+              } else {
+                for (final match in randomCustomerOfferMatches) {
+                  if (match['eligible'] == true) {
+                    randomCustomerOfferSelectedMatch = match;
+                    break;
+                  }
+                }
+              }
               final offerEnabled = offerData?['enabled'] == true;
+              final productOfferEnabled = productOfferData?['enabled'] == true;
+              final productPriceOfferEnabled =
+                  productPriceOfferData?['enabled'] == true;
+              final totalPercentageOfferEnabled =
+                  totalPercentageOfferData?['enabled'] == true;
+              final randomCustomerOfferEnabled =
+                  randomCustomerOfferData?['enabled'] == true;
+              final randomCustomerOfferEligible =
+                  randomCustomerOfferEnabled &&
+                  randomCustomerOfferData?['isEligible'] == true;
+              final randomOfferCampaignCode =
+                  randomCustomerOfferData?['campaignCode']?.toString().trim() ??
+                  '';
+              final historyBasedEligible =
+                  offerData?['historyBasedEligible'] == true;
+              final serverEligible =
+                  offerEnabled && offerData?['isOfferEligible'] == true;
               final offerEligible =
-                  offerData?['enabled'] == true &&
-                  offerData?['isOfferEligible'] == true;
+                  offerEnabled && (serverEligible || historyBasedEligible);
+              final hasEligibleProductOffer = productOfferMatches.any(
+                (match) => match['eligible'] == true,
+              );
+              final hasEligibleProductPriceOffer = productPriceOfferMatches.any(
+                (match) => match['eligible'] == true,
+              );
+              final hasEligibleRandomOffer = randomCustomerOfferEligible;
+              final hasEligibleItemLevelOffer =
+                  hasEligibleProductOffer ||
+                  hasEligibleProductPriceOffer ||
+                  hasEligibleRandomOffer;
+              final canApplyCustomerOffer =
+                  offerEligible && !hasEligibleItemLevelOffer;
+              final effectiveApplyCustomerOffer =
+                  canApplyCustomerOffer && applyCustomerOffer;
+              final highestPriorityAppliedPreviewName = hasEligibleProductOffer
+                  ? 'Product-to-Product Offer'
+                  : hasEligibleProductPriceOffer
+                  ? 'Product Price Offer'
+                  : hasEligibleRandomOffer
+                  ? 'Random Product Offer'
+                  : effectiveApplyCustomerOffer
+                  ? 'Customer Credit Offer'
+                  : null;
+              final hasOfferPreview =
+                  offerEnabled ||
+                  productOfferEnabled ||
+                  productPriceOfferEnabled ||
+                  totalPercentageOfferEnabled ||
+                  randomCustomerOfferEligible;
               final offerAmount = readMoney(offerData?['offerAmount']);
               final rewardPoints = readMoney(offerData?['rewardPoints']);
               final pointsNeeded = readMoney(
@@ -632,23 +819,909 @@ class _CartPageState extends State<CartPage> {
               final remainingSpend = readMoney(
                 offerData?['remainingSpendForOffer'],
               );
-              final historyBasedEligible =
-                  offerData?['historyBasedEligible'] == true;
-              final historySyncFailed = offerData?['historySyncFailed'] == true;
-              final historySyncApplied =
-                  offerData?['historySyncApplied'] == true;
               final completedBillsCount =
                   (offerData?['completedBillsCount'] as num?)?.toInt() ?? 0;
               final completedSpendAmount = readMoney(
                 offerData?['completedSpendAmount'],
               );
               final billTotal = cartProvider.total;
-              final previewDiscount = applyCustomerOffer && offerEligible
+              final previewDiscount = effectiveApplyCustomerOffer
                   ? (offerAmount > billTotal ? billTotal : offerAmount)
                   : 0.0;
               final previewPayable = (billTotal - previewDiscount)
                   .clamp(0.0, double.infinity)
                   .toDouble();
+              final mediaQuery = MediaQuery.of(context);
+              final dialogMaxHeight = max(
+                280.0,
+                mediaQuery.size.height - mediaQuery.viewInsets.bottom - 32,
+              );
+              final offerCards = <Widget>[
+                if (offerEnabled)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F1A11),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: const Color(0xFF2EBF3B).withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Customer Credit Offer',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Points: ${rewardPoints.toStringAsFixed(0)} / ${pointsNeeded.toStringAsFixed(0)}',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                          if (isNewCustomer)
+                            const Text(
+                              'New customer: points start from this completed bill.',
+                              style: TextStyle(
+                                color: Colors.orangeAccent,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          Text(
+                            'Completed bills used: $completedBillsCount | ₹${completedSpendAmount.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const Text(
+                            'Only completed bills earn points.',
+                            style: TextStyle(
+                              color: Colors.white54,
+                              fontSize: 11,
+                            ),
+                          ),
+                          Text(
+                            offerEligible
+                                ? 'Eligible: Offer discount ₹${offerAmount.toStringAsFixed(2)}'
+                                : 'Need ${remainingPoints.toStringAsFixed(0)} more points',
+                            style: TextStyle(
+                              color: offerEligible
+                                  ? const Color(0xFF2EBF3B)
+                                  : Colors.orangeAccent,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          if (!offerEligible && remainingSpend > 0)
+                            Text(
+                              'Spend ₹${remainingSpend.toStringAsFixed(2)} more to unlock offer',
+                              style: const TextStyle(
+                                color: Colors.orangeAccent,
+                                fontSize: 12,
+                              ),
+                            ),
+                          if (historyBasedEligible && !serverEligible)
+                            const Text(
+                              'Eligible from completed history. Final offer is validated on submit.',
+                              style: TextStyle(
+                                color: Colors.orangeAccent,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          if (hasEligibleItemLevelOffer)
+                            Text(
+                              'Blocked by higher-priority offer: ${highestPriorityAppliedPreviewName ?? 'Item-level offer'}.',
+                              style: const TextStyle(
+                                color: Colors.orangeAccent,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          const SizedBox(height: 8),
+                          IgnorePointer(
+                            ignoring: !canApplyCustomerOffer,
+                            child: Opacity(
+                              opacity: canApplyCustomerOffer ? 1 : 0.5,
+                              child: CheckboxListTile(
+                                contentPadding: EdgeInsets.zero,
+                                dense: true,
+                                controlAffinity:
+                                    ListTileControlAffinity.leading,
+                                title: const Text(
+                                  'Apply customer offer on this bill',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                                value: effectiveApplyCustomerOffer,
+                                onChanged: (value) {
+                                  setDialogState(() {
+                                    applyCustomerOffer = value == true;
+                                  });
+                                },
+                                activeColor: const Color(0xFF2EBF3B),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Bill total: ₹${billTotal.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                          Text(
+                            'Offer discount: ₹${previewDiscount.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              color: Color(0xFF2EBF3B),
+                              fontSize: 12,
+                            ),
+                          ),
+                          Text(
+                            'Remaining payable: ₹${previewPayable.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (productOfferEnabled && productOfferMatches.isNotEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF121729),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: const Color(0xFF0A84FF).withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Product to Product Offer',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          ...productOfferMatches.map((match) {
+                            final buyProductName =
+                                match['buyProductName']?.toString() ??
+                                'Buy Product';
+                            final freeProductName =
+                                match['freeProductName']?.toString() ??
+                                'Free Product';
+                            final buyQtyStep = readMoney(
+                              match['buyQuantityStep'],
+                            );
+                            final buyQtyInCart = readMoney(
+                              match['buyQuantityInCart'],
+                            );
+                            final freeQtyStep = readMoney(
+                              match['freeQuantityStep'],
+                            );
+                            final freeQtyApplied = readMoney(
+                              match['predictedFreeQuantity'],
+                            );
+                            final remainingQty = readMoney(
+                              match['remainingBuyQuantity'],
+                            );
+                            final buyUnitPrice = readMoney(
+                              match['buyUnitPrice'],
+                            );
+                            final freeUnitPrice = readMoney(
+                              match['freeUnitPrice'],
+                            );
+                            final estimatedDiscount = readMoney(
+                              match['estimatedDiscount'],
+                            );
+                            final isEligible = match['eligible'] == true;
+                            final usageLimitEnabled =
+                                match['usageLimitEnabled'] == true;
+                            final usageLimitReached =
+                                match['usageLimitReached'] == true;
+                            final blockedForNewCustomer =
+                                match['blockedForNewCustomer'] == true;
+                            final nextBillMessage = match['nextBillMessage']
+                                ?.toString();
+                            final maxUsagePerCustomer = readMoney(
+                              match['maxUsagePerCustomer'],
+                            );
+                            final customerUsageCount = readMoney(
+                              match['customerUsageCount'],
+                            );
+                            final customerUsageRemaining = readMoney(
+                              match['customerUsageRemaining'],
+                            );
+
+                            return Container(
+                              width: double.infinity,
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.08),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Buy $buyProductName x${formatQty(buyQtyStep)} (₹${buyUnitPrice.toStringAsFixed(2)})',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  Text(
+                                    'In cart: ${formatQty(buyQtyInCart)}',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Get $freeProductName x${formatQty(freeQtyStep)} FREE (₹${freeUnitPrice.toStringAsFixed(2)})',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  if (usageLimitEnabled)
+                                    Text(
+                                      'Usage: ${formatQty(customerUsageCount)} / ${formatQty(maxUsagePerCustomer)}',
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    blockedForNewCustomer
+                                        ? (nextBillMessage ??
+                                              'This offer will be available from next bill after customer is created.')
+                                        : usageLimitReached
+                                        ? 'Usage limit reached for this customer.'
+                                        : isEligible
+                                        ? 'Potential free: $freeProductName x${formatQty(freeQtyApplied)} | Est. discount ₹${estimatedDiscount.toStringAsFixed(2)}'
+                                        : 'Need ${formatQty(remainingQty)} more $buyProductName',
+                                    style: TextStyle(
+                                      color: blockedForNewCustomer
+                                          ? Colors.orangeAccent
+                                          : usageLimitReached
+                                          ? Colors.redAccent
+                                          : isEligible
+                                          ? const Color(0xFF2EBF3B)
+                                          : Colors.orangeAccent,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  if (usageLimitEnabled &&
+                                      !blockedForNewCustomer &&
+                                      !usageLimitReached &&
+                                      customerUsageRemaining > 0)
+                                    Text(
+                                      'Remaining uses: ${formatQty(customerUsageRemaining)}',
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            );
+                          }),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Preview only. Final free item and discount are applied by server on submit.',
+                            style: TextStyle(
+                              color: Colors.white54,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (productPriceOfferEnabled &&
+                    productPriceOfferMatches.isNotEmpty)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2A1912),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: const Color(0xFFFF9F0A).withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Product Price Offer',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          ...productPriceOfferMatches.map((match) {
+                            final productName =
+                                match['productName']?.toString() ?? 'Product';
+                            final quantityInCart = readMoney(
+                              match['quantityInCart'],
+                            );
+                            final baseUnitPrice = readMoney(
+                              match['baseUnitPrice'],
+                            );
+                            final discountPerUnit = readMoney(
+                              match['discountPerUnit'],
+                            );
+                            final offerUnitPrice = readMoney(
+                              match['offerUnitPrice'],
+                            );
+                            final predictedAppliedUnits = readMoney(
+                              match['predictedAppliedUnits'],
+                            );
+                            final predictedDiscountTotal = readMoney(
+                              match['predictedDiscountTotal'],
+                            );
+                            final predictedSubtotal = readMoney(
+                              match['predictedSubtotal'],
+                            );
+                            final predictedEffectiveUnitPrice = readMoney(
+                              match['predictedEffectiveUnitPrice'],
+                            );
+                            final usageLimitEnabled =
+                                match['usageLimitEnabled'] == true;
+                            final usageLimitReached =
+                                match['usageLimitReached'] == true;
+                            final blockedForNewCustomer =
+                                match['blockedForNewCustomer'] == true;
+                            final nextBillMessage = match['nextBillMessage']
+                                ?.toString();
+                            final maxUsagePerCustomer = readMoney(
+                              match['maxUsagePerCustomer'],
+                            );
+                            final customerUsageCount = readMoney(
+                              match['customerUsageCount'],
+                            );
+                            final customerUsageRemaining = readMoney(
+                              match['customerUsageRemaining'],
+                            );
+                            final isEligible = match['eligible'] == true;
+
+                            return Container(
+                              width: double.infinity,
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.08),
+                                ),
+                              ),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '$productName x${formatQty(quantityInCart)}',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Unit: ₹${baseUnitPrice.toStringAsFixed(2)} | Discount: ₹${discountPerUnit.toStringAsFixed(2)} | Pay: ₹${offerUnitPrice.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  if (usageLimitEnabled)
+                                    Text(
+                                      'Usage: ${formatQty(customerUsageCount)} / ${formatQty(maxUsagePerCustomer)}',
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    blockedForNewCustomer
+                                        ? (nextBillMessage ??
+                                              'This offer will be available from next bill after customer is created.')
+                                        : usageLimitReached
+                                        ? 'Usage limit reached for this customer.'
+                                        : isEligible
+                                        ? 'Discounted units: ${formatQty(predictedAppliedUnits)} | Est. discount ₹${predictedDiscountTotal.toStringAsFixed(2)}'
+                                        : 'No eligible discounted units in current cart.',
+                                    style: TextStyle(
+                                      color: blockedForNewCustomer
+                                          ? Colors.orangeAccent
+                                          : usageLimitReached
+                                          ? Colors.redAccent
+                                          : isEligible
+                                          ? const Color(0xFF2EBF3B)
+                                          : Colors.orangeAccent,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  Text(
+                                    'Preview subtotal: ₹${predictedSubtotal.toStringAsFixed(2)} | Effective unit: ₹${predictedEffectiveUnitPrice.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  if (usageLimitEnabled &&
+                                      !blockedForNewCustomer &&
+                                      !usageLimitReached &&
+                                      customerUsageRemaining > 0)
+                                    Text(
+                                      'Remaining discounted units: ${formatQty(customerUsageRemaining)}',
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            );
+                          }),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Preview only. Final price-offer units and totals are applied by server on submit.',
+                            style: TextStyle(
+                              color: Colors.white54,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                if (totalPercentageOfferEnabled)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1F172B),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: const Color(0xFF9B7DFF).withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: SingleChildScrollView(
+                      child: Builder(
+                        builder: (context) {
+                          final discountPercent = readMoney(
+                            totalPercentageOfferData?['discountPercent'],
+                          );
+                          final maxOfferCount = readMoney(
+                            totalPercentageOfferData?['maxOfferCount'],
+                          );
+                          final maxCustomerCount = readMoney(
+                            totalPercentageOfferData?['maxCustomerCount'],
+                          );
+                          final maxUsagePerCustomer = readMoney(
+                            totalPercentageOfferData?['maxUsagePerCustomer'],
+                          );
+                          final givenCount = readMoney(
+                            totalPercentageOfferData?['givenCount'],
+                          );
+                          final customerCount = readMoney(
+                            totalPercentageOfferData?['customerCount'],
+                          );
+                          final usageForCustomer = readMoney(
+                            totalPercentageOfferData?['usageForCustomer'],
+                          );
+                          final globalRemaining = readMoney(
+                            totalPercentageOfferData?['globalRemaining'],
+                          );
+                          final customerRemaining = readMoney(
+                            totalPercentageOfferData?['customerRemaining'],
+                          );
+                          final usageRemaining = readMoney(
+                            totalPercentageOfferData?['usageRemaining'],
+                          );
+                          final blockedWithoutCustomer =
+                              totalPercentageOfferData?['blockedWithoutCustomer'] ==
+                              true;
+                          final globalLimitReached =
+                              totalPercentageOfferData?['globalLimitReached'] ==
+                              true;
+                          final customerLimitReached =
+                              totalPercentageOfferData?['customerLimitReached'] ==
+                              true;
+                          final usageLimitReached =
+                              totalPercentageOfferData?['usageLimitReached'] ==
+                              true;
+                          final blockedByHigherPriority =
+                              highestPriorityAppliedPreviewName != null;
+                          final hasLimitBlock =
+                              blockedWithoutCustomer ||
+                              globalLimitReached ||
+                              customerLimitReached ||
+                              usageLimitReached;
+                          final amountAfterCustomerOffer =
+                              (billTotal - previewDiscount)
+                                  .clamp(0.0, double.infinity)
+                                  .toDouble();
+                          final canEstimatePercentageDiscount =
+                              discountPercent > 0 &&
+                              !hasLimitBlock &&
+                              !blockedByHigherPriority;
+                          final estimatedPercentageDiscount =
+                              canEstimatePercentageDiscount
+                              ? double.parse(
+                                  (amountAfterCustomerOffer *
+                                          discountPercent /
+                                          100)
+                                      .toStringAsFixed(2),
+                                )
+                              : 0.0;
+                          final estimatedPayableAfterPercentage =
+                              (amountAfterCustomerOffer -
+                                      estimatedPercentageDiscount)
+                                  .clamp(0.0, double.infinity)
+                                  .toDouble();
+
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Total Amount Percentage Offer',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                'Discount: ${discountPercent.toStringAsFixed(2)}%',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              Text(
+                                'No checkbox needed. Backend auto-applies when eligible.',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              Text(
+                                'Order: Gross -> Customer offer -> Percentage offer -> Final total',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                maxOfferCount > 0
+                                    ? 'Global usage: ${formatQty(givenCount)} / ${formatQty(maxOfferCount)} (remaining ${formatQty(globalRemaining)})'
+                                    : 'Global usage: unlimited',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              Text(
+                                maxCustomerCount > 0
+                                    ? 'Customer count: ${formatQty(customerCount)} / ${formatQty(maxCustomerCount)} (remaining ${formatQty(customerRemaining)})'
+                                    : 'Customer count limit: unlimited',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              Text(
+                                maxUsagePerCustomer > 0
+                                    ? 'Your usage: ${formatQty(usageForCustomer)} / ${formatQty(maxUsagePerCustomer)} (remaining ${formatQty(usageRemaining)})'
+                                    : 'Per-customer usage limit: unlimited',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Bill total: ₹${billTotal.toStringAsFixed(2)}',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              if (previewDiscount > 0)
+                                Text(
+                                  'Credit offer discount: ₹${previewDiscount.toStringAsFixed(2)}',
+                                  style: const TextStyle(
+                                    color: Color(0xFF2EBF3B),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              Text(
+                                canEstimatePercentageDiscount
+                                    ? 'Percentage offer discount (est.): ₹${estimatedPercentageDiscount.toStringAsFixed(2)}'
+                                    : 'Percentage offer discount (est.): ₹0.00',
+                                style: TextStyle(
+                                  color: canEstimatePercentageDiscount
+                                      ? const Color(0xFF9B7DFF)
+                                      : Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              Text(
+                                'Estimated payable: ₹${estimatedPayableAfterPercentage.toStringAsFixed(2)}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const Text(
+                                'Final payable uses backend totalAmount after submit.',
+                                style: TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 11,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                blockedByHigherPriority
+                                    ? 'Blocked by higher-priority offer: $highestPriorityAppliedPreviewName.'
+                                    : blockedWithoutCustomer
+                                    ? 'Phone number is required for customer-limit checks.'
+                                    : globalLimitReached
+                                    ? 'Global percentage-offer limit reached.'
+                                    : customerLimitReached
+                                    ? 'Customer-count limit reached.'
+                                    : usageLimitReached
+                                    ? 'Per-customer usage limit reached.'
+                                    : 'Limits look open. Final eligibility is checked by backend on submit.',
+                                style: TextStyle(
+                                  color:
+                                      blockedByHigherPriority || hasLimitBlock
+                                      ? Colors.orangeAccent
+                                      : const Color(0xFF2EBF3B),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                if (randomCustomerOfferEligible)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF102229),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: const Color(0xFF00B8D9).withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Random Customer Offer',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          if (randomOfferCampaignCode.isNotEmpty)
+                            Text(
+                              'Campaign: $randomOfferCampaignCode',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                              ),
+                            ),
+                          if (randomCustomerOfferSelectedMatch != null) ...[
+                            (() {
+                              final match = randomCustomerOfferSelectedMatch!;
+                              final productName =
+                                  match['productName']?.toString() ?? 'Product';
+                              final remainingCount = readMoney(
+                                match['remainingCount'],
+                              );
+                              final usageLimitEnabled =
+                                  match['usageLimitEnabled'] == true;
+                              final maxUsagePerCustomer = readMoney(
+                                match['maxUsagePerCustomer'],
+                              );
+                              final customerUsageCount = readMoney(
+                                match['customerUsageCount'],
+                              );
+                              final customerUsageRemaining = readMoney(
+                                match['customerUsageRemaining'],
+                              );
+                              return Container(
+                                width: double.infinity,
+                                margin: const EdgeInsets.only(bottom: 8),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.2),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: Colors.white.withValues(alpha: 0.08),
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '$productName (Free x1)',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    Text(
+                                      'Remaining winners: ${formatQty(remainingCount)}',
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                    if (usageLimitEnabled)
+                                      Text(
+                                        'Usage: ${formatQty(customerUsageCount)} / ${formatQty(maxUsagePerCustomer)} | Remaining: ${formatQty(customerUsageRemaining)}',
+                                        style: const TextStyle(
+                                          color: Colors.white70,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              );
+                            })(),
+                          ],
+                          const Text(
+                            'Eligible now. Server will add one random free item on submit.',
+                            style: TextStyle(
+                              color: Color(0xFF2EBF3B),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          if (isNewCustomer)
+                            const Text(
+                              'New customer is supported. Backend creates customer on completed bill.',
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                              ),
+                            ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'Preview only. Final random offer check is done by server on submit.',
+                            style: TextStyle(
+                              color: Colors.white54,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ];
+              int runningCardIndex = 0;
+              int? creditCardIndex;
+              int? productToProductCardIndex;
+              int? productPriceCardIndex;
+              int? totalPercentageCardIndex;
+              int? randomCardIndex;
+
+              if (offerEnabled) {
+                creditCardIndex = runningCardIndex++;
+              }
+              if (productOfferEnabled && productOfferMatches.isNotEmpty) {
+                productToProductCardIndex = runningCardIndex++;
+              }
+              if (productPriceOfferEnabled &&
+                  productPriceOfferMatches.isNotEmpty) {
+                productPriceCardIndex = runningCardIndex++;
+              }
+              if (totalPercentageOfferEnabled) {
+                totalPercentageCardIndex = runningCardIndex++;
+              }
+              if (randomCustomerOfferEligible) {
+                randomCardIndex = runningCardIndex++;
+              }
+
+              int? selectedCardIndex;
+              if (hasEligibleProductOffer &&
+                  productToProductCardIndex != null) {
+                selectedCardIndex = productToProductCardIndex;
+              } else if (hasEligibleProductPriceOffer &&
+                  productPriceCardIndex != null) {
+                selectedCardIndex = productPriceCardIndex;
+              } else if (hasEligibleRandomOffer && randomCardIndex != null) {
+                selectedCardIndex = randomCardIndex;
+              } else if (effectiveApplyCustomerOffer &&
+                  creditCardIndex != null) {
+                selectedCardIndex = creditCardIndex;
+              } else if (totalPercentageCardIndex != null) {
+                selectedCardIndex = totalPercentageCardIndex;
+              } else if (canApplyCustomerOffer && creditCardIndex != null) {
+                selectedCardIndex = creditCardIndex;
+              } else if (productToProductCardIndex != null) {
+                selectedCardIndex = productToProductCardIndex;
+              } else if (productPriceCardIndex != null) {
+                selectedCardIndex = productPriceCardIndex;
+              } else if (randomCardIndex != null) {
+                selectedCardIndex = randomCardIndex;
+              }
+
+              if (selectedCardIndex != null &&
+                  selectedCardIndex >= 0 &&
+                  selectedCardIndex < offerCards.length) {
+                final selectedCard = offerCards[selectedCardIndex];
+                offerCards
+                  ..clear()
+                  ..add(selectedCard);
+                offerPageIndex = 0;
+              }
+              if (offerPageIndex >= offerCards.length) {
+                offerPageIndex = 0;
+              }
 
               return Dialog(
                 backgroundColor: const Color(0xFF1E1E1E),
@@ -656,345 +1729,245 @@ class _CartPageState extends State<CartPage> {
                   borderRadius: BorderRadius.circular(16),
                 ),
                 insetPadding: const EdgeInsets.symmetric(horizontal: 28),
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Center(
-                            child: Text(
-                              "Customer Details",
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                          Text(
-                            "Phone Number",
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 14,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Container(
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF121212),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: const Color(
-                                  0xFF0A84FF,
-                                ).withValues(alpha: 0.5),
-                              ),
-                            ),
-                            child: TextField(
-                              controller: phoneCtrl,
-                              keyboardType: TextInputType.phone,
-                              style: const TextStyle(color: Colors.white),
-                              onChanged: (val) {
-                                setDialogState(() {});
-                                debounceTimer?.cancel();
-                                debounceTimer = Timer(
-                                  const Duration(milliseconds: 500),
-                                  () => lookupCustomer(val, setDialogState),
-                                );
-                              },
-                              decoration: const InputDecoration(
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 14,
-                                ),
-                                border: InputBorder.none,
-                                hintText: "Enter phone number",
-                                hintStyle: TextStyle(color: Colors.white38),
-                              ),
-                            ),
-                          ),
-                          if (isLookupInProgress) ...[
-                            const SizedBox(height: 10),
-                            const Center(
-                              child: SizedBox(
-                                width: 18,
-                                height: 18,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Color(0xFF0A84FF),
-                                ),
-                              ),
-                            ),
-                          ],
-                          if (lookupError != null) ...[
-                            const SizedBox(height: 10),
-                            Text(
-                              lookupError!,
-                              style: const TextStyle(
-                                color: Colors.redAccent,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                          const SizedBox(height: 18),
-                          Text(
-                            "Customer Name",
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 14,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Container(
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF121212),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: const Color(
-                                  0xFF0A84FF,
-                                ).withValues(alpha: 0.5),
-                              ),
-                            ),
-                            child: TextField(
-                              controller: nameCtrl,
-                              style: const TextStyle(color: Colors.white),
-                              decoration: const InputDecoration(
-                                contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 14,
-                                ),
-                                border: InputBorder.none,
-                                hintText: "Enter customer name",
-                                hintStyle: TextStyle(color: Colors.white38),
-                              ),
-                            ),
-                          ),
-                          if (customerLookupData != null) ...[
-                            const SizedBox(height: 14),
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF121212),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.12),
-                                ),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    'Customer: ${customerLookupData!['name'] ?? 'N/A'}',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    'History: ${customerLookupData!['totalBills'] ?? 0} bills | ₹${readMoney(customerLookupData!['totalAmount']).toStringAsFixed(2)} spent',
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                          if (offerEnabled) ...[
-                            const SizedBox(height: 12),
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF0F1A11),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: const Color(
-                                    0xFF2EBF3B,
-                                  ).withValues(alpha: 0.45),
-                                ),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text(
-                                    'Customer Credit Offer',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    'Points: ${rewardPoints.toStringAsFixed(0)} / ${pointsNeeded.toStringAsFixed(0)}',
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  Text(
-                                    'Completed bills used: $completedBillsCount | ₹${completedSpendAmount.toStringAsFixed(2)}',
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  const Text(
-                                    'Only completed bills earn points.',
-                                    style: TextStyle(
-                                      color: Colors.white54,
-                                      fontSize: 11,
-                                    ),
-                                  ),
-                                  Text(
-                                    offerEligible
-                                        ? 'Eligible: Offer discount ₹${offerAmount.toStringAsFixed(2)}'
-                                        : 'Need ${remainingPoints.toStringAsFixed(0)} more points',
-                                    style: TextStyle(
-                                      color: offerEligible
-                                          ? const Color(0xFF2EBF3B)
-                                          : Colors.orangeAccent,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  if (!offerEligible && remainingSpend > 0)
-                                    Text(
-                                      'Spend ₹${remainingSpend.toStringAsFixed(2)} more to unlock offer',
-                                      style: const TextStyle(
-                                        color: Colors.orangeAccent,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  if (!offerEligible && historyBasedEligible)
-                                    Text(
-                                      historySyncFailed
-                                          ? 'History shows eligible, but points sync failed. Please refresh or contact admin.'
-                                          : 'Syncing history points... please wait and retry.',
-                                      style: const TextStyle(
-                                        color: Colors.orangeAccent,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  if (historySyncApplied)
-                                    const Text(
-                                      'Points synced from completed history.',
-                                      style: TextStyle(
-                                        color: Color(0xFF2EBF3B),
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  const SizedBox(height: 8),
-                                  IgnorePointer(
-                                    ignoring: !offerEligible,
-                                    child: Opacity(
-                                      opacity: offerEligible ? 1 : 0.5,
-                                      child: CheckboxListTile(
-                                        contentPadding: EdgeInsets.zero,
-                                        dense: true,
-                                        controlAffinity:
-                                            ListTileControlAffinity.leading,
-                                        title: const Text(
-                                          'Apply customer offer on this bill',
-                                          style: TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                        value: applyCustomerOffer,
-                                        onChanged: (value) {
-                                          setDialogState(() {
-                                            applyCustomerOffer = value == true;
-                                          });
-                                        },
-                                        activeColor: const Color(0xFF2EBF3B),
-                                      ),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    'Bill total: ₹${billTotal.toStringAsFixed(2)}',
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  Text(
-                                    'Offer discount: ₹${previewDiscount.toStringAsFixed(2)}',
-                                    style: const TextStyle(
-                                      color: Color(0xFF2EBF3B),
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  Text(
-                                    'Remaining payable: ₹${previewPayable.toStringAsFixed(2)}',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                          const SizedBox(height: 28),
-                          Row(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: dialogMaxHeight),
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: SingleChildScrollView(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Expanded(
-                                child: OutlinedButton(
-                                  onPressed: () {
-                                    debounceTimer?.cancel();
-                                    Navigator.pop(context, <String, dynamic>{});
-                                  },
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.white70,
-                                    side: BorderSide(color: Colors.white24),
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 12,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
+                              Center(
+                                child: Text(
+                                  "Customer Details",
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
                                   ),
-                                  child: const Text("Skip"),
                                 ),
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(
+                              const SizedBox(height: 20),
+                              Text(
+                                "Phone Number",
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF121212),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: const Color(
+                                      0xFF0A84FF,
+                                    ).withValues(alpha: 0.5),
+                                  ),
+                                ),
+                                child: TextField(
+                                  controller: phoneCtrl,
+                                  keyboardType: TextInputType.phone,
+                                  style: const TextStyle(color: Colors.white),
+                                  onChanged: (val) {
+                                    setDialogState(() {});
+                                    debounceTimer?.cancel();
+                                    debounceTimer = Timer(
+                                      const Duration(milliseconds: 500),
+                                      () => lookupCustomer(val, setDialogState),
+                                    );
+                                  },
+                                  decoration: const InputDecoration(
+                                    contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 14,
+                                    ),
+                                    border: InputBorder.none,
+                                    hintText: "Enter phone number",
+                                    hintStyle: TextStyle(color: Colors.white38),
+                                  ),
+                                ),
+                              ),
+                              if (isLookupInProgress) ...[
+                                const SizedBox(height: 10),
+                                const Center(
+                                  child: SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Color(0xFF0A84FF),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              if (lookupError != null) ...[
+                                const SizedBox(height: 10),
+                                Text(
+                                  lookupError!,
+                                  style: const TextStyle(
+                                    color: Colors.redAccent,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 18),
+                              Text(
+                                "Customer Name",
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 14,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Container(
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFF121212),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: const Color(
+                                      0xFF0A84FF,
+                                    ).withValues(alpha: 0.5),
+                                  ),
+                                ),
+                                child: TextField(
+                                  controller: nameCtrl,
+                                  style: const TextStyle(color: Colors.white),
+                                  decoration: const InputDecoration(
+                                    contentPadding: EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 14,
+                                    ),
+                                    border: InputBorder.none,
+                                    hintText: "Enter customer name",
+                                    hintStyle: TextStyle(color: Colors.white38),
+                                  ),
+                                ),
+                              ),
+                              if (customerLookupData != null) ...[
+                                const SizedBox(height: 14),
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF121212),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color: Colors.white.withValues(
+                                        alpha: 0.12,
+                                      ),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Customer: ${(() {
+                                          final lookupName = customerLookupData!['name']?.toString().trim() ?? '';
+                                          if (lookupName.isNotEmpty) {
+                                            return lookupName;
+                                          }
+                                          if (customerLookupData!['isNewCustomer'] == true) {
+                                            return 'New customer';
+                                          }
+                                          return 'N/A';
+                                        })()}',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        'History: ${customerLookupData!['totalBills'] ?? 0} bills | ₹${readMoney(customerLookupData!['totalAmount']).toStringAsFixed(2)} spent',
+                                        style: const TextStyle(
+                                          color: Colors.white70,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                              if (hasOfferPreview && offerCards.isNotEmpty) ...[
+                                const SizedBox(height: 12),
+                                const Text(
+                                  'One offer per bill. Priority: Buy A Get B -> Product Price -> Random Product -> Customer Credit -> Total Percentage.',
+                                  style: TextStyle(
+                                    color: Colors.white54,
+                                    fontSize: 11,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                SizedBox(
+                                  height: 250,
+                                  child: PageView.builder(
+                                    reverse: false,
+                                    itemCount: offerCards.length,
+                                    onPageChanged: (index) {
+                                      setDialogState(() {
+                                        offerPageIndex = index;
+                                      });
+                                    },
+                                    itemBuilder: (context, index) {
+                                      return Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 2,
+                                        ),
+                                        child: offerCards[index],
+                                      );
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: List.generate(offerCards.length, (
+                                    index,
+                                  ) {
+                                    final isActive = index == offerPageIndex;
+                                    return AnimatedContainer(
+                                      duration: const Duration(
+                                        milliseconds: 180,
+                                      ),
+                                      margin: const EdgeInsets.symmetric(
+                                        horizontal: 3,
+                                      ),
+                                      width: isActive ? 9 : 6,
+                                      height: isActive ? 9 : 6,
+                                      decoration: BoxDecoration(
+                                        shape: BoxShape.circle,
+                                        color: isActive
+                                            ? const Color(0xFF0A84FF)
+                                            : Colors.white24,
+                                      ),
+                                    );
+                                  }),
+                                ),
+                              ],
+                              const SizedBox(height: 28),
+                              SizedBox(
+                                width: double.infinity,
                                 child: ElevatedButton(
                                   onPressed: () {
-                                    if (nameCtrl.text.trim().isEmpty) {
+                                    final customerName = nameCtrl.text.trim();
+                                    final customerPhone = phoneCtrl.text.trim();
+                                    if (customerName.isEmpty ||
+                                        customerPhone.isEmpty) {
                                       if (!mounted) return;
                                       ScaffoldMessenger.of(
                                         context,
                                       ).showSnackBar(
                                         const SnackBar(
                                           content: Text(
-                                            "Please enter customer name or use Skip",
-                                          ),
-                                        ),
-                                      );
-                                      return;
-                                    }
-                                    if (phoneCtrl.text.trim().isEmpty) {
-                                      if (!mounted) return;
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        const SnackBar(
-                                          content: Text(
-                                            "Phone number is required when adding a customer name",
+                                            "Please enter customer name and phone number",
                                           ),
                                         ),
                                       );
@@ -1002,11 +1975,18 @@ class _CartPageState extends State<CartPage> {
                                     }
                                     debounceTimer?.cancel();
                                     Navigator.pop(context, <String, dynamic>{
-                                      'name': nameCtrl.text,
-                                      'phone': phoneCtrl.text,
+                                      'name': customerName,
+                                      'phone': customerPhone,
                                       'applyCustomerOffer':
-                                          offerEligible && applyCustomerOffer,
-                                      'previewPayable': previewPayable,
+                                          effectiveApplyCustomerOffer,
+                                      'hasProductOfferMatch':
+                                          hasEligibleProductOffer,
+                                      'hasProductPriceOfferMatch':
+                                          hasEligibleProductPriceOffer,
+                                      'hasTotalPercentageOfferEnabled':
+                                          totalPercentageOfferEnabled,
+                                      'hasRandomOfferMatch':
+                                          hasEligibleRandomOffer,
                                     });
                                   },
                                   style: ElevatedButton.styleFrom(
@@ -1028,66 +2008,68 @@ class _CartPageState extends State<CartPage> {
                                   ),
                                 ),
                               ),
-                            ],
-                          ),
-                          if (phoneCtrl.text.length >= 10) ...[
-                            const SizedBox(height: 20),
-                            Center(
-                              child: InkWell(
-                                onTap: () {
-                                  showDialog(
-                                    context: context,
-                                    builder: (context) => CustomerHistoryDialog(
-                                      phoneNumber: phoneCtrl.text.trim(),
+                              if (phoneCtrl.text.length >= 10) ...[
+                                const SizedBox(height: 20),
+                                Center(
+                                  child: InkWell(
+                                    onTap: () {
+                                      showDialog(
+                                        context: context,
+                                        builder: (context) =>
+                                            CustomerHistoryDialog(
+                                              phoneNumber: phoneCtrl.text
+                                                  .trim(),
+                                            ),
+                                      );
+                                    },
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 16,
+                                        vertical: 8,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.green.shade700,
+                                        borderRadius: BorderRadius.circular(20),
+                                      ),
+                                      child: const Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.history,
+                                            color: Colors.white,
+                                            size: 18,
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            "Customer History",
+                                            style: TextStyle(
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                  );
-                                },
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 8,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.green.shade700,
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: const Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.history,
-                                        color: Colors.white,
-                                        size: 18,
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        "Customer History",
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ],
                                   ),
                                 ),
-                              ),
-                            ),
-                          ],
-                        ],
+                              ],
+                            ],
+                          ),
+                        ),
                       ),
-                    ),
-                    Positioned(
-                      right: 8,
-                      top: 8,
-                      child: IconButton(
-                        icon: const Icon(Icons.close, color: Colors.white54),
-                        onPressed: () {
-                          debounceTimer?.cancel();
-                          Navigator.pop(context, null);
-                        },
+                      Positioned(
+                        right: 8,
+                        top: 8,
+                        child: IconButton(
+                          icon: const Icon(Icons.close, color: Colors.white54),
+                          onPressed: () {
+                            debounceTimer?.cancel();
+                            Navigator.pop(context, null);
+                          },
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               );
             },
@@ -1110,6 +2092,60 @@ class _CartPageState extends State<CartPage> {
     final shouldApplyCustomerOffer =
         status == 'completed' &&
         (customerDetails['applyCustomerOffer'] == true);
+    final hasProductOfferMatch =
+        customerDetails['hasProductOfferMatch'] == true;
+    final hasProductPriceOfferMatch =
+        customerDetails['hasProductPriceOfferMatch'] == true;
+    final hasTotalPercentageOfferEnabled =
+        customerDetails['hasTotalPercentageOfferEnabled'] == true;
+    final hasRandomOfferMatch = customerDetails['hasRandomOfferMatch'] == true;
+    String billingCustomerName =
+        (customerDetails['name'] ?? cartProvider.customerName ?? '')
+            .toString()
+            .trim();
+    String billingCustomerPhone =
+        (customerDetails['phone'] ?? cartProvider.customerPhone ?? '')
+            .toString()
+            .trim();
+    final requiresPhoneForOffer =
+        status == 'completed' &&
+        (shouldApplyCustomerOffer ||
+            hasProductOfferMatch ||
+            hasProductPriceOfferMatch ||
+            hasTotalPercentageOfferEnabled ||
+            hasRandomOfferMatch);
+
+    String? tableNumberForSubmit = cartProvider.selectedTable;
+    String? sectionForSubmit = cartProvider.selectedSection;
+
+    if (status == 'pending' &&
+        cartProvider.currentType == CartType.table &&
+        cartProvider.isSharedTableOrder) {
+      final typedSharedTable = _sharedTableController.text.trim();
+      final existingTable = tableNumberForSubmit?.trim() ?? '';
+      final resolvedTable = typedSharedTable.isNotEmpty
+          ? typedSharedTable
+          : existingTable;
+
+      if (resolvedTable.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Enter table number for shared KOT')),
+        );
+        setState(() => _isBillingInProgress = false);
+        return;
+      }
+
+      tableNumberForSubmit = resolvedTable;
+      sectionForSubmit = CartProvider.sharedTablesSectionName;
+      if (cartProvider.selectedTable != tableNumberForSubmit ||
+          cartProvider.selectedSection != sectionForSubmit) {
+        cartProvider.setSelectedTableMetadata(
+          tableNumberForSubmit,
+          sectionForSubmit,
+        );
+      }
+    }
 
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -1123,6 +2159,127 @@ class _CartPageState extends State<CartPage> {
         '📦 SUBMITTING BILL: Branch: $_branchId, Company: $_companyId',
       ); // DEBUG LOG
 
+      String? parseAnyId(dynamic value) {
+        if (value == null) return null;
+        if (value is String) return value;
+        if (value is num) return value.toString();
+        if (value is Map) {
+          final map = Map<String, dynamic>.from(value);
+          final id = map['id'] ?? map['_id'] ?? map[r'$oid'];
+          if (id is String) return id;
+          if (id is num) return id.toString();
+        }
+        return null;
+      }
+
+      String? resolveRelationId(dynamic value) {
+        if (value == null) return null;
+        if (value is String) return value;
+        if (value is num) return value.toString();
+        if (value is Map) {
+          final map = Map<String, dynamic>.from(value);
+          final id = map['id'] ?? map['_id'] ?? map[r'$oid'];
+          if (id is String) return id;
+          if (id is num) return id.toString();
+        }
+        return null;
+      }
+
+      double toNonNegativeDouble(dynamic value) {
+        if (value is num) {
+          final parsed = value.toDouble();
+          return parsed < 0 ? 0 : parsed;
+        }
+        if (value is String) {
+          final parsed = double.tryParse(value);
+          if (parsed == null) return 0;
+          return parsed < 0 ? 0 : parsed;
+        }
+        return 0;
+      }
+
+      Map<String, dynamic>? toPurchasedPatchItem(Map<String, dynamic> rawItem) {
+        final notesValue = (rawItem['notes'] ?? rawItem['specialNote'] ?? '')
+            .toString()
+            .trim();
+        final isOfferFreeItem = rawItem['isOfferFreeItem'] == true;
+        final isRandomCustomerOfferItem =
+            rawItem['isRandomCustomerOfferItem'] == true ||
+            notesValue.toUpperCase() == 'RANDOM CUSTOMER OFFER';
+        if (isOfferFreeItem || isRandomCustomerOfferItem) {
+          return null;
+        }
+
+        final productId =
+            resolveRelationId(rawItem['product']) ?? rawItem['product'];
+        if (productId == null || productId.toString().trim().isEmpty) {
+          return null;
+        }
+
+        final quantity = toNonNegativeDouble(rawItem['quantity']) > 0
+            ? toNonNegativeDouble(rawItem['quantity'])
+            : 1.0;
+        final unitPrice = toNonNegativeDouble(
+          rawItem['unitPrice'] ??
+              rawItem['price'] ??
+              rawItem['effectiveUnitPrice'],
+        );
+        final subtotal = rawItem.containsKey('subtotal')
+            ? toNonNegativeDouble(rawItem['subtotal'])
+            : quantity * unitPrice;
+
+        final payload = <String, dynamic>{
+          if (rawItem['id'] != null) 'id': rawItem['id'].toString(),
+          'product': productId,
+          'name': rawItem['name']?.toString() ?? 'Item',
+          'quantity': quantity,
+          'unitPrice': unitPrice,
+          'subtotal': subtotal,
+        };
+
+        final status = rawItem['status']?.toString();
+        if (status != null && status.isNotEmpty) {
+          payload['status'] = status;
+        }
+
+        final noteValue = rawItem['specialNote'] ?? rawItem['notes'];
+        if (noteValue != null && noteValue.toString().trim().isNotEmpty) {
+          payload['specialNote'] = noteValue.toString();
+        }
+
+        final unit = rawItem['unit']?.toString();
+        if (unit != null && unit.isNotEmpty) {
+          payload['unit'] = unit;
+        }
+
+        return payload;
+      }
+
+      Map<String, dynamic>? toPurchasedCartItemPayload(CartItem item) {
+        if (item.isOfferFreeItem || item.isRandomCustomerOfferItem) {
+          return null;
+        }
+
+        final payload = item.toBillingPayload(
+          includeSubtotal: true,
+          includeBranchOverride: true,
+          branchOverrideValue: _branchId != null,
+        );
+
+        payload.remove('isOfferFreeItem');
+        payload.remove('offerRuleKey');
+        payload.remove('offerTriggerProduct');
+        payload.remove('isRandomCustomerOfferItem');
+        payload.remove('randomCustomerOfferCampaignCode');
+        payload.remove('isPriceOfferApplied');
+        payload.remove('priceOfferRuleKey');
+        payload.remove('priceOfferDiscountPerUnit');
+        payload.remove('priceOfferAppliedUnits');
+        payload.remove('effectiveUnitPrice');
+
+        return payload;
+      }
+
       // 1. Combine active cart items with previously ordered items
       // OLD LOGIC: Merged by product ID (caused "2x Tea" instead of "1 Tea, 1 Tea")
       // NEW LOGIC: Just append new items to the list. Server handles them as separate subdocs.
@@ -1135,32 +2292,133 @@ class _CartPageState extends State<CartPage> {
       // Add all new cart items (new orders)
       mergedItems.addAll(cartProvider.cartItems);
 
-      final billingData = {
-        'items': mergedItems
-            .map(
-              (item) => ({
-                'product': item.id,
-                'name': item.name,
-                'quantity': item.quantity,
-                'unitPrice': item.price,
-                'subtotal': item.price * item.quantity,
-                'branchOverride': _branchId != null,
-                'specialNote': item.specialNote,
-                'status': item.status, // Preserve status (e.g. delivered)
-              }),
-            )
-            .toList(),
+      final hasTableNumberForSubmit =
+          tableNumberForSubmit?.trim().isNotEmpty == true;
+      final hasSectionForSubmit = sectionForSubmit?.trim().isNotEmpty == true;
+      final isTableOrderForSubmit =
+          cartProvider.currentType == CartType.table &&
+          (hasTableNumberForSubmit || hasSectionForSubmit);
+
+      String? billId = cartProvider.recalledBillId;
+      final List<Map<String, dynamic>> existingServerItemsPayload = [];
+      if (isTableOrderForSubmit &&
+          billId == null &&
+          hasTableNumberForSubmit &&
+          hasSectionForSubmit) {
+        final lookupParams = <String, String>{
+          'where[status][in]': 'pending,ordered',
+          'where[tableDetails.tableNumber][equals]': tableNumberForSubmit!,
+          'where[tableDetails.section][equals]': sectionForSubmit!,
+          'limit': '5',
+          'sort': '-updatedAt',
+          'depth': '3',
+        };
+        if (_branchId != null && _branchId!.trim().isNotEmpty) {
+          lookupParams['where[branch][equals]'] = _branchId!;
+        }
+
+        try {
+          final lookupResponse = await http.get(
+            Uri.https('blackforest.vseyal.com', '/api/billings', lookupParams),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          );
+          if (lookupResponse.statusCode == 200) {
+            final lookupRaw = jsonDecode(lookupResponse.body);
+            final lookupMap = lookupRaw is Map
+                ? Map<String, dynamic>.from(lookupRaw)
+                : <String, dynamic>{};
+            final docsRaw = lookupMap['docs'];
+            final docs = docsRaw is List
+                ? docsRaw.whereType<Map>().toList()
+                : const <Map>[];
+            if (docs.isNotEmpty) {
+              final existingBillDoc = Map<String, dynamic>.from(docs.first);
+              final existingBillId =
+                  parseAnyId(existingBillDoc['id']) ??
+                  parseAnyId(existingBillDoc['_id']);
+              if (existingBillId != null && existingBillId.isNotEmpty) {
+                billId = existingBillId;
+                final existingCustomerDetails =
+                    existingBillDoc['customerDetails'];
+                if (existingCustomerDetails is Map) {
+                  final customerMap = Map<String, dynamic>.from(
+                    existingCustomerDetails,
+                  );
+                  final existingName =
+                      customerMap['name']?.toString().trim() ?? '';
+                  final existingPhone =
+                      customerMap['phoneNumber']?.toString().trim() ?? '';
+                  if (billingCustomerName.isEmpty && existingName.isNotEmpty) {
+                    billingCustomerName = existingName;
+                  }
+                  if (billingCustomerPhone.isEmpty &&
+                      existingPhone.isNotEmpty) {
+                    billingCustomerPhone = existingPhone;
+                  }
+                }
+
+                final existingItemsRaw = existingBillDoc['items'];
+                if (existingItemsRaw is List) {
+                  for (final rawItem in existingItemsRaw) {
+                    if (rawItem is! Map) continue;
+                    final mapped = toPurchasedPatchItem(
+                      Map<String, dynamic>.from(rawItem),
+                    );
+                    if (mapped == null) continue;
+                    existingServerItemsPayload.add(mapped);
+                  }
+                }
+                debugPrint(
+                  '📦 Reusing existing table bill via lookup: $billId (items preserved: ${existingServerItemsPayload.length})',
+                );
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('📦 Existing table bill lookup failed: $e');
+        }
+      }
+
+      if (requiresPhoneForOffer && billingCustomerPhone.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Customer phone number is required to apply offers'),
+          ),
+        );
+        setState(() => _isBillingInProgress = false);
+        return;
+      }
+
+      customerDetails['name'] = billingCustomerName;
+      customerDetails['phone'] = billingCustomerPhone;
+
+      final payloadItems = <Map<String, dynamic>>[];
+      if (existingServerItemsPayload.isNotEmpty) {
+        payloadItems.addAll(existingServerItemsPayload);
+      }
+      final itemsToAppend = existingServerItemsPayload.isNotEmpty
+          ? cartProvider.cartItems
+          : mergedItems;
+      for (final item in itemsToAppend) {
+        final mapped = toPurchasedCartItemPayload(item);
+        if (mapped != null) {
+          payloadItems.add(mapped);
+        }
+      }
+
+      final billingData = <String, dynamic>{
+        'items': payloadItems,
         'totalAmount': cartProvider.total,
         'branch': _branchId,
         'company': _companyId,
-        'tableDetails': {
-          'section': cartProvider.selectedSection,
-          'tableNumber': cartProvider.selectedTable,
-        },
-        'recalledBillId': cartProvider.recalledBillId, // PASS RECALLED ID
+        'recalledBillId': billId, // PASS RESOLVED BILL ID
         'customerDetails': {
-          'name': customerDetails['name'] ?? '',
-          'phoneNumber': customerDetails['phone'] ?? '',
+          'name': billingCustomerName,
+          'phoneNumber': billingCustomerPhone,
           'address': '', // Placeholder as shown in schema
         },
         'paymentMethod': _selectedPaymentMethod,
@@ -1175,8 +2433,13 @@ class _CartPageState extends State<CartPage> {
         'applyCustomerOffer': shouldApplyCustomerOffer,
         'status': status,
       };
+      if (isTableOrderForSubmit) {
+        billingData['tableDetails'] = {
+          'section': sectionForSubmit,
+          'tableNumber': tableNumberForSubmit,
+        };
+      }
 
-      final billId = cartProvider.recalledBillId;
       final url = billId != null
           ? Uri.parse('https://blackforest.vseyal.com/api/billings/$billId')
           : Uri.parse('https://blackforest.vseyal.com/api/billings');
@@ -1205,17 +2468,276 @@ class _CartPageState extends State<CartPage> {
       final billingResponse = jsonDecode(response.body);
       debugPrint('📦 BILL RESPONSE: $billingResponse');
 
-      double billedTotal = cartProvider.total;
-      if (billingResponse is Map) {
-        final responseTotal = billingResponse['totalAmount'];
-        final responseDocTotal = billingResponse['doc']?['totalAmount'];
+      double? readServerMoney(dynamic value) {
+        if (value is num) {
+          final parsed = value.toDouble();
+          return parsed < 0 ? 0 : parsed;
+        }
+        if (value is String) {
+          final parsed = double.tryParse(value);
+          if (parsed == null) return null;
+          return parsed < 0 ? 0 : parsed;
+        }
+        return null;
+      }
 
-        if (responseTotal is num) {
-          billedTotal = responseTotal.toDouble();
-        } else if (responseDocTotal is num) {
-          billedTotal = responseDocTotal.toDouble();
+      double? readServerQuantity(dynamic value) {
+        if (value is num) return value.toDouble();
+        if (value is String) return double.tryParse(value);
+        return null;
+      }
+
+      bool hasServerKey(Map<String, dynamic> map, String key) {
+        return map.containsKey(key);
+      }
+
+      final responseMap = billingResponse is Map
+          ? Map<String, dynamic>.from(billingResponse)
+          : <String, dynamic>{};
+      final responseDoc = responseMap['doc'];
+      Map<String, dynamic> finalBillDoc = responseDoc is Map
+          ? Map<String, dynamic>.from(responseDoc)
+          : responseMap;
+
+      String? billDocId(dynamic value) {
+        if (value == null) return null;
+        if (value is String) return value;
+        if (value is num) return value.toString();
+        if (value is Map) {
+          final map = Map<String, dynamic>.from(value);
+          final id = map['id'] ?? map['_id'] ?? map[r'$oid'];
+          if (id is String) return id;
+          if (id is num) return id.toString();
+        }
+        return null;
+      }
+
+      final savedBillId =
+          billDocId(finalBillDoc['id']) ??
+          billDocId(finalBillDoc['_id']) ??
+          billDocId(responseMap['id']) ??
+          billDocId(responseMap['_id']) ??
+          billDocId(responseMap['doc']);
+
+      if ((response.statusCode == 200 || response.statusCode == 201) &&
+          status == 'completed' &&
+          savedBillId != null &&
+          savedBillId.isNotEmpty) {
+        try {
+          final savedBillResponse = await http.get(
+            Uri.parse(
+              'https://blackforest.vseyal.com/api/billings/$savedBillId?depth=3',
+            ),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+          );
+          if (savedBillResponse.statusCode == 200) {
+            final savedBillRaw = jsonDecode(savedBillResponse.body);
+            if (savedBillRaw is Map) {
+              final savedBillMap = Map<String, dynamic>.from(savedBillRaw);
+              final savedBillDoc = savedBillMap['doc'];
+              finalBillDoc = savedBillDoc is Map
+                  ? Map<String, dynamic>.from(savedBillDoc)
+                  : savedBillMap;
+              debugPrint('📦 REFETCHED SAVED BILL: $savedBillId');
+            }
+          } else {
+            debugPrint(
+              '📦 REFETCH BILL FAILED: ${savedBillResponse.statusCode}',
+            );
+          }
+        } catch (e) {
+          debugPrint('📦 REFETCH BILL ERROR: $e');
         }
       }
+
+      final billedTotal =
+          readServerMoney(finalBillDoc['totalAmount']) ?? cartProvider.total;
+      final billedGrossAmount =
+          readServerMoney(finalBillDoc['grossAmount']) ?? billedTotal;
+      final serverOfferApplied = finalBillDoc['customerOfferApplied'] == true;
+      final serverOfferDiscount =
+          readServerMoney(finalBillDoc['customerOfferDiscount']) ?? 0.0;
+      final serverTotalPercentageOfferApplied =
+          finalBillDoc['totalPercentageOfferApplied'] == true;
+      final serverTotalPercentageOfferDiscount =
+          readServerMoney(finalBillDoc['totalPercentageOfferDiscount']) ?? 0.0;
+
+      if (finalBillDoc.isNotEmpty) {
+        debugPrint(
+          '📦 FINAL BILL MONEY (server): gross=$billedGrossAmount | total=$billedTotal',
+        );
+      }
+
+      String? relationId(dynamic value) {
+        if (value == null) return null;
+        if (value is String) return value;
+        if (value is num) return value.toString();
+        if (value is Map) {
+          final map = Map<String, dynamic>.from(value);
+          final id = map['id'] ?? map['_id'] ?? map[r'$oid'];
+          if (id is String) return id;
+          if (id is num) return id.toString();
+        }
+        return null;
+      }
+
+      CartItem? findFallbackItem(
+        String? productId,
+        String name,
+        bool isOfferFreeItem,
+        bool isRandomCustomerOfferItem,
+      ) {
+        for (final item in mergedItems) {
+          if (productId != null &&
+              item.id == productId &&
+              item.isOfferFreeItem == isOfferFreeItem &&
+              item.isRandomCustomerOfferItem == isRandomCustomerOfferItem) {
+            return item;
+          }
+        }
+        for (final item in mergedItems) {
+          if (item.name == name &&
+              item.isOfferFreeItem == isOfferFreeItem &&
+              item.isRandomCustomerOfferItem == isRandomCustomerOfferItem) {
+            return item;
+          }
+        }
+        return null;
+      }
+
+      List<CartItem> finalServerItems = mergedItems;
+      final responseItems = finalBillDoc['items'];
+      if (responseItems is List) {
+        finalServerItems = responseItems.map((raw) {
+          final item = raw is Map
+              ? Map<String, dynamic>.from(raw)
+              : <String, dynamic>{};
+          final product = item['product'];
+          final productMap = product is Map
+              ? Map<String, dynamic>.from(product)
+              : null;
+          final productId = relationId(product);
+          final itemName = item['name']?.toString() ?? 'Unknown';
+          final isOfferFreeItem = item['isOfferFreeItem'] == true;
+          final notesValue = (item['notes'] ?? item['specialNote'] ?? '')
+              .toString()
+              .trim();
+          final isRandomCustomerOfferItem =
+              item['isRandomCustomerOfferItem'] == true ||
+              notesValue.toUpperCase() == 'RANDOM CUSTOMER OFFER';
+          final isReadOnlyOfferItem =
+              isOfferFreeItem || isRandomCustomerOfferItem;
+          final fallback = findFallbackItem(
+            productId,
+            itemName,
+            isOfferFreeItem,
+            isRandomCustomerOfferItem,
+          );
+
+          String? imageUrl = fallback?.imageUrl;
+          String? department = fallback?.department;
+          String? categoryId = fallback?.categoryId;
+          if (productMap != null) {
+            final images = productMap['images'];
+            if (images is List && images.isNotEmpty) {
+              final first = images.first;
+              if (first is Map) {
+                final image = first['image'];
+                final imageUrlRaw = image is Map ? image['url'] : null;
+                if (imageUrlRaw is String && imageUrlRaw.isNotEmpty) {
+                  imageUrl = imageUrlRaw.startsWith('/')
+                      ? 'https://blackforest.vseyal.com$imageUrlRaw'
+                      : imageUrlRaw;
+                }
+              }
+            }
+
+            final productDepartment = productMap['department'];
+            if (productDepartment is Map) {
+              department = productDepartment['name']?.toString();
+            } else if (productDepartment != null) {
+              department = productDepartment.toString();
+            }
+
+            categoryId = relationId(productMap['category']) ?? categoryId;
+          }
+
+          final unitPrice =
+              readServerMoney(
+                item['effectiveUnitPrice'] ??
+                    item['unitPrice'] ??
+                    item['price'],
+              ) ??
+              0.0;
+          final quantity = isRandomCustomerOfferItem
+              ? 1.0
+              : (readServerQuantity(item['quantity']) ??
+                    fallback?.quantity ??
+                    0.0);
+          final lineSubtotal = isRandomCustomerOfferItem
+              ? 0.0
+              : hasServerKey(item, 'subtotal')
+              ? readServerMoney(item['subtotal']) ?? 0.0
+              : fallback?.lineSubtotal;
+          final effectiveUnitPrice = hasServerKey(item, 'effectiveUnitPrice')
+              ? readServerMoney(item['effectiveUnitPrice'])
+              : fallback?.effectiveUnitPrice;
+          final isPriceOfferApplied =
+              item['isPriceOfferApplied'] == true ||
+              fallback?.isPriceOfferApplied == true;
+          final priceOfferRuleKey =
+              item['priceOfferRuleKey']?.toString() ??
+              fallback?.priceOfferRuleKey;
+          final priceOfferDiscountPerUnit =
+              readServerMoney(item['priceOfferDiscountPerUnit']) ??
+              fallback?.priceOfferDiscountPerUnit ??
+              0.0;
+          final priceOfferAppliedUnits =
+              readServerMoney(item['priceOfferAppliedUnits']) ??
+              fallback?.priceOfferAppliedUnits ??
+              0.0;
+
+          return CartItem(
+            id: productId ?? fallback?.id ?? '',
+            billingItemId: item['id']?.toString() ?? fallback?.billingItemId,
+            name: itemName,
+            price: isReadOnlyOfferItem ? 0.0 : unitPrice,
+            imageUrl: imageUrl,
+            quantity: quantity,
+            unit: item['unit']?.toString() ?? fallback?.unit,
+            department: department,
+            categoryId: categoryId,
+            specialNote:
+                item['specialNote']?.toString() ??
+                item['notes']?.toString() ??
+                fallback?.specialNote,
+            status: item['status']?.toString() ?? fallback?.status,
+            isOfferFreeItem: isOfferFreeItem,
+            offerRuleKey:
+                item['offerRuleKey']?.toString() ?? fallback?.offerRuleKey,
+            offerTriggerProductId:
+                relationId(item['offerTriggerProduct']) ??
+                fallback?.offerTriggerProductId,
+            isRandomCustomerOfferItem: isRandomCustomerOfferItem,
+            randomCustomerOfferCampaignCode:
+                item['randomCustomerOfferCampaignCode']?.toString() ??
+                fallback?.randomCustomerOfferCampaignCode,
+            isPriceOfferApplied: isPriceOfferApplied,
+            priceOfferRuleKey: priceOfferRuleKey,
+            priceOfferDiscountPerUnit: priceOfferDiscountPerUnit,
+            priceOfferAppliedUnits: priceOfferAppliedUnits,
+            effectiveUnitPrice: isReadOnlyOfferItem ? 0.0 : effectiveUnitPrice,
+            lineSubtotal: lineSubtotal,
+          );
+        }).toList();
+      }
+
+      debugPrint(
+        '📦 FINAL BILL (server): total=$billedTotal | creditApplied=$serverOfferApplied | creditDiscount=$serverOfferDiscount | percentageApplied=$serverTotalPercentageOfferApplied | percentageDiscount=$serverTotalPercentageOfferDiscount',
+      );
 
       if (response.statusCode == 201 || response.statusCode == 200) {
         // Play success sound (non-blocking)
@@ -1241,27 +2763,41 @@ class _CartPageState extends State<CartPage> {
           );
         } else {
           _printReceipt(
-            items: mergedItems,
+            items: finalServerItems,
             totalAmount: billedTotal,
+            grossAmount: billedGrossAmount,
             printerIp: cartProvider.printerIp!,
             printerPort: cartProvider.printerPort,
             printerProtocol: cartProvider.printerProtocol ?? 'esc_pos',
-            billingResponse: billingResponse,
+            billingResponse: finalBillDoc,
             customerDetails: customerDetails,
             paymentMethod: _selectedPaymentMethod!,
           );
         }
 
-        cartProvider.clearCart();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              status == 'pending'
-                  ? 'KOT SENT SUCCESSFULLY'
-                  : 'Billing submitted successfully',
-            ),
-          ),
-        );
+        if (status == 'pending' && cartProvider.currentType == CartType.table) {
+          cartProvider.loadKOTItems(
+            finalServerItems,
+            billId: savedBillId ?? billId,
+            cName: billingCustomerName,
+            cPhone: billingCustomerPhone,
+            tName: tableNumberForSubmit,
+            tSection: sectionForSubmit,
+          );
+        } else {
+          cartProvider.clearCart();
+        }
+        final totalSavedAmount = (billedGrossAmount - billedTotal)
+            .clamp(0.0, double.infinity)
+            .toDouble();
+        final successMessage = status == 'pending'
+            ? 'KOT SENT SUCCESSFULLY'
+            : totalSavedAmount > 0.0001
+            ? 'Billing submitted. Payable: ₹${billedTotal.toStringAsFixed(2)} (Saved ₹${totalSavedAmount.toStringAsFixed(2)})'
+            : 'Billing submitted. Payable: ₹${billedTotal.toStringAsFixed(2)}';
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(successMessage)));
         if (status == 'pending' && cartProvider.currentType == CartType.table) {
           Navigator.pushAndRemoveUntil(
             context,
@@ -1290,9 +2826,314 @@ class _CartPageState extends State<CartPage> {
     }
   }
 
+  String _formatOfferQty(double value) {
+    if (value % 1 == 0) return value.toInt().toString();
+    return value.toStringAsFixed(2);
+  }
+
+  Future<bool> _confirmKotOfferPreview(CartProvider cartProvider) async {
+    final phone = (cartProvider.customerPhone ?? '').trim();
+    if (phone.length < 10) return true;
+
+    final tableNumber = (cartProvider.selectedTable ?? '').trim();
+    final section = (cartProvider.selectedSection ?? '').trim();
+
+    try {
+      final data = await cartProvider.fetchCustomerData(
+        phone,
+        isTableOrder: true,
+        tableSection: section,
+        tableNumber: tableNumber,
+      );
+      if (data == null) return true;
+
+      double readMoney(dynamic value) {
+        if (value is num) return value.toDouble();
+        if (value is String) return double.tryParse(value) ?? 0.0;
+        return 0.0;
+      }
+
+      Map<String, dynamic>? readMap(dynamic raw) {
+        if (raw is Map) return Map<String, dynamic>.from(raw);
+        return null;
+      }
+
+      List<Map<String, dynamic>> readMapList(dynamic raw) {
+        if (raw is! List) return const <Map<String, dynamic>>[];
+        return raw
+            .whereType<Map>()
+            .map((entry) => Map<String, dynamic>.from(entry))
+            .toList();
+      }
+
+      final productOfferMatches = readMapList(
+        readMap(data['productOfferPreview'])?['matches'],
+      ).where((entry) => entry['eligible'] == true).toList();
+      final productPriceOfferMatches = readMapList(
+        readMap(data['productPriceOfferPreview'])?['matches'],
+      ).where((entry) => entry['eligible'] == true).toList();
+      final randomOfferData = readMap(data['randomCustomerOfferPreview']);
+      final randomOfferMatches = readMapList(
+        randomOfferData?['matches'],
+      ).where((entry) => entry['eligible'] == true).toList();
+      final totalPercentageOfferEnabled =
+          readMap(data['totalPercentageOfferPreview'])?['enabled'] == true;
+      final creditOfferEnabled = readMap(data['offer'])?['enabled'] == true;
+
+      final kotPreviewItems = List<CartItem>.from(cartProvider.cartItems);
+      final offerPreviewItems = <Map<String, dynamic>>[];
+      final previewLines = <String>[];
+
+      if (productOfferMatches.isNotEmpty) {
+        for (final match in productOfferMatches) {
+          final freeName =
+              match['freeProductName']?.toString().trim().isNotEmpty == true
+              ? match['freeProductName'].toString().trim()
+              : 'Free Item';
+          final freeQty = readMoney(match['predictedFreeQuantity']);
+          if (freeQty > 0) {
+            offerPreviewItems.add({
+              'name': freeName,
+              'qty': freeQty,
+              'price': 0.0,
+              'badge': 'FREE OFFER ITEM',
+            });
+          }
+        }
+      } else if (productPriceOfferMatches.isNotEmpty) {
+        for (final match in productPriceOfferMatches) {
+          final productName =
+              match['productName']?.toString().trim().isNotEmpty == true
+              ? match['productName'].toString().trim()
+              : 'Product';
+          final discountPerUnit = readMoney(match['discountPerUnit']);
+          final discountedUnits = readMoney(match['predictedAppliedUnits']);
+          if (discountPerUnit > 0 && discountedUnits > 0) {
+            previewLines.add(
+              '$productName ₹${discountPerUnit.toStringAsFixed(2)} off x${_formatOfferQty(discountedUnits)}',
+            );
+          }
+        }
+      } else if (randomOfferMatches.isNotEmpty) {
+        final selectedRaw = randomOfferData?['selectedMatch'];
+        final selectedMatch = selectedRaw is Map
+            ? Map<String, dynamic>.from(selectedRaw)
+            : randomOfferMatches.first;
+        final productName =
+            selectedMatch['productName']?.toString().trim().isNotEmpty == true
+            ? selectedMatch['productName'].toString().trim()
+            : 'Random Item';
+        offerPreviewItems.add({
+          'name': productName,
+          'qty': 1.0,
+          'price': 0.0,
+          'badge': 'RANDOM FREE ITEM',
+        });
+      } else if (creditOfferEnabled) {
+        previewLines.add('Customer Credit Offer may apply on final billing.');
+      } else if (totalPercentageOfferEnabled) {
+        previewLines.add('Total Percentage Offer may apply on final billing.');
+      }
+
+      if (offerPreviewItems.isEmpty && previewLines.isEmpty) {
+        return true;
+      }
+
+      if (!mounted) return true;
+
+      final customerName = (data['name']?.toString().trim().isNotEmpty == true)
+          ? data['name'].toString().trim()
+          : (cartProvider.customerName ?? '').trim();
+      final tableDisplay = tableNumber.isNotEmpty ? tableNumber : '-';
+
+      return (await showDialog<bool>(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) => AlertDialog(
+              backgroundColor: const Color(0xFF1E1E1E),
+              title: const Text(
+                'Offer Preview Before KOT',
+                style: TextStyle(color: Colors.white),
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Table: $tableDisplay${customerName.isNotEmpty ? ' | Customer: $customerName' : ''}',
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    if (kotPreviewItems.isNotEmpty) ...[
+                      const Text(
+                        'Current KOT items:',
+                        style: TextStyle(color: Colors.white, fontSize: 13),
+                      ),
+                      const SizedBox(height: 6),
+                      ...kotPreviewItems.map(
+                        (item) => Container(
+                          margin: const EdgeInsets.only(bottom: 6),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.18),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: Colors.white12),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  item.name,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                'x${_formatOfferQty(item.quantity)}',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (offerPreviewItems.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      const Text(
+                        'Offer items to be auto-added:',
+                        style: TextStyle(color: Colors.white, fontSize: 13),
+                      ),
+                      const SizedBox(height: 6),
+                      ...offerPreviewItems.map(
+                        (entry) => Container(
+                          margin: const EdgeInsets.only(bottom: 6),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF102229),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: const Color(
+                                0xFF2EBF3B,
+                              ).withValues(alpha: 0.55),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      entry['name']?.toString() ?? 'Offer Item',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ),
+                                  Text(
+                                    'x${_formatOfferQty(readMoney(entry['qty']))}',
+                                    style: const TextStyle(
+                                      color: Colors.white70,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Price: ₹${readMoney(entry['price']).toStringAsFixed(2)}',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              Text(
+                                entry['badge']?.toString() ?? 'OFFER ITEM',
+                                style: const TextStyle(
+                                  color: Color(0xFF2EBF3B),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (previewLines.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      ...previewLines.map(
+                        (line) => Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Text(
+                            line,
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    const Text(
+                      'Final offer application is confirmed by backend after save.',
+                      style: TextStyle(color: Colors.white54, fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text(
+                    'Back',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF0A84FF),
+                  ),
+                  child: const Text(
+                    'Send KOT',
+                    style: TextStyle(color: Colors.white),
+                  ),
+                ),
+              ],
+            ),
+          )) ??
+          false;
+    } catch (e) {
+      debugPrint('Offer preview lookup failed before KOT: $e');
+      return true;
+    }
+  }
+
   Future<void> _printReceipt({
     required List<CartItem> items,
     required double totalAmount,
+    required double grossAmount,
     required String printerIp,
     required int printerPort,
     required String printerProtocol,
@@ -1310,6 +3151,28 @@ class _CartPageState extends State<CartPage> {
       }
       return;
     }
+
+    double toNonNegativeMoney(dynamic value) {
+      if (value is num) {
+        final parsed = value.toDouble();
+        return parsed < 0 ? 0 : parsed;
+      }
+      if (value is String) {
+        final parsed = double.tryParse(value);
+        if (parsed == null) return 0.0;
+        return parsed < 0 ? 0 : parsed;
+      }
+      return 0.0;
+    }
+
+    final customerOfferDiscountFromServer = toNonNegativeMoney(
+      billingResponse['customerOfferDiscount'],
+    );
+    final totalPercentageOfferDiscountFromServer = toNonNegativeMoney(
+      billingResponse['totalPercentageOfferDiscount'],
+    );
+    final totalPercentageOfferApplied =
+        billingResponse['totalPercentageOfferApplied'] == true;
 
     // Fetch waiter name
     String? waiterName;
@@ -1529,6 +3392,8 @@ class _CartPageState extends State<CartPage> {
           final qtyStr = item.quantity % 1 == 0
               ? item.quantity.toStringAsFixed(0)
               : item.quantity.toStringAsFixed(2);
+          final unitPriceToPrint = item.effectiveUnitPrice ?? item.price;
+          final lineAmount = item.lineTotal;
           printer.row([
             PosColumn(text: item.name, width: 5),
             PosColumn(
@@ -1537,19 +3402,73 @@ class _CartPageState extends State<CartPage> {
               styles: const PosStyles(align: PosAlign.center),
             ),
             PosColumn(
-              text: item.price.toStringAsFixed(2),
+              text: unitPriceToPrint.toStringAsFixed(2),
               width: 2,
               styles: const PosStyles(align: PosAlign.right),
             ),
             PosColumn(
-              text: (item.price * item.quantity).toStringAsFixed(2),
+              text: lineAmount.toStringAsFixed(2),
               width: 3,
               styles: const PosStyles(align: PosAlign.right),
             ),
           ]);
+          if (item.isPriceOfferApplied &&
+              item.priceOfferDiscountPerUnit > 0 &&
+              item.priceOfferAppliedUnits > 0) {
+            printer.text(
+              '  PRICE OFFER: -₹${item.priceOfferDiscountPerUnit.toStringAsFixed(2)} x ${item.priceOfferAppliedUnits.toStringAsFixed(2)} unit(s)',
+              styles: const PosStyles(align: PosAlign.left),
+            );
+          }
+          if (item.isRandomCustomerOfferItem) {
+            printer.text(
+              '  RANDOM OFFER APPLIED (FREE)',
+              styles: const PosStyles(align: PosAlign.left),
+            );
+          }
         }
 
         printer.hr(ch: '-');
+        final billDiscount = (grossAmount - totalAmount)
+            .clamp(0.0, double.infinity)
+            .toDouble();
+        if (billDiscount > 0.0001) {
+          printer.row([
+            PosColumn(
+              text: 'GROSS RS ${grossAmount.toStringAsFixed(2)}',
+              width: 12,
+              styles: const PosStyles(align: PosAlign.right),
+            ),
+          ]);
+          printer.row([
+            PosColumn(
+              text: 'DISCOUNT RS ${billDiscount.toStringAsFixed(2)}',
+              width: 12,
+              styles: const PosStyles(align: PosAlign.right),
+            ),
+          ]);
+          if (customerOfferDiscountFromServer > 0.0001) {
+            printer.row([
+              PosColumn(
+                text:
+                    'CREDIT OFFER RS ${customerOfferDiscountFromServer.toStringAsFixed(2)}',
+                width: 12,
+                styles: const PosStyles(align: PosAlign.right),
+              ),
+            ]);
+          }
+          if (totalPercentageOfferApplied &&
+              totalPercentageOfferDiscountFromServer > 0.0001) {
+            printer.row([
+              PosColumn(
+                text:
+                    'PERCENT OFFER RS ${totalPercentageOfferDiscountFromServer.toStringAsFixed(2)}',
+                width: 12,
+                styles: const PosStyles(align: PosAlign.right),
+              ),
+            ]);
+          }
+        }
         printer.row([
           PosColumn(
             text: 'PAID BY: ${paymentMethod.toUpperCase()}',
@@ -2182,6 +4101,24 @@ class _CartPageState extends State<CartPage> {
         child: Consumer<CartProvider>(
           builder: (context, cartProvider, child) {
             final items = cartProvider.cartItems;
+            final showSharedTableInput =
+                cartProvider.currentType == CartType.table &&
+                cartProvider.isSharedTableOrder &&
+                (cartProvider.recalledBillId == null ||
+                    cartProvider.cartItems.isNotEmpty);
+
+            final selectedSharedTable =
+                cartProvider.selectedTable?.trim() ?? '';
+            if (cartProvider.isSharedTableOrder &&
+                selectedSharedTable.isNotEmpty &&
+                _sharedTableController.text != selectedSharedTable) {
+              _sharedTableController.text = selectedSharedTable;
+            }
+            if (!cartProvider.isSharedTableOrder &&
+                _sharedTableController.text.isNotEmpty) {
+              _sharedTableController.clear();
+            }
+
             // Calculate total items as sum of quantities (assuming double, but display as int if whole)
             final totalQuantity = cartProvider.cartItems.fold<double>(
               0,
@@ -2223,10 +4160,12 @@ class _CartPageState extends State<CartPage> {
                                     ),
                                   ),
                                 ),
-                                ...items.map((item) {
+                                ...items.asMap().entries.map((entry) {
+                                  final index = entry.key;
+                                  final item = entry.value;
                                   return _CartItemCard(
                                     key: ValueKey(
-                                      '${item.id}_${item.quantity}',
+                                      '${item.billingItemId ?? item.id}_${index}_${item.quantity}_${item.isOfferFreeItem}_${item.isRandomCustomerOfferItem}',
                                     ),
                                     item: item,
                                     cardColor: _card,
@@ -2279,6 +4218,11 @@ class _CartPageState extends State<CartPage> {
                                 ) {
                                   final index = entry.key;
                                   final item = entry.value;
+                                  final isOfferFreeItem = item.isOfferFreeItem;
+                                  final isRandomOfferItem =
+                                      item.isRandomCustomerOfferItem;
+                                  final isReadOnlyOfferItem =
+                                      isOfferFreeItem || isRandomOfferItem;
                                   final status =
                                       item.status?.toLowerCase() ?? 'ordered';
 
@@ -2316,7 +4260,9 @@ class _CartPageState extends State<CartPage> {
                                   }
 
                                   return GestureDetector(
-                                    onDoubleTap: nextStatus == null
+                                    onDoubleTap:
+                                        isReadOnlyOfferItem ||
+                                            nextStatus == null
                                         ? null
                                         : () => cartProvider
                                               .updateRecalledItemStatus(
@@ -2325,6 +4271,22 @@ class _CartPageState extends State<CartPage> {
                                                 nextStatus!,
                                               ),
                                     onLongPress: () {
+                                      if (isReadOnlyOfferItem) {
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              'Offer items are read-only',
+                                              style: TextStyle(
+                                                color: Colors.white,
+                                              ),
+                                            ),
+                                            duration: Duration(seconds: 1),
+                                          ),
+                                        );
+                                        return;
+                                      }
                                       if (status == 'ordered' ||
                                           status == 'confirmed') {
                                         _showCancelDialog(
@@ -2372,13 +4334,110 @@ class _CartPageState extends State<CartPage> {
                                               crossAxisAlignment:
                                                   CrossAxisAlignment.start,
                                               children: [
-                                                Text(
-                                                  item.name,
-                                                  style: const TextStyle(
-                                                    color: Colors.white,
-                                                    fontWeight: FontWeight.w500,
+                                                if (isReadOnlyOfferItem)
+                                                  Row(
+                                                    children: [
+                                                      Expanded(
+                                                        child: Text(
+                                                          item.name,
+                                                          style:
+                                                              const TextStyle(
+                                                                color: Colors
+                                                                    .white,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w500,
+                                                              ),
+                                                          maxLines: 1,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 8),
+                                                      Flexible(
+                                                        fit: FlexFit.loose,
+                                                        child: ConstrainedBox(
+                                                          constraints:
+                                                              const BoxConstraints(
+                                                                maxWidth: 150,
+                                                              ),
+                                                          child: Container(
+                                                            padding:
+                                                                const EdgeInsets.symmetric(
+                                                                  horizontal: 8,
+                                                                  vertical: 2,
+                                                                ),
+                                                            decoration: BoxDecoration(
+                                                              color:
+                                                                  (isRandomOfferItem
+                                                                          ? const Color(
+                                                                              0xFFFF9F0A,
+                                                                            )
+                                                                          : const Color(
+                                                                              0xFF2EBF3B,
+                                                                            ))
+                                                                      .withValues(
+                                                                        alpha:
+                                                                            0.16,
+                                                                      ),
+                                                              borderRadius:
+                                                                  BorderRadius.circular(
+                                                                    6,
+                                                                  ),
+                                                              border: Border.all(
+                                                                color:
+                                                                    (isRandomOfferItem
+                                                                            ? const Color(
+                                                                                0xFFFF9F0A,
+                                                                              )
+                                                                            : const Color(
+                                                                                0xFF2EBF3B,
+                                                                              ))
+                                                                        .withValues(
+                                                                          alpha:
+                                                                              0.45,
+                                                                        ),
+                                                              ),
+                                                            ),
+                                                            child: Text(
+                                                              isRandomOfferItem
+                                                                  ? 'RANDOM FREE ITEM'
+                                                                  : 'FREE ITEM OFFER',
+                                                              maxLines: 1,
+                                                              overflow:
+                                                                  TextOverflow
+                                                                      .ellipsis,
+                                                              style: TextStyle(
+                                                                color:
+                                                                    isRandomOfferItem
+                                                                    ? const Color(
+                                                                        0xFFFF9F0A,
+                                                                      )
+                                                                    : const Color(
+                                                                        0xFF2EBF3B,
+                                                                      ),
+                                                                fontSize: 10,
+                                                                fontWeight:
+                                                                    FontWeight
+                                                                        .w700,
+                                                                letterSpacing:
+                                                                    0.5,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    ],
+                                                  )
+                                                else
+                                                  Text(
+                                                    item.name,
+                                                    style: const TextStyle(
+                                                      color: Colors.white,
+                                                      fontWeight:
+                                                          FontWeight.w500,
+                                                    ),
                                                   ),
-                                                ),
                                                 if (item.specialNote != null &&
                                                     item
                                                         .specialNote!
@@ -2418,7 +4477,7 @@ class _CartPageState extends State<CartPage> {
                                           ),
                                           const SizedBox(width: 16),
                                           Text(
-                                            '₹${(item.price * item.quantity).toStringAsFixed(2)}',
+                                            '₹${item.lineTotal.toStringAsFixed(2)}',
                                             style: const TextStyle(
                                               color: Colors.white70,
                                               fontWeight: FontWeight.bold,
@@ -2520,6 +4579,39 @@ class _CartPageState extends State<CartPage> {
                             _buildPaymentChips(),
                           ],
                           const SizedBox(height: 16),
+                          if (showSharedTableInput) ...[
+                            Container(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF151515),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: Colors.white.withValues(alpha: 0.16),
+                                ),
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                              ),
+                              child: TextField(
+                                controller: _sharedTableController,
+                                style: const TextStyle(color: Colors.white),
+                                textInputAction: TextInputAction.done,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.allow(
+                                    RegExp(r'[a-zA-Z0-9\- ]'),
+                                  ),
+                                ],
+                                decoration: const InputDecoration(
+                                  border: InputBorder.none,
+                                  hintText: 'Enter shared table number',
+                                  hintStyle: TextStyle(
+                                    color: Colors.white54,
+                                    fontSize: 13,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                          ],
                           // BILLING BUTTONS
                           Row(
                             children: [
@@ -2573,12 +4665,21 @@ class _CartPageState extends State<CartPage> {
                                     child: ElevatedButton(
                                       onPressed: _isBillingInProgress
                                           ? null
-                                          : () => _submitBilling(
-                                              status: 'pending',
-                                              isReminder:
-                                                  cartProvider.recalledBillId !=
-                                                  null,
-                                            ),
+                                          : () async {
+                                              final proceed =
+                                                  await _confirmKotOfferPreview(
+                                                    cartProvider,
+                                                  );
+                                              if (!proceed) return;
+                                              if (!mounted) return;
+                                              await _submitBilling(
+                                                status: 'pending',
+                                                isReminder:
+                                                    cartProvider
+                                                        .recalledBillId !=
+                                                    null,
+                                              );
+                                            },
                                       style: ElevatedButton.styleFrom(
                                         backgroundColor: const Color(
                                           0xFF0A84FF,
@@ -2740,6 +4841,13 @@ class _CartItemCardState extends State<_CartItemCard> {
 
   @override
   Widget build(BuildContext context) {
+    final isFreeOfferItem = widget.item.isOfferFreeItem;
+    final isRandomOfferItem = widget.item.isRandomCustomerOfferItem;
+    final isReadOnlyOfferItem = isFreeOfferItem || isRandomOfferItem;
+    final isPriceOfferItem = widget.item.isPriceOfferApplied;
+    final unitPriceDisplay =
+        widget.item.effectiveUnitPrice ?? widget.item.price;
+
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 8),
       decoration: BoxDecoration(
@@ -2759,7 +4867,7 @@ class _CartItemCardState extends State<_CartItemCard> {
           children: [
             // 🟦 IMAGE → Tap to REMOVE
             GestureDetector(
-              onTap: widget.onRemove,
+              onTap: isReadOnlyOfferItem ? null : widget.onRemove,
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(8),
                 child: widget.item.imageUrl != null
@@ -2805,24 +4913,122 @@ class _CartItemCardState extends State<_CartItemCard> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    widget.item.name,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
+                  if (isReadOnlyOfferItem)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            widget.item.name,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.white,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          fit: FlexFit.loose,
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 150),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color:
+                                    (isRandomOfferItem
+                                            ? const Color(0xFFFF9F0A)
+                                            : const Color(0xFF2EBF3B))
+                                        .withValues(alpha: 0.16),
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color:
+                                      (isRandomOfferItem
+                                              ? const Color(0xFFFF9F0A)
+                                              : const Color(0xFF2EBF3B))
+                                          .withValues(alpha: 0.5),
+                                ),
+                              ),
+                              child: Text(
+                                isRandomOfferItem
+                                    ? 'RANDOM FREE ITEM'
+                                    : 'FREE ITEM OFFER',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: isRandomOfferItem
+                                      ? const Color(0xFFFF9F0A)
+                                      : const Color(0xFF2EBF3B),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  letterSpacing: 0.6,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    Text(
+                      widget.item.name,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+                  if (isPriceOfferItem && !isReadOnlyOfferItem) ...[
+                    const SizedBox(height: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0A84FF).withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: const Color(0xFF0A84FF).withValues(alpha: 0.5),
+                        ),
+                      ),
+                      child: Text(
+                        'PRICE OFFER: -₹${widget.item.priceOfferDiscountPerUnit.toStringAsFixed(2)} x ${widget.item.priceOfferAppliedUnits.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          color: Color(0xFF0A84FF),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 6),
+                  Text(
+                    isReadOnlyOfferItem
+                        ? 'FREE (₹0.00)'
+                        : '₹${unitPriceDisplay.toStringAsFixed(2)} each',
+                    style: TextStyle(
+                      color: isReadOnlyOfferItem
+                          ? (isRandomOfferItem
+                                ? const Color(0xFFFF9F0A)
+                                : const Color(0xFF2EBF3B))
+                          : Colors.white70,
+                      fontSize: 13,
+                      fontWeight: isReadOnlyOfferItem
+                          ? FontWeight.w600
+                          : FontWeight.normal,
+                    ),
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    '₹${widget.item.price.toStringAsFixed(2)} each',
-                    style: TextStyle(color: Colors.white70, fontSize: 13),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Subtotal: ₹${(widget.item.price * widget.item.quantity).toStringAsFixed(2)}',
+                    'Subtotal: ₹${widget.item.lineTotal.toStringAsFixed(2)}',
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
@@ -2844,7 +5050,7 @@ class _CartItemCardState extends State<_CartItemCard> {
                 ],
               ),
             ),
-            if (widget.showNoteIcon)
+            if (widget.showNoteIcon && !isReadOnlyOfferItem)
               IconButton(
                 icon: Icon(
                   widget.item.specialNote?.isNotEmpty == true
@@ -2894,55 +5100,85 @@ class _CartItemCardState extends State<_CartItemCard> {
                 },
               ),
             const SizedBox(width: 4),
-            // 🟦 Quantity controls with input field
-            Column(
-              children: [
-                _QuantityButton(
-                  icon: Icons.add_circle_outline,
-                  onTap: () => widget.onQuantityChange(
-                    (widget.item.quantity + _step).clamp(0.0, double.infinity),
-                  ),
-                  accent: widget.accent,
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  child: SizedBox(
-                    width: 50,
-                    child: TextField(
-                      controller: _qtyController,
-                      keyboardType: const TextInputType.numberWithOptions(
-                        decimal: true,
-                      ),
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        contentPadding: EdgeInsets.zero,
-                        border: InputBorder.none,
-                      ),
-                      onSubmitted: (value) {
-                        double newQty =
-                            double.tryParse(value) ?? widget.item.quantity;
-                        newQty = newQty.clamp(0.0, double.infinity);
-                        widget.onQuantityChange(newQty);
-                        // Step will be updated in didUpdateWidget
-                      },
+            // 🟦 Quantity controls (offer items are read-only)
+            if (isReadOnlyOfferItem)
+              Column(
+                children: [
+                  Text(
+                    _qtyDisplay(widget.item.quantity),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-                ),
-                _QuantityButton(
-                  icon: Icons.remove_circle_outline,
-                  onTap: () => widget.onQuantityChange(
-                    (widget.item.quantity - _step).clamp(0.0, double.infinity),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'LOCKED',
+                    style: TextStyle(
+                      color: Colors.white54,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.6,
+                    ),
                   ),
-                  accent: widget.accent,
-                ),
-              ],
-            ),
+                ],
+              )
+            else
+              Column(
+                children: [
+                  _QuantityButton(
+                    icon: Icons.add_circle_outline,
+                    onTap: () => widget.onQuantityChange(
+                      (widget.item.quantity + _step).clamp(
+                        0.0,
+                        double.infinity,
+                      ),
+                    ),
+                    accent: widget.accent,
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: SizedBox(
+                      width: 50,
+                      child: TextField(
+                        controller: _qtyController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                        ),
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        decoration: const InputDecoration(
+                          isDense: true,
+                          contentPadding: EdgeInsets.zero,
+                          border: InputBorder.none,
+                        ),
+                        onSubmitted: (value) {
+                          double newQty =
+                              double.tryParse(value) ?? widget.item.quantity;
+                          newQty = newQty.clamp(0.0, double.infinity);
+                          widget.onQuantityChange(newQty);
+                          // Step will be updated in didUpdateWidget
+                        },
+                      ),
+                    ),
+                  ),
+                  _QuantityButton(
+                    icon: Icons.remove_circle_outline,
+                    onTap: () => widget.onQuantityChange(
+                      (widget.item.quantity - _step).clamp(
+                        0.0,
+                        double.infinity,
+                      ),
+                    ),
+                    accent: widget.accent,
+                  ),
+                ],
+              ),
           ],
         ),
       ),
