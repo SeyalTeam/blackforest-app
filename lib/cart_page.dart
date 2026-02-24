@@ -1043,10 +1043,34 @@ class _CartPageState extends State<CartPage> {
                                 match['usageLimitEnabled'] == true;
                             final usageLimitReached =
                                 match['usageLimitReached'] == true;
+                            final globalLimitReached =
+                                match['globalLimitReached'] == true;
+                            final customerLimitReached =
+                                match['customerLimitReached'] == true;
+                            final blockedWithoutCustomer =
+                                match['blockedWithoutCustomer'] == true;
                             final blockedForNewCustomer =
                                 match['blockedForNewCustomer'] == true;
                             final nextBillMessage = match['nextBillMessage']
                                 ?.toString();
+                            final maxOfferCount = readMoney(
+                              match['maxOfferCount'],
+                            );
+                            final offerGivenCount = readMoney(
+                              match['offerGivenCount'],
+                            );
+                            final globalRemaining = readMoney(
+                              match['globalRemaining'],
+                            );
+                            final maxCustomerCount = readMoney(
+                              match['maxCustomerCount'],
+                            );
+                            final offerCustomerCount = readMoney(
+                              match['offerCustomerCount'],
+                            );
+                            final customerRemaining = readMoney(
+                              match['customerRemaining'],
+                            );
                             final maxUsagePerCustomer = readMoney(
                               match['maxUsagePerCustomer'],
                             );
@@ -1096,6 +1120,22 @@ class _CartPageState extends State<CartPage> {
                                       fontSize: 12,
                                     ),
                                   ),
+                                  if (maxOfferCount > 0)
+                                    Text(
+                                      'Global usage: ${formatQty(offerGivenCount)} / ${formatQty(maxOfferCount)} (remaining ${formatQty(globalRemaining)})',
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  if (maxCustomerCount > 0)
+                                    Text(
+                                      'Customer count: ${formatQty(offerCustomerCount)} / ${formatQty(maxCustomerCount)} (remaining ${formatQty(customerRemaining)})',
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 12,
+                                      ),
+                                    ),
                                   if (usageLimitEnabled)
                                     Text(
                                       'Usage: ${formatQty(customerUsageCount)} / ${formatQty(maxUsagePerCustomer)}',
@@ -1109,6 +1149,12 @@ class _CartPageState extends State<CartPage> {
                                     blockedForNewCustomer
                                         ? (nextBillMessage ??
                                               'This offer will be available from next bill after customer is created.')
+                                        : blockedWithoutCustomer
+                                        ? 'Customer is required for usage/customer limits.'
+                                        : globalLimitReached
+                                        ? 'Global offer limit reached.'
+                                        : customerLimitReached
+                                        ? 'Customer-count limit reached.'
                                         : usageLimitReached
                                         ? 'Usage limit reached for this customer.'
                                         : isEligible
@@ -1117,7 +1163,10 @@ class _CartPageState extends State<CartPage> {
                                     style: TextStyle(
                                       color: blockedForNewCustomer
                                           ? Colors.orangeAccent
-                                          : usageLimitReached
+                                          : blockedWithoutCustomer ||
+                                                globalLimitReached ||
+                                                customerLimitReached ||
+                                                usageLimitReached
                                           ? Colors.redAccent
                                           : isEligible
                                           ? const Color(0xFF2EBF3B)
@@ -1209,10 +1258,34 @@ class _CartPageState extends State<CartPage> {
                                 match['usageLimitEnabled'] == true;
                             final usageLimitReached =
                                 match['usageLimitReached'] == true;
+                            final globalLimitReached =
+                                match['globalLimitReached'] == true;
+                            final customerLimitReached =
+                                match['customerLimitReached'] == true;
+                            final blockedWithoutCustomer =
+                                match['blockedWithoutCustomer'] == true;
                             final blockedForNewCustomer =
                                 match['blockedForNewCustomer'] == true;
                             final nextBillMessage = match['nextBillMessage']
                                 ?.toString();
+                            final maxOfferCount = readMoney(
+                              match['maxOfferCount'],
+                            );
+                            final offerGivenCount = readMoney(
+                              match['offerGivenCount'],
+                            );
+                            final globalRemaining = readMoney(
+                              match['globalRemaining'],
+                            );
+                            final maxCustomerCount = readMoney(
+                              match['maxCustomerCount'],
+                            );
+                            final offerCustomerCount = readMoney(
+                              match['offerCustomerCount'],
+                            );
+                            final customerRemaining = readMoney(
+                              match['customerRemaining'],
+                            );
                             final maxUsagePerCustomer = readMoney(
                               match['maxUsagePerCustomer'],
                             );
@@ -1256,6 +1329,22 @@ class _CartPageState extends State<CartPage> {
                                       fontSize: 12,
                                     ),
                                   ),
+                                  if (maxOfferCount > 0)
+                                    Text(
+                                      'Global usage: ${formatQty(offerGivenCount)} / ${formatQty(maxOfferCount)} (remaining ${formatQty(globalRemaining)})',
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  if (maxCustomerCount > 0)
+                                    Text(
+                                      'Customer count: ${formatQty(offerCustomerCount)} / ${formatQty(maxCustomerCount)} (remaining ${formatQty(customerRemaining)})',
+                                      style: const TextStyle(
+                                        color: Colors.white70,
+                                        fontSize: 12,
+                                      ),
+                                    ),
                                   if (usageLimitEnabled)
                                     Text(
                                       'Usage: ${formatQty(customerUsageCount)} / ${formatQty(maxUsagePerCustomer)}',
@@ -1269,6 +1358,12 @@ class _CartPageState extends State<CartPage> {
                                     blockedForNewCustomer
                                         ? (nextBillMessage ??
                                               'This offer will be available from next bill after customer is created.')
+                                        : blockedWithoutCustomer
+                                        ? 'Customer is required for usage/customer limits.'
+                                        : globalLimitReached
+                                        ? 'Global offer limit reached.'
+                                        : customerLimitReached
+                                        ? 'Customer-count limit reached.'
                                         : usageLimitReached
                                         ? 'Usage limit reached for this customer.'
                                         : isEligible
@@ -1277,7 +1372,10 @@ class _CartPageState extends State<CartPage> {
                                     style: TextStyle(
                                       color: blockedForNewCustomer
                                           ? Colors.orangeAccent
-                                          : usageLimitReached
+                                          : blockedWithoutCustomer ||
+                                                globalLimitReached ||
+                                                customerLimitReached ||
+                                                usageLimitReached
                                           ? Colors.redAccent
                                           : isEligible
                                           ? const Color(0xFF2EBF3B)
@@ -1376,6 +1474,23 @@ class _CartPageState extends State<CartPage> {
                           final usageLimitReached =
                               totalPercentageOfferData?['usageLimitReached'] ==
                               true;
+                          final randomOnly =
+                              totalPercentageOfferData?['randomOnly'] == true;
+                          final randomSelectionChancePercent = readMoney(
+                            totalPercentageOfferData?['randomSelectionChancePercent'],
+                          );
+                          final randomGatePassed =
+                              totalPercentageOfferData?['randomGatePassed'] ==
+                              true;
+                          final randomGateBlocked =
+                              totalPercentageOfferData?['randomGateBlocked'] ==
+                              true;
+                          final scheduleMatched =
+                              totalPercentageOfferData?['scheduleMatched'] ==
+                              true;
+                          final scheduleBlocked =
+                              totalPercentageOfferData?['scheduleBlocked'] ==
+                              true;
                           final blockedByHigherPriority =
                               highestPriorityAppliedPreviewName != null;
                           final hasLimitBlock =
@@ -1383,6 +1498,8 @@ class _CartPageState extends State<CartPage> {
                               globalLimitReached ||
                               customerLimitReached ||
                               usageLimitReached;
+                          final hasGatingBlock =
+                              randomGateBlocked || scheduleBlocked;
                           final amountAfterCustomerOffer =
                               (billTotal - previewDiscount)
                                   .clamp(0.0, double.infinity)
@@ -1390,6 +1507,7 @@ class _CartPageState extends State<CartPage> {
                           final canEstimatePercentageDiscount =
                               discountPercent > 0 &&
                               !hasLimitBlock &&
+                              !hasGatingBlock &&
                               !blockedByHigherPriority;
                           final estimatedPercentageDiscount =
                               canEstimatePercentageDiscount
@@ -1436,6 +1554,25 @@ class _CartPageState extends State<CartPage> {
                                 'Order: Gross -> Customer offer -> Percentage offer -> Final total',
                                 style: const TextStyle(
                                   color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              if (randomOnly)
+                                Text(
+                                  'Random-only mode: ${randomSelectionChancePercent.toStringAsFixed(2)}% chance (${randomGatePassed ? 'passed' : 'not selected'})',
+                                  style: TextStyle(
+                                    color: randomGatePassed
+                                        ? Colors.white70
+                                        : Colors.orangeAccent,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              Text(
+                                'Schedule: ${scheduleMatched ? 'active now' : 'outside active window'}',
+                                style: TextStyle(
+                                  color: scheduleMatched
+                                      ? Colors.white70
+                                      : Colors.orangeAccent,
                                   fontSize: 12,
                                 ),
                               ),
@@ -1515,6 +1652,10 @@ class _CartPageState extends State<CartPage> {
                                     ? 'Blocked by higher-priority offer: $highestPriorityAppliedPreviewName.'
                                     : blockedWithoutCustomer
                                     ? 'Phone number is required for customer-limit checks.'
+                                    : scheduleBlocked
+                                    ? 'Percentage offer is outside active date/time window.'
+                                    : randomGateBlocked
+                                    ? 'Random selection not hit for percentage offer.'
                                     : globalLimitReached
                                     ? 'Global percentage-offer limit reached.'
                                     : customerLimitReached
@@ -1524,7 +1665,9 @@ class _CartPageState extends State<CartPage> {
                                     : 'Limits look open. Final eligibility is checked by backend on submit.',
                                 style: TextStyle(
                                   color:
-                                      blockedByHigherPriority || hasLimitBlock
+                                      blockedByHigherPriority ||
+                                          hasLimitBlock ||
+                                          hasGatingBlock
                                       ? Colors.orangeAccent
                                       : const Color(0xFF2EBF3B),
                                   fontSize: 12,
@@ -1953,60 +2096,105 @@ class _CartPageState extends State<CartPage> {
                                 ),
                               ],
                               const SizedBox(height: 28),
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton(
-                                  onPressed: () {
-                                    final customerName = nameCtrl.text.trim();
-                                    final customerPhone = phoneCtrl.text.trim();
-                                    if (customerName.isEmpty ||
-                                        customerPhone.isEmpty) {
-                                      if (!mounted) return;
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        const SnackBar(
-                                          content: Text(
-                                            "Please enter customer name and phone number",
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: OutlinedButton(
+                                      onPressed: () {
+                                        debounceTimer?.cancel();
+                                        Navigator.pop(
+                                          context,
+                                          <String, dynamic>{},
+                                        );
+                                      },
+                                      style: OutlinedButton.styleFrom(
+                                        foregroundColor: Colors.white70,
+                                        side: BorderSide(color: Colors.white24),
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 12,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
                                           ),
                                         ),
-                                      );
-                                      return;
-                                    }
-                                    debounceTimer?.cancel();
-                                    Navigator.pop(context, <String, dynamic>{
-                                      'name': customerName,
-                                      'phone': customerPhone,
-                                      'applyCustomerOffer':
-                                          effectiveApplyCustomerOffer,
-                                      'hasProductOfferMatch':
-                                          hasEligibleProductOffer,
-                                      'hasProductPriceOfferMatch':
-                                          hasEligibleProductPriceOffer,
-                                      'hasTotalPercentageOfferEnabled':
-                                          totalPercentageOfferEnabled,
-                                      'hasRandomOfferMatch':
-                                          hasEligibleRandomOffer,
-                                    });
-                                  },
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF0A84FF),
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 12,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: const Text("Skip"),
                                     ),
                                   ),
-                                  child: const Text(
-                                    "Submit",
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: ElevatedButton(
+                                      onPressed: () {
+                                        if (nameCtrl.text.trim().isEmpty) {
+                                          if (!mounted) return;
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                "Please enter customer name or use Skip",
+                                              ),
+                                            ),
+                                          );
+                                          return;
+                                        }
+                                        if (phoneCtrl.text.trim().isEmpty) {
+                                          if (!mounted) return;
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                "Phone number is required when adding a customer name",
+                                              ),
+                                            ),
+                                          );
+                                          return;
+                                        }
+                                        debounceTimer?.cancel();
+                                        Navigator.pop(
+                                          context,
+                                          <String, dynamic>{
+                                            'name': nameCtrl.text,
+                                            'phone': phoneCtrl.text,
+                                            'applyCustomerOffer':
+                                                effectiveApplyCustomerOffer,
+                                            'hasProductOfferMatch':
+                                                hasEligibleProductOffer,
+                                            'hasProductPriceOfferMatch':
+                                                hasEligibleProductPriceOffer,
+                                            'hasTotalPercentageOfferEnabled':
+                                                totalPercentageOfferEnabled,
+                                            'hasRandomOfferMatch':
+                                                hasEligibleRandomOffer,
+                                          },
+                                        );
+                                      },
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: const Color(
+                                          0xFF0A84FF,
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 12,
+                                        ),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                        ),
+                                      ),
+                                      child: const Text(
+                                        "Submit",
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
                                     ),
                                   ),
-                                ),
+                                ],
                               ),
                               if (phoneCtrl.text.length >= 10) ...[
                                 const SizedBox(height: 20),
@@ -2876,8 +3064,13 @@ class _CartPageState extends State<CartPage> {
       final randomOfferMatches = readMapList(
         randomOfferData?['matches'],
       ).where((entry) => entry['eligible'] == true).toList();
+      final totalPercentageOfferData = readMap(
+        data['totalPercentageOfferPreview'],
+      );
       final totalPercentageOfferEnabled =
-          readMap(data['totalPercentageOfferPreview'])?['enabled'] == true;
+          totalPercentageOfferData?['enabled'] == true;
+      final totalPercentageOfferPreviewEligible =
+          totalPercentageOfferData?['previewEligible'] == true;
       final creditOfferEnabled = readMap(data['offer'])?['enabled'] == true;
 
       final kotPreviewItems = List<CartItem>.from(cartProvider.cartItems);
@@ -2931,7 +3124,8 @@ class _CartPageState extends State<CartPage> {
         });
       } else if (creditOfferEnabled) {
         previewLines.add('Customer Credit Offer may apply on final billing.');
-      } else if (totalPercentageOfferEnabled) {
+      } else if (totalPercentageOfferEnabled &&
+          totalPercentageOfferPreviewEligible) {
         previewLines.add('Total Percentage Offer may apply on final billing.');
       }
 

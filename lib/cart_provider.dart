@@ -1391,6 +1391,17 @@ class CartProvider extends ChangeNotifier {
         return defaultValue;
       }
 
+      dynamic readFirstSettingValue(List<String> keys) {
+        final settings = offerSettings;
+        if (settings == null) return null;
+        for (final key in keys) {
+          if (!settings.containsKey(key)) continue;
+          final value = settings[key];
+          if (value != null) return value;
+        }
+        return null;
+      }
+
       final normalizedSection = (tableSection ?? '').trim();
       final normalizedTableNumber = (tableNumber ?? '').trim();
       final hasRequestTableDetails =
@@ -1529,6 +1540,35 @@ class CartProvider extends ChangeNotifier {
       final totalPercentageOfferPercent = toNonNegativeDouble(
         offerSettings?['totalPercentageOfferPercent'],
       );
+      final totalPercentageOfferRandomOnly =
+          offerSettings?['totalPercentageOfferRandomOnly'] == true;
+      final hasTotalPercentageRandomChanceConfig =
+          offerSettings?.containsKey(
+            'totalPercentageOfferRandomSelectionChancePercent',
+          ) ==
+          true;
+      final totalPercentageOfferRandomSelectionChancePercent =
+          toNonNegativeDouble(
+            offerSettings?['totalPercentageOfferRandomSelectionChancePercent'],
+          );
+      final totalPercentageOfferAvailableFromDate = readFirstSettingValue([
+        'totalPercentageOfferAvailableFromDate',
+        'totalPercentageOfferFromDate',
+        'totalPercentageOfferStartDate',
+      ]);
+      final totalPercentageOfferAvailableToDate = readFirstSettingValue([
+        'totalPercentageOfferAvailableToDate',
+        'totalPercentageOfferToDate',
+        'totalPercentageOfferEndDate',
+      ]);
+      final totalPercentageOfferDailyStartTime = readFirstSettingValue([
+        'totalPercentageOfferDailyStartTime',
+        'totalPercentageOfferStartTime',
+      ]);
+      final totalPercentageOfferDailyEndTime = readFirstSettingValue([
+        'totalPercentageOfferDailyEndTime',
+        'totalPercentageOfferEndTime',
+      ]);
       final totalPercentageOfferMaxOfferCount = toNonNegativeDouble(
         offerSettings?['totalPercentageOfferMaxOfferCount'],
       );
@@ -1568,6 +1608,12 @@ class CartProvider extends ChangeNotifier {
       final randomCustomerOfferTimezone =
           offerSettings?['randomCustomerOfferTimezone']?.toString().trim() ??
           '';
+      final totalPercentageOfferTimezone =
+          readFirstSettingValue([
+            'totalPercentageOfferTimezone',
+            'totalPercentageOfferTimeZone',
+          ])?.toString().trim() ??
+          randomCustomerOfferTimezone;
       final rawRandomCustomerOfferProducts =
           offerSettings?['randomCustomerOfferProducts'];
       final lookupPhoneKey = normalizedPhone.replaceAll(RegExp(r'[^0-9]'), '');
@@ -1615,32 +1661,6 @@ class CartProvider extends ChangeNotifier {
         return const <String>[];
       }
 
-      String relationPhone(dynamic value) {
-        if (value == null) return '';
-        if (value is String || value is num) {
-          return value.toString().replaceAll(RegExp(r'[^0-9]'), '');
-        }
-        if (value is Map) {
-          final map = Map<String, dynamic>.from(value);
-          final directPhone =
-              map['phoneNumber'] ?? map['phone'] ?? map['mobile'];
-          if (directPhone != null) {
-            return directPhone.toString().replaceAll(RegExp(r'[^0-9]'), '');
-          }
-          final customer = map['customer'];
-          if (customer is Map) {
-            final customerPhone =
-                customer['phoneNumber'] ??
-                customer['phone'] ??
-                customer['mobile'];
-            if (customerPhone != null) {
-              return customerPhone.toString().replaceAll(RegExp(r'[^0-9]'), '');
-            }
-          }
-        }
-        return '';
-      }
-
       double relationPrice(dynamic value) {
         if (value is! Map) return 0;
         final map = Map<String, dynamic>.from(value);
@@ -1665,6 +1685,124 @@ class CartProvider extends ChangeNotifier {
         }
 
         return 0;
+      }
+
+      DateTime? parseDateValue(dynamic value) {
+        if (value == null) return null;
+        final raw = value.toString().trim();
+        if (raw.isEmpty) return null;
+        return DateTime.tryParse(raw);
+      }
+
+      int? parseMinutesOfDay(dynamic value) {
+        if (value == null) return null;
+        final raw = value.toString().trim();
+        if (raw.isEmpty) return null;
+        final parts = raw.split(':');
+        if (parts.length < 2) return null;
+        final hour = int.tryParse(parts[0]);
+        final minute = int.tryParse(parts[1]);
+        if (hour == null || minute == null) return null;
+        if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+        return hour * 60 + minute;
+      }
+
+      int? parseUtcOffsetMinutes(String raw) {
+        final value = raw.trim();
+        if (value.isEmpty) return null;
+        final normalized = value.toUpperCase();
+        if (normalized == 'UTC' || normalized == 'GMT') return 0;
+
+        final match = RegExp(r'^([+-])(\d{2}):?(\d{2})$').firstMatch(value);
+        if (match == null) return null;
+        final sign = match.group(1) == '-' ? -1 : 1;
+        final hour = int.tryParse(match.group(2) ?? '');
+        final minute = int.tryParse(match.group(3) ?? '');
+        if (hour == null || minute == null) return null;
+        return sign * (hour * 60 + minute);
+      }
+
+      DateTime nowInConfiguredTimezone(String timezoneRaw) {
+        final timezone = timezoneRaw.trim();
+        if (timezone.isEmpty) return DateTime.now();
+
+        final lower = timezone.toLowerCase();
+        const knownOffsets = <String, int>{
+          'utc': 0,
+          'gmt': 0,
+          'asia/kolkata': 330,
+          'asia/calcutta': 330,
+          'ist': 330,
+        };
+        final offsetMins =
+            knownOffsets[lower] ?? parseUtcOffsetMinutes(timezone);
+        if (offsetMins == null) return DateTime.now();
+
+        return DateTime.now().toUtc().add(Duration(minutes: offsetMins));
+      }
+
+      bool isNowWithinSchedule({
+        required DateTime now,
+        dynamic availableFromDate,
+        dynamic availableToDate,
+        dynamic dailyStartTime,
+        dynamic dailyEndTime,
+      }) {
+        final fromDate = parseDateValue(availableFromDate);
+        final toDate = parseDateValue(availableToDate);
+
+        if (fromDate != null && now.isBefore(fromDate)) return false;
+        if (toDate != null) {
+          final inclusiveEnd = DateTime(
+            toDate.year,
+            toDate.month,
+            toDate.day,
+            23,
+            59,
+            59,
+            999,
+          );
+          if (now.isAfter(inclusiveEnd)) return false;
+        }
+
+        final startMins = parseMinutesOfDay(dailyStartTime);
+        final endMins = parseMinutesOfDay(dailyEndTime);
+        if (startMins == null && endMins == null) return true;
+
+        final nowMins = now.hour * 60 + now.minute;
+        if (startMins != null && endMins != null) {
+          if (startMins == endMins) return true;
+          if (startMins < endMins) {
+            return nowMins >= startMins && nowMins <= endMins;
+          }
+          return nowMins >= startMins || nowMins <= endMins;
+        }
+        if (startMins != null) return nowMins >= startMins;
+        return nowMins <= endMins!;
+      }
+
+      int deterministicHash(String seed) {
+        var hash = 0;
+        for (final codeUnit in seed.codeUnits) {
+          hash = (hash * 31 + codeUnit) & 0x7fffffff;
+        }
+        return hash;
+      }
+
+      int deterministicIndex(String seed, int length) {
+        if (length <= 0) return -1;
+        return deterministicHash(seed) % length;
+      }
+
+      bool deterministicChancePass({
+        required String seed,
+        required double chancePercent,
+      }) {
+        if (chancePercent >= 100) return true;
+        if (chancePercent <= 0) return false;
+        final boundedChance = chancePercent.clamp(0, 100).toDouble();
+        final randomBucket = (deterministicHash(seed) % 10000) / 100;
+        return randomBucket < boundedChance;
       }
 
       final customerID = relationId(customerDoc);
@@ -1747,6 +1885,47 @@ class CartProvider extends ChangeNotifier {
       final totalPercentageOfferAlreadyCountedForCustomer =
           customerID != null &&
           totalPercentageOfferCustomers.contains(customerID);
+      final nowForRandomOfferPreview = nowInConfiguredTimezone(
+        randomCustomerOfferTimezone,
+      );
+      final nowForTotalPercentagePreview = nowInConfiguredTimezone(
+        totalPercentageOfferTimezone,
+      );
+      final totalPercentageOfferScheduleMatched = isNowWithinSchedule(
+        now: nowForTotalPercentagePreview,
+        availableFromDate: totalPercentageOfferAvailableFromDate,
+        availableToDate: totalPercentageOfferAvailableToDate,
+        dailyStartTime: totalPercentageOfferDailyStartTime,
+        dailyEndTime: totalPercentageOfferDailyEndTime,
+      );
+      final totalPercentageOfferChancePercent = totalPercentageOfferRandomOnly
+          ? (hasTotalPercentageRandomChanceConfig
+                ? totalPercentageOfferRandomSelectionChancePercent
+                      .clamp(0, 100)
+                      .toDouble()
+                : 100.0)
+          : 100.0;
+      final totalPercentageOfferRandomSeed =
+          '${lookupPhoneKey.isNotEmpty ? lookupPhoneKey : normalizedPhone}:${randomCustomerOfferCampaignCode.trim()}:total-percentage:${effectiveIsTableOrder ? 'table' : 'billing'}';
+      final totalPercentageOfferRandomGatePassed =
+          !totalPercentageOfferRandomOnly ||
+          deterministicChancePass(
+            seed: totalPercentageOfferRandomSeed,
+            chancePercent: totalPercentageOfferChancePercent,
+          );
+      final totalPercentageOfferScheduleBlocked =
+          !totalPercentageOfferScheduleMatched;
+      final totalPercentageOfferRandomGateBlocked =
+          totalPercentageOfferRandomOnly &&
+          !totalPercentageOfferRandomGatePassed;
+      final totalPercentageOfferPreviewEligible =
+          enableTotalPercentageOffer &&
+          !totalPercentageOfferBlockedWithoutCustomer &&
+          !totalPercentageOfferGlobalLimitReached &&
+          !totalPercentageOfferCustomerLimitReached &&
+          !totalPercentageOfferUsageLimitReached &&
+          !totalPercentageOfferScheduleBlocked &&
+          !totalPercentageOfferRandomGateBlocked;
 
       final currentBillItems = [...recalledItems, ...cartItems];
       final Map<String, double> billedQtyByProduct = {};
@@ -1795,20 +1974,55 @@ class CartProvider extends ChangeNotifier {
           final freeQtyStepRaw = toNonNegativeDouble(rule['freeQuantity']);
           final buyQtyStep = buyQtyStepRaw > 0 ? buyQtyStepRaw : 1.0;
           final freeQtyStep = freeQtyStepRaw > 0 ? freeQtyStepRaw : 1.0;
+          final maxOfferCount = toNonNegativeDouble(rule['maxOfferCount']);
+          final offerGivenCount = toNonNegativeDouble(
+            rule['offerGivenCount'] ??
+                rule['givenCount'] ??
+                rule['appliedCount'] ??
+                rule['offerCount'],
+          );
           final maxCustomerCount = toNonNegativeDouble(
             rule['maxCustomerCount'],
+          );
+          final offerCustomers = relationIds(rule['offerCustomers']);
+          final offerCustomerCount = toNonNegativeDouble(
+            rule['offerCustomerCount'] ??
+                rule['customerCount'] ??
+                offerCustomers.length,
           );
           final maxUsagePerCustomer = toNonNegativeDouble(
             rule['maxUsagePerCustomer'],
           );
+          final hasGlobalLimit = maxOfferCount > 0;
+          final globalLimitReached =
+              hasGlobalLimit && offerGivenCount >= maxOfferCount;
+          final globalRemaining = hasGlobalLimit
+              ? (maxOfferCount - offerGivenCount)
+                    .clamp(0, double.infinity)
+                    .toDouble()
+              : 0.0;
+          final alreadyCountedForCustomer =
+              customerID != null && offerCustomers.contains(customerID);
           final usageLimitEnabled = maxUsagePerCustomer > 0;
           final customerCountLimitEnabled = maxCustomerCount > 0;
+          final customerLimitReached =
+              customerCountLimitEnabled &&
+              offerCustomerCount >= maxCustomerCount &&
+              !alreadyCountedForCustomer;
+          final customerRemaining = customerCountLimitEnabled
+              ? (maxCustomerCount - offerCustomerCount)
+                    .clamp(0, double.infinity)
+                    .toDouble()
+              : 0.0;
           final requiresExistingCustomer =
               usageLimitEnabled || customerCountLimitEnabled;
           const nextBillMessage =
               'This offer will be available from next bill after customer is created.';
           final blockedForNewCustomer =
               isNewCustomer && requiresExistingCustomer;
+          final blockedWithoutCustomer =
+              (usageLimitEnabled || customerCountLimitEnabled) &&
+              customerID == null;
           final rawOfferCustomerUsage = rule['offerCustomerUsage'];
           final List<Map<String, dynamic>> offerCustomerUsage = [];
           double customerUsageCount = 0;
@@ -1817,7 +2031,7 @@ class CartProvider extends ChangeNotifier {
             for (final usageRaw in rawOfferCustomerUsage) {
               if (usageRaw is! Map) continue;
               final usageMap = Map<String, dynamic>.from(usageRaw);
-              final usagePhone = relationPhone(usageMap);
+              final usageCustomerId = relationId(usageMap['customer']);
               final usageCount = toNonNegativeDouble(
                 usageMap['usageCount'] ??
                     usageMap['count'] ??
@@ -1825,10 +2039,10 @@ class CartProvider extends ChangeNotifier {
                     usageMap['offerCount'],
               );
               offerCustomerUsage.add({
-                'phoneNumber': usagePhone,
+                'customerId': usageCustomerId,
                 'usageCount': usageCount,
               });
-              if (lookupPhoneKey.isNotEmpty && usagePhone == lookupPhoneKey) {
+              if (customerID != null && usageCustomerId == customerID) {
                 customerUsageCount = usageCount;
               }
             }
@@ -1841,6 +2055,12 @@ class CartProvider extends ChangeNotifier {
                     .clamp(0, double.infinity)
                     .toDouble()
               : 0.0;
+          final blockedByLimits =
+              blockedWithoutCustomer ||
+              blockedForNewCustomer ||
+              globalLimitReached ||
+              customerLimitReached ||
+              usageLimitReached;
 
           final buyQtyInCart = toNonNegativeDouble(
             billedQtyByProduct[buyProductId],
@@ -1879,15 +2099,21 @@ class CartProvider extends ChangeNotifier {
             'predictedFreeQuantity': predictedFreeQuantity,
             'estimatedDiscount': estimatedDiscount,
             'remainingBuyQuantity': remainingBuyQuantity,
-            'eligible':
-                predictedFreeQuantity > 0 &&
-                !usageLimitReached &&
-                !blockedForNewCustomer,
+            'eligible': predictedFreeQuantity > 0 && !blockedByLimits,
+            'maxOfferCount': maxOfferCount,
+            'offerGivenCount': offerGivenCount,
+            'globalLimitReached': globalLimitReached,
+            'globalRemaining': globalRemaining,
             'maxCustomerCount': maxCustomerCount,
+            'offerCustomerCount': offerCustomerCount,
+            'customerLimitReached': customerLimitReached,
+            'customerRemaining': customerRemaining,
+            'alreadyCountedForCustomer': alreadyCountedForCustomer,
             'maxUsagePerCustomer': maxUsagePerCustomer,
             'customerCountLimitEnabled': customerCountLimitEnabled,
             'requiresExistingCustomer': requiresExistingCustomer,
             'blockedForNewCustomer': blockedForNewCustomer,
+            'blockedWithoutCustomer': blockedWithoutCustomer,
             'nextBillMessage': blockedForNewCustomer ? nextBillMessage : null,
             'usageLimitEnabled': usageLimitEnabled,
             'usageLimitReached': usageLimitReached,
@@ -1962,20 +2188,55 @@ class CartProvider extends ChangeNotifier {
                 .toDouble();
           }
 
+          final maxOfferCount = toNonNegativeDouble(rule['maxOfferCount']);
+          final offerGivenCount = toNonNegativeDouble(
+            rule['offerGivenCount'] ??
+                rule['givenCount'] ??
+                rule['appliedCount'] ??
+                rule['offerCount'],
+          );
           final maxCustomerCount = toNonNegativeDouble(
             rule['maxCustomerCount'],
+          );
+          final offerCustomers = relationIds(rule['offerCustomers']);
+          final offerCustomerCount = toNonNegativeDouble(
+            rule['offerCustomerCount'] ??
+                rule['customerCount'] ??
+                offerCustomers.length,
           );
           final maxUsagePerCustomer = toNonNegativeDouble(
             rule['maxUsagePerCustomer'],
           );
+          final hasGlobalLimit = maxOfferCount > 0;
+          final globalLimitReached =
+              hasGlobalLimit && offerGivenCount >= maxOfferCount;
+          final globalRemaining = hasGlobalLimit
+              ? (maxOfferCount - offerGivenCount)
+                    .clamp(0, double.infinity)
+                    .toDouble()
+              : 0.0;
+          final alreadyCountedForCustomer =
+              customerID != null && offerCustomers.contains(customerID);
           final usageLimitEnabled = maxUsagePerCustomer > 0;
           final customerCountLimitEnabled = maxCustomerCount > 0;
+          final customerLimitReached =
+              customerCountLimitEnabled &&
+              offerCustomerCount >= maxCustomerCount &&
+              !alreadyCountedForCustomer;
+          final customerRemaining = customerCountLimitEnabled
+              ? (maxCustomerCount - offerCustomerCount)
+                    .clamp(0, double.infinity)
+                    .toDouble()
+              : 0.0;
           final requiresExistingCustomer =
               usageLimitEnabled || customerCountLimitEnabled;
           const nextBillMessage =
               'This offer will be available from next bill after customer is created.';
           final blockedForNewCustomer =
               isNewCustomer && requiresExistingCustomer;
+          final blockedWithoutCustomer =
+              (usageLimitEnabled || customerCountLimitEnabled) &&
+              customerID == null;
           final rawOfferCustomerUsage = rule['offerCustomerUsage'];
           final List<Map<String, dynamic>> offerCustomerUsage = [];
           double customerUsageCount = 0;
@@ -1984,7 +2245,7 @@ class CartProvider extends ChangeNotifier {
             for (final usageRaw in rawOfferCustomerUsage) {
               if (usageRaw is! Map) continue;
               final usageMap = Map<String, dynamic>.from(usageRaw);
-              final usagePhone = relationPhone(usageMap);
+              final usageCustomerId = relationId(usageMap['customer']);
               final usageCount = toNonNegativeDouble(
                 usageMap['usageCount'] ??
                     usageMap['count'] ??
@@ -1992,10 +2253,10 @@ class CartProvider extends ChangeNotifier {
                     usageMap['offerCount'],
               );
               offerCustomerUsage.add({
-                'phoneNumber': usagePhone,
+                'customerId': usageCustomerId,
                 'usageCount': usageCount,
               });
-              if (lookupPhoneKey.isNotEmpty && usagePhone == lookupPhoneKey) {
+              if (customerID != null && usageCustomerId == customerID) {
                 customerUsageCount = usageCount;
               }
             }
@@ -2008,6 +2269,12 @@ class CartProvider extends ChangeNotifier {
                     .clamp(0, double.infinity)
                     .toDouble()
               : 0.0;
+          final blockedByLimits =
+              blockedWithoutCustomer ||
+              blockedForNewCustomer ||
+              globalLimitReached ||
+              customerLimitReached ||
+              usageLimitReached;
           final predictedAppliedUnits = usageLimitEnabled
               ? (quantityInCart < customerUsageRemaining
                     ? quantityInCart
@@ -2044,11 +2311,20 @@ class CartProvider extends ChangeNotifier {
             'predictedDiscountTotal': predictedDiscountTotal,
             'predictedSubtotal': predictedSubtotal,
             'predictedEffectiveUnitPrice': predictedEffectiveUnitPrice,
+            'maxOfferCount': maxOfferCount,
+            'offerGivenCount': offerGivenCount,
+            'globalLimitReached': globalLimitReached,
+            'globalRemaining': globalRemaining,
             'maxCustomerCount': maxCustomerCount,
+            'offerCustomerCount': offerCustomerCount,
+            'customerLimitReached': customerLimitReached,
+            'customerRemaining': customerRemaining,
+            'alreadyCountedForCustomer': alreadyCountedForCustomer,
             'maxUsagePerCustomer': maxUsagePerCustomer,
             'customerCountLimitEnabled': customerCountLimitEnabled,
             'requiresExistingCustomer': requiresExistingCustomer,
             'blockedForNewCustomer': blockedForNewCustomer,
+            'blockedWithoutCustomer': blockedWithoutCustomer,
             'nextBillMessage': blockedForNewCustomer ? nextBillMessage : null,
             'usageLimitEnabled': usageLimitEnabled,
             'usageLimitReached': usageLimitReached,
@@ -2058,7 +2334,7 @@ class CartProvider extends ChangeNotifier {
             'eligible':
                 predictedAppliedUnits > 0 &&
                 discountPerUnit > 0 &&
-                !blockedForNewCustomer,
+                !blockedByLimits,
             'allowOnBillings': ruleAllowOnBillings,
             'allowOnTableOrders': ruleAllowOnTableOrders,
           });
@@ -2099,10 +2375,20 @@ class CartProvider extends ChangeNotifier {
           final remainingCount = (winnerCount - redeemedCount)
               .clamp(0, double.infinity)
               .toDouble();
+          final ruleKey =
+              relationId(rule['id']) ?? '$productId:${winnerCount.toInt()}';
           final maxUsagePerCustomer = toNonNegativeDouble(
             rule['maxUsagePerCustomer'],
           );
           final usageLimitEnabled = maxUsagePerCustomer > 0;
+          final hasRandomChanceConfig =
+              rule.containsKey('randomSelectionChancePercent') &&
+              rule['randomSelectionChancePercent'] != null;
+          final randomSelectionChancePercent = hasRandomChanceConfig
+              ? toNonNegativeDouble(
+                  rule['randomSelectionChancePercent'],
+                ).clamp(0, 100).toDouble()
+              : 100.0;
 
           double customerUsageCount = 0;
           final rawOfferCustomerUsage = rule['offerCustomerUsage'];
@@ -2134,14 +2420,28 @@ class CartProvider extends ChangeNotifier {
           final selectedCustomers = relationIds(rule['selectedCustomers']);
           final selectedForCustomer =
               customerID != null && selectedCustomers.contains(customerID);
+          final scheduleMatched = isNowWithinSchedule(
+            now: nowForRandomOfferPreview,
+            availableFromDate: rule['availableFromDate'],
+            availableToDate: rule['availableToDate'],
+            dailyStartTime: rule['dailyStartTime'],
+            dailyEndTime: rule['dailyEndTime'],
+          );
+          final randomSeed =
+              '${lookupPhoneKey.isNotEmpty ? lookupPhoneKey : normalizedPhone}:${randomCustomerOfferCampaignCode.trim()}:$ruleKey:${effectiveIsTableOrder ? 'table' : 'billing'}';
+          final randomChancePassed = deterministicChancePass(
+            seed: randomSeed,
+            chancePercent: randomSelectionChancePercent,
+          );
           final eligible =
               remainingCount > 0 &&
               !usageLimitReached &&
-              !alreadyRedeemedRandomOfferInCampaign;
+              !alreadyRedeemedRandomOfferInCampaign &&
+              scheduleMatched &&
+              randomChancePassed;
 
           randomCustomerOfferMatches.add({
-            'ruleKey':
-                relationId(rule['id']) ?? '$productId:${winnerCount.toInt()}',
+            'ruleKey': ruleKey,
             'productId': productId,
             'productName': productName,
             'winnerCount': winnerCount,
@@ -2158,6 +2458,9 @@ class CartProvider extends ChangeNotifier {
             'availableToDate': rule['availableToDate'],
             'dailyStartTime': rule['dailyStartTime']?.toString(),
             'dailyEndTime': rule['dailyEndTime']?.toString(),
+            'randomSelectionChancePercent': randomSelectionChancePercent,
+            'randomChancePassed': randomChancePassed,
+            'scheduleMatched': scheduleMatched,
             'eligible': eligible,
             'allowOnBillings': ruleAllowOnBillings,
             'allowOnTableOrders': ruleAllowOnTableOrders,
@@ -2165,21 +2468,9 @@ class CartProvider extends ChangeNotifier {
         }
       }
 
-      int deterministicIndex(String seed, int length) {
-        if (length <= 0) return -1;
-        var hash = 0;
-        for (final codeUnit in seed.codeUnits) {
-          hash = (hash * 31 + codeUnit) & 0x7fffffff;
-        }
-        return hash % length;
-      }
-
       final eligibleRandomCustomerOfferMatches = randomCustomerOfferMatches
           .where((match) => match['eligible'] == true)
           .toList();
-      final randomCustomerOfferEligible = randomCustomerOfferMatches.any(
-        (match) => match['eligible'] == true,
-      );
       Map<String, dynamic>? selectedRandomCustomerOfferMatch;
       if (eligibleRandomCustomerOfferMatches.isNotEmpty) {
         final seed =
@@ -2194,6 +2485,8 @@ class CartProvider extends ChangeNotifier {
           );
         }
       }
+      final randomCustomerOfferEligible =
+          selectedRandomCustomerOfferMatch != null;
 
       final completedBills =
           bills
@@ -2376,6 +2669,17 @@ class CartProvider extends ChangeNotifier {
           'allowOnBillings': allowTotalPercentageOfferOnBillings,
           'allowOnTableOrders': allowTotalPercentageOfferOnTableOrders,
           'discountPercent': totalPercentageOfferPercent,
+          'timezone': totalPercentageOfferTimezone,
+          'randomOnly': totalPercentageOfferRandomOnly,
+          'randomSelectionChancePercent': totalPercentageOfferChancePercent,
+          'randomGatePassed': totalPercentageOfferRandomGatePassed,
+          'randomGateBlocked': totalPercentageOfferRandomGateBlocked,
+          'availableFromDate': totalPercentageOfferAvailableFromDate,
+          'availableToDate': totalPercentageOfferAvailableToDate,
+          'dailyStartTime': totalPercentageOfferDailyStartTime?.toString(),
+          'dailyEndTime': totalPercentageOfferDailyEndTime?.toString(),
+          'scheduleMatched': totalPercentageOfferScheduleMatched,
+          'scheduleBlocked': totalPercentageOfferScheduleBlocked,
           'maxOfferCount': totalPercentageOfferMaxOfferCount,
           'maxCustomerCount': totalPercentageOfferMaxCustomerCount,
           'maxUsagePerCustomer': totalPercentageOfferMaxUsagePerCustomer,
@@ -2390,6 +2694,7 @@ class CartProvider extends ChangeNotifier {
           'globalLimitReached': totalPercentageOfferGlobalLimitReached,
           'customerLimitReached': totalPercentageOfferCustomerLimitReached,
           'usageLimitReached': totalPercentageOfferUsageLimitReached,
+          'previewEligible': totalPercentageOfferPreviewEligible,
           'alreadyCountedForCustomer':
               totalPercentageOfferAlreadyCountedForCustomer,
           'customerUsageRows': totalPercentageOfferCustomerUsageRows,

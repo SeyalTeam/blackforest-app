@@ -1093,47 +1093,81 @@ class _TablePageState extends State<TablePage> {
                             ),
                           ],
                           const SizedBox(height: 28),
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton(
-                              onPressed: () {
-                                if (phoneCtrl.text.trim().isEmpty ||
-                                    nameCtrl.text.trim().isEmpty) {
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                      content: Text(
-                                        "Please enter customer phone and name",
-                                      ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: () {
+                                    isDialogActive = false;
+                                    debounceTimer?.cancel();
+                                    Navigator.pop(
+                                      dialogContext,
+                                      <String, dynamic>{},
+                                    );
+                                  },
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.white70,
+                                    side: const BorderSide(
+                                      color: Colors.white24,
                                     ),
-                                  );
-                                  return;
-                                }
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 12,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                  ),
+                                  child: const Text("Skip"),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: ElevatedButton(
+                                  onPressed: () {
+                                    if (phoneCtrl.text.trim().isEmpty ||
+                                        nameCtrl.text.trim().isEmpty) {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            "Please enter phone and customer name or use Skip",
+                                          ),
+                                        ),
+                                      );
+                                      return;
+                                    }
 
-                                isDialogActive = false;
-                                debounceTimer?.cancel();
-                                Navigator.pop(dialogContext, <String, dynamic>{
-                                  'name': nameCtrl.text.trim(),
-                                  'phone': phoneCtrl.text.trim(),
-                                });
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF0A84FF),
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 12,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(10),
+                                    isDialogActive = false;
+                                    debounceTimer?.cancel();
+                                    Navigator.pop(
+                                      dialogContext,
+                                      <String, dynamic>{
+                                        'name': nameCtrl.text.trim(),
+                                        'phone': phoneCtrl.text.trim(),
+                                      },
+                                    );
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: const Color(0xFF0A84FF),
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 12,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                  ),
+                                  child: const Text(
+                                    "Submit",
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                                 ),
                               ),
-                              child: const Text(
-                                "Submit",
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                            ),
+                            ],
                           ),
                           if (phoneCtrl.text.length >= 10) ...[
                             const SizedBox(height: 20),
