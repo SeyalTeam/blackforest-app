@@ -1588,6 +1588,54 @@ class CartProvider extends ChangeNotifier {
           offerSettings?['totalPercentageOfferCustomers'];
       final rawTotalPercentageOfferCustomerUsage =
           offerSettings?['totalPercentageOfferCustomerUsage'];
+      final allowCustomerEntryPercentageOfferOnBillings = toBoolWithDefault(
+        readFirstSettingValue([
+          'allowCustomerEntryPercentageOfferOnBillings',
+          'allowCustomerEntryOfferOnBillings',
+        ]),
+      );
+      final allowCustomerEntryPercentageOfferOnTableOrders = toBoolWithDefault(
+        readFirstSettingValue([
+          'allowCustomerEntryPercentageOfferOnTableOrders',
+          'allowCustomerEntryOfferOnTableOrders',
+        ]),
+      );
+      final enableCustomerEntryPercentageOffer =
+          readFirstSettingValue([
+                'enableCustomerEntryPercentageOffer',
+                'customerEntryPercentageOfferEnabled',
+              ]) ==
+              true &&
+          allowForCurrentOrderType(
+            allowOnBillings: allowCustomerEntryPercentageOfferOnBillings,
+            allowOnTableOrders: allowCustomerEntryPercentageOfferOnTableOrders,
+          );
+      final customerEntryPercentageOfferPercent = toNonNegativeDouble(
+        readFirstSettingValue([
+          'customerEntryPercentageOfferPercent',
+          'customerEntryOfferPercent',
+        ]),
+      );
+      final customerEntryPercentageOfferAvailableFromDate =
+          readFirstSettingValue([
+            'customerEntryPercentageOfferAvailableFromDate',
+            'customerEntryPercentageOfferFromDate',
+            'customerEntryPercentageOfferStartDate',
+          ]);
+      final customerEntryPercentageOfferAvailableToDate =
+          readFirstSettingValue([
+            'customerEntryPercentageOfferAvailableToDate',
+            'customerEntryPercentageOfferToDate',
+            'customerEntryPercentageOfferEndDate',
+          ]);
+      final customerEntryPercentageOfferDailyStartTime = readFirstSettingValue([
+        'customerEntryPercentageOfferDailyStartTime',
+        'customerEntryPercentageOfferStartTime',
+      ]);
+      final customerEntryPercentageOfferDailyEndTime = readFirstSettingValue([
+        'customerEntryPercentageOfferDailyEndTime',
+        'customerEntryPercentageOfferEndTime',
+      ]);
       final allowRandomCustomerProductOfferOnBillings = toBoolWithDefault(
         offerSettings?['allowRandomCustomerProductOfferOnBillings'],
       );
@@ -1614,6 +1662,12 @@ class CartProvider extends ChangeNotifier {
             'totalPercentageOfferTimeZone',
           ])?.toString().trim() ??
           randomCustomerOfferTimezone;
+      final customerEntryPercentageOfferTimezone =
+          readFirstSettingValue([
+            'customerEntryPercentageOfferTimezone',
+            'customerEntryPercentageOfferTimeZone',
+          ])?.toString().trim() ??
+          totalPercentageOfferTimezone;
       final rawRandomCustomerOfferProducts =
           offerSettings?['randomCustomerOfferProducts'];
       final lookupPhoneKey = normalizedPhone.replaceAll(RegExp(r'[^0-9]'), '');
@@ -1891,6 +1945,9 @@ class CartProvider extends ChangeNotifier {
       final nowForTotalPercentagePreview = nowInConfiguredTimezone(
         totalPercentageOfferTimezone,
       );
+      final nowForCustomerEntryPercentagePreview = nowInConfiguredTimezone(
+        customerEntryPercentageOfferTimezone,
+      );
       final totalPercentageOfferScheduleMatched = isNowWithinSchedule(
         now: nowForTotalPercentagePreview,
         availableFromDate: totalPercentageOfferAvailableFromDate,
@@ -1926,6 +1983,21 @@ class CartProvider extends ChangeNotifier {
           !totalPercentageOfferUsageLimitReached &&
           !totalPercentageOfferScheduleBlocked &&
           !totalPercentageOfferRandomGateBlocked;
+      final hasCustomerEntryForOffer =
+          customerName.trim().isNotEmpty || normalizedPhone.trim().isNotEmpty;
+      final customerEntryPercentageOfferScheduleMatched = isNowWithinSchedule(
+        now: nowForCustomerEntryPercentagePreview,
+        availableFromDate: customerEntryPercentageOfferAvailableFromDate,
+        availableToDate: customerEntryPercentageOfferAvailableToDate,
+        dailyStartTime: customerEntryPercentageOfferDailyStartTime,
+        dailyEndTime: customerEntryPercentageOfferDailyEndTime,
+      );
+      final customerEntryPercentageOfferScheduleBlocked =
+          !customerEntryPercentageOfferScheduleMatched;
+      final customerEntryPercentageOfferPreviewEligible =
+          enableCustomerEntryPercentageOffer &&
+          hasCustomerEntryForOffer &&
+          !customerEntryPercentageOfferScheduleBlocked;
 
       final currentBillItems = [...recalledItems, ...cartItems];
       final Map<String, double> billedQtyByProduct = {};
@@ -2698,6 +2770,24 @@ class CartProvider extends ChangeNotifier {
           'alreadyCountedForCustomer':
               totalPercentageOfferAlreadyCountedForCustomer,
           'customerUsageRows': totalPercentageOfferCustomerUsageRows,
+          'finalValidationByServer': true,
+        },
+        'customerEntryPercentageOfferPreview': {
+          'enabled': enableCustomerEntryPercentageOffer,
+          'allowOnBillings': allowCustomerEntryPercentageOfferOnBillings,
+          'allowOnTableOrders': allowCustomerEntryPercentageOfferOnTableOrders,
+          'discountPercent': customerEntryPercentageOfferPercent,
+          'timezone': customerEntryPercentageOfferTimezone,
+          'availableFromDate': customerEntryPercentageOfferAvailableFromDate,
+          'availableToDate': customerEntryPercentageOfferAvailableToDate,
+          'dailyStartTime': customerEntryPercentageOfferDailyStartTime
+              ?.toString(),
+          'dailyEndTime': customerEntryPercentageOfferDailyEndTime?.toString(),
+          'requiresCustomerEntry': true,
+          'hasCustomerEntry': hasCustomerEntryForOffer,
+          'scheduleMatched': customerEntryPercentageOfferScheduleMatched,
+          'scheduleBlocked': customerEntryPercentageOfferScheduleBlocked,
+          'previewEligible': customerEntryPercentageOfferPreviewEligible,
           'finalValidationByServer': true,
         },
         'randomCustomerOfferPreview': {

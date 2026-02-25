@@ -123,7 +123,7 @@ class TableCustomerDetailsVisibilityService {
 
     final uri = Uri.https(
       _apiHost,
-      '/api/automate/table-customer-details-visibility',
+      '/api/widgets/table-customer-details-visibility',
       {'branchId': branchId},
     );
 

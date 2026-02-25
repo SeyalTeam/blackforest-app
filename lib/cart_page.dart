@@ -657,6 +657,17 @@ class _CartPageState extends State<CartPage> {
             return null;
           }
 
+          Map<String, dynamic>? readCustomerEntryPercentageOfferData(
+            Map<String, dynamic>? customerData,
+          ) {
+            if (customerData == null) return null;
+            final raw = customerData['customerEntryPercentageOfferPreview'];
+            if (raw is Map) {
+              return Map<String, dynamic>.from(raw);
+            }
+            return null;
+          }
+
           Map<String, dynamic>? readRandomCustomerOfferData(
             Map<String, dynamic>? customerData,
           ) {
@@ -780,6 +791,8 @@ class _CartPageState extends State<CartPage> {
               final totalPercentageOfferData = readTotalPercentageOfferData(
                 customerLookupData,
               );
+              final customerEntryPercentageOfferData =
+                  readCustomerEntryPercentageOfferData(customerLookupData);
               final randomCustomerOfferData = readRandomCustomerOfferData(
                 customerLookupData,
               );
@@ -807,6 +820,10 @@ class _CartPageState extends State<CartPage> {
                   productPriceOfferData?['enabled'] == true;
               final totalPercentageOfferEnabled =
                   totalPercentageOfferData?['enabled'] == true;
+              final customerEntryPercentageOfferEnabled =
+                  customerEntryPercentageOfferData?['enabled'] == true;
+              final customerEntryPercentagePreviewEligible =
+                  customerEntryPercentageOfferData?['previewEligible'] == true;
               final randomCustomerOfferEnabled =
                   randomCustomerOfferData?['enabled'] == true;
               final randomCustomerOfferEligible =
@@ -844,11 +861,14 @@ class _CartPageState extends State<CartPage> {
                   ? 'Random Product Offer'
                   : effectiveApplyCustomerOffer
                   ? 'Customer Credit Offer'
+                  : customerEntryPercentagePreviewEligible
+                  ? 'Customer Entry Percentage Offer'
                   : null;
               final hasOfferPreview =
                   offerEnabled ||
                   productOfferEnabled ||
                   productPriceOfferEnabled ||
+                  customerEntryPercentageOfferEnabled ||
                   totalPercentageOfferEnabled ||
                   randomCustomerOfferEligible;
               final offerAmount = readMoney(offerData?['offerAmount']);
@@ -1461,6 +1481,122 @@ class _CartPageState extends State<CartPage> {
                       ),
                     ),
                   ),
+                if (customerEntryPercentageOfferEnabled)
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF132323),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: const Color(0xFF26C6DA).withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: SingleChildScrollView(
+                      child: Builder(
+                        builder: (context) {
+                          final discountPercent = readMoney(
+                            customerEntryPercentageOfferData?['discountPercent'],
+                          );
+                          final hasCustomerEntry =
+                              customerEntryPercentageOfferData?['hasCustomerEntry'] ==
+                              true;
+                          final scheduleMatched =
+                              customerEntryPercentageOfferData?['scheduleMatched'] ==
+                              true;
+                          final scheduleBlocked =
+                              customerEntryPercentageOfferData?['scheduleBlocked'] ==
+                              true;
+                          final blockedByHigherPriority =
+                              highestPriorityAppliedPreviewName != null &&
+                              highestPriorityAppliedPreviewName !=
+                                  'Customer Entry Percentage Offer';
+
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Customer Entry Percentage Offer',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                'Discount: ${discountPercent.toStringAsFixed(2)}%',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const Text(
+                                'No checkbox needed. Backend applies this on completed bill.',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const Text(
+                                'Customer entry required: name or phone.',
+                                style: TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              Text(
+                                'Schedule: ${scheduleMatched ? 'active now' : 'outside active window'}',
+                                style: TextStyle(
+                                  color: scheduleMatched
+                                      ? Colors.white70
+                                      : Colors.orangeAccent,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                blockedByHigherPriority
+                                    ? 'Blocked by higher-priority offer: $highestPriorityAppliedPreviewName.'
+                                    : !hasCustomerEntry
+                                    ? 'Enter customer name or phone to allow this offer.'
+                                    : scheduleBlocked
+                                    ? 'Offer is outside active date/time window.'
+                                    : customerEntryPercentagePreviewEligible
+                                    ? 'Eligible preview. Final discount comes from backend on submit.'
+                                    : 'Final eligibility is checked by backend on submit.',
+                                style: TextStyle(
+                                  color:
+                                      blockedByHigherPriority || scheduleBlocked
+                                      ? Colors.orangeAccent
+                                      : customerEntryPercentagePreviewEligible
+                                      ? const Color(0xFF2EBF3B)
+                                      : Colors.white70,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              const Text(
+                                'This offer does not stack with Total Percentage Offer.',
+                                style: TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 11,
+                                ),
+                              ),
+                              const Text(
+                                'Final payable uses backend totalAmount after submit.',
+                                style: TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                  ),
                 if (totalPercentageOfferEnabled)
                   Container(
                     width: double.infinity,
@@ -1853,6 +1989,7 @@ class _CartPageState extends State<CartPage> {
               int? productToProductCardIndex;
               int? productPriceCardIndex;
               int? totalPercentageCardIndex;
+              int? customerEntryPercentageCardIndex;
               int? randomCardIndex;
 
               if (offerEnabled) {
@@ -1864,6 +2001,9 @@ class _CartPageState extends State<CartPage> {
               if (productPriceOfferEnabled &&
                   productPriceOfferMatches.isNotEmpty) {
                 productPriceCardIndex = runningCardIndex++;
+              }
+              if (customerEntryPercentageOfferEnabled) {
+                customerEntryPercentageCardIndex = runningCardIndex++;
               }
               if (totalPercentageOfferEnabled) {
                 totalPercentageCardIndex = runningCardIndex++;
@@ -1884,10 +2024,15 @@ class _CartPageState extends State<CartPage> {
               } else if (effectiveApplyCustomerOffer &&
                   creditCardIndex != null) {
                 selectedCardIndex = creditCardIndex;
+              } else if (customerEntryPercentagePreviewEligible &&
+                  customerEntryPercentageCardIndex != null) {
+                selectedCardIndex = customerEntryPercentageCardIndex;
               } else if (totalPercentageCardIndex != null) {
                 selectedCardIndex = totalPercentageCardIndex;
               } else if (canApplyCustomerOffer && creditCardIndex != null) {
                 selectedCardIndex = creditCardIndex;
+              } else if (customerEntryPercentageCardIndex != null) {
+                selectedCardIndex = customerEntryPercentageCardIndex;
               } else if (productToProductCardIndex != null) {
                 selectedCardIndex = productToProductCardIndex;
               } else if (productPriceCardIndex != null) {
@@ -2085,7 +2230,7 @@ class _CartPageState extends State<CartPage> {
                               if (hasOfferPreview && offerCards.isNotEmpty) ...[
                                 const SizedBox(height: 12),
                                 const Text(
-                                  'One offer per bill. Priority: Buy A Get B -> Product Price -> Random Product -> Customer Credit -> Total Percentage.',
+                                  'One offer per bill. Priority: Buy A Get B -> Product Price -> Random Product -> Customer Credit -> Customer Entry Percentage -> Total Percentage.',
                                   style: TextStyle(
                                     color: Colors.white54,
                                     fontSize: 11,
@@ -2172,27 +2317,19 @@ class _CartPageState extends State<CartPage> {
                                     Expanded(
                                       child: ElevatedButton(
                                         onPressed: () {
-                                          if (nameCtrl.text.trim().isEmpty) {
+                                          final customerName = nameCtrl.text
+                                              .trim();
+                                          final customerPhone = phoneCtrl.text
+                                              .trim();
+                                          if (customerName.isEmpty &&
+                                              customerPhone.isEmpty) {
                                             if (!mounted) return;
                                             ScaffoldMessenger.of(
                                               context,
                                             ).showSnackBar(
                                               const SnackBar(
                                                 content: Text(
-                                                  "Please enter customer name or use Skip",
-                                                ),
-                                              ),
-                                            );
-                                            return;
-                                          }
-                                          if (phoneCtrl.text.trim().isEmpty) {
-                                            if (!mounted) return;
-                                            ScaffoldMessenger.of(
-                                              context,
-                                            ).showSnackBar(
-                                              const SnackBar(
-                                                content: Text(
-                                                  "Phone number is required when adding a customer name",
+                                                  "Please enter customer name or phone number, or use Skip",
                                                 ),
                                               ),
                                             );
@@ -2202,8 +2339,8 @@ class _CartPageState extends State<CartPage> {
                                           Navigator.pop(
                                             context,
                                             <String, dynamic>{
-                                              'name': nameCtrl.text,
-                                              'phone': phoneCtrl.text,
+                                              'name': customerName,
+                                              'phone': customerPhone,
                                               'applyCustomerOffer':
                                                   effectiveApplyCustomerOffer,
                                               'hasProductOfferMatch':
@@ -2250,7 +2387,7 @@ class _CartPageState extends State<CartPage> {
                                       final customerName = nameCtrl.text.trim();
                                       final customerPhone = phoneCtrl.text
                                           .trim();
-                                      if (customerName.isEmpty ||
+                                      if (customerName.isEmpty &&
                                           customerPhone.isEmpty) {
                                         if (!mounted) return;
                                         ScaffoldMessenger.of(
@@ -2258,7 +2395,7 @@ class _CartPageState extends State<CartPage> {
                                         ).showSnackBar(
                                           const SnackBar(
                                             content: Text(
-                                              "Please enter customer name and phone number",
+                                              "Please enter customer name or phone number",
                                             ),
                                           ),
                                         );
@@ -2896,6 +3033,13 @@ class _CartPageState extends State<CartPage> {
           finalBillDoc['totalPercentageOfferApplied'] == true;
       final serverTotalPercentageOfferDiscount =
           readServerMoney(finalBillDoc['totalPercentageOfferDiscount']) ?? 0.0;
+      final serverCustomerEntryPercentageOfferApplied =
+          finalBillDoc['customerEntryPercentageOfferApplied'] == true;
+      final serverCustomerEntryPercentageOfferDiscount =
+          readServerMoney(
+            finalBillDoc['customerEntryPercentageOfferDiscount'],
+          ) ??
+          0.0;
 
       if (finalBillDoc.isNotEmpty) {
         debugPrint(
@@ -3068,7 +3212,7 @@ class _CartPageState extends State<CartPage> {
       }
 
       debugPrint(
-        '📦 FINAL BILL (server): total=$billedTotal | creditApplied=$serverOfferApplied | creditDiscount=$serverOfferDiscount | percentageApplied=$serverTotalPercentageOfferApplied | percentageDiscount=$serverTotalPercentageOfferDiscount',
+        '📦 FINAL BILL (server): total=$billedTotal | creditApplied=$serverOfferApplied | creditDiscount=$serverOfferDiscount | entryPercentageApplied=$serverCustomerEntryPercentageOfferApplied | entryPercentageDiscount=$serverCustomerEntryPercentageOfferDiscount | percentageApplied=$serverTotalPercentageOfferApplied | percentageDiscount=$serverTotalPercentageOfferDiscount',
       );
 
       if (response.statusCode == 201 || response.statusCode == 200) {
@@ -3216,10 +3360,17 @@ class _CartPageState extends State<CartPage> {
       final totalPercentageOfferData = readMap(
         data['totalPercentageOfferPreview'],
       );
+      final customerEntryPercentageOfferData = readMap(
+        data['customerEntryPercentageOfferPreview'],
+      );
       final totalPercentageOfferEnabled =
           totalPercentageOfferData?['enabled'] == true;
       final totalPercentageOfferPreviewEligible =
           totalPercentageOfferData?['previewEligible'] == true;
+      final customerEntryPercentageOfferEnabled =
+          customerEntryPercentageOfferData?['enabled'] == true;
+      final customerEntryPercentageOfferPreviewEligible =
+          customerEntryPercentageOfferData?['previewEligible'] == true;
       final creditOfferEnabled = readMap(data['offer'])?['enabled'] == true;
 
       final kotPreviewItems = List<CartItem>.from(cartProvider.cartItems);
@@ -3273,6 +3424,11 @@ class _CartPageState extends State<CartPage> {
         });
       } else if (creditOfferEnabled) {
         previewLines.add('Customer Credit Offer may apply on final billing.');
+      } else if (customerEntryPercentageOfferEnabled &&
+          customerEntryPercentageOfferPreviewEligible) {
+        previewLines.add(
+          'Customer Entry Percentage Offer may apply on final billing.',
+        );
       } else if (totalPercentageOfferEnabled &&
           totalPercentageOfferPreviewEligible) {
         previewLines.add('Total Percentage Offer may apply on final billing.');
@@ -3516,6 +3672,11 @@ class _CartPageState extends State<CartPage> {
     );
     final totalPercentageOfferApplied =
         billingResponse['totalPercentageOfferApplied'] == true;
+    final customerEntryPercentageOfferDiscountFromServer = toNonNegativeMoney(
+      billingResponse['customerEntryPercentageOfferDiscount'],
+    );
+    final customerEntryPercentageOfferApplied =
+        billingResponse['customerEntryPercentageOfferApplied'] == true;
 
     // Fetch waiter name
     String? waiterName;
@@ -3806,6 +3967,17 @@ class _CartPageState extends State<CartPage> {
               PosColumn(
                 text:
                     'PERCENT OFFER RS ${totalPercentageOfferDiscountFromServer.toStringAsFixed(2)}',
+                width: 12,
+                styles: const PosStyles(align: PosAlign.right),
+              ),
+            ]);
+          }
+          if (customerEntryPercentageOfferApplied &&
+              customerEntryPercentageOfferDiscountFromServer > 0.0001) {
+            printer.row([
+              PosColumn(
+                text:
+                    'ENTRY PERCENT OFFER RS ${customerEntryPercentageOfferDiscountFromServer.toStringAsFixed(2)}',
                 width: 12,
                 styles: const PosStyles(align: PosAlign.right),
               ),
