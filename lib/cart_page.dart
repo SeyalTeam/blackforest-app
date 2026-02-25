@@ -1092,9 +1092,6 @@ class _CartPageState extends State<CartPage> {
                             final remainingQty = readMoney(
                               match['remainingBuyQuantity'],
                             );
-                            final buyUnitPrice = readMoney(
-                              match['buyUnitPrice'],
-                            );
                             final freeUnitPrice = readMoney(
                               match['freeUnitPrice'],
                             );
@@ -1116,24 +1113,6 @@ class _CartPageState extends State<CartPage> {
                                 match['blockedForNewCustomer'] == true;
                             final nextBillMessage = match['nextBillMessage']
                                 ?.toString();
-                            final maxOfferCount = readMoney(
-                              match['maxOfferCount'],
-                            );
-                            final offerGivenCount = readMoney(
-                              match['offerGivenCount'],
-                            );
-                            final globalRemaining = readMoney(
-                              match['globalRemaining'],
-                            );
-                            final maxCustomerCount = readMoney(
-                              match['maxCustomerCount'],
-                            );
-                            final offerCustomerCount = readMoney(
-                              match['offerCustomerCount'],
-                            );
-                            final customerRemaining = readMoney(
-                              match['customerRemaining'],
-                            );
                             final maxUsagePerCustomer = readMoney(
                               match['maxUsagePerCustomer'],
                             );
@@ -1143,6 +1122,34 @@ class _CartPageState extends State<CartPage> {
                             final customerUsageRemaining = readMoney(
                               match['customerUsageRemaining'],
                             );
+                            final offerWorth = freeQtyStep * freeUnitPrice;
+                            final triggerCount = buyQtyStep > 0
+                                ? (buyQtyInCart / buyQtyStep).floorToDouble()
+                                : 0.0;
+                            final statusMessage = blockedForNewCustomer
+                                ? (nextBillMessage ??
+                                      'This offer will be available from next bill after customer is created.')
+                                : blockedWithoutCustomer
+                                ? 'Customer is required for this offer.'
+                                : globalLimitReached
+                                ? 'Offer limit reached.'
+                                : customerLimitReached
+                                ? 'Customer limit reached.'
+                                : usageLimitReached
+                                ? 'Usage limit reached for this customer.'
+                                : isEligible
+                                ? 'Eligible now. Est. discount ₹${estimatedDiscount.toStringAsFixed(2)}'
+                                : 'Need ${formatQty(remainingQty)} more $buyProductName';
+                            final statusColor = blockedForNewCustomer
+                                ? Colors.orangeAccent
+                                : blockedWithoutCustomer ||
+                                      globalLimitReached ||
+                                      customerLimitReached ||
+                                      usageLimitReached
+                                ? Colors.redAccent
+                                : isEligible
+                                ? const Color(0xFF2EBF3B)
+                                : Colors.orangeAccent;
 
                             return Container(
                               width: double.infinity,
@@ -1162,7 +1169,7 @@ class _CartPageState extends State<CartPage> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   Text(
-                                    'Buy $buyProductName x${formatQty(buyQtyStep)} (₹${buyUnitPrice.toStringAsFixed(2)})',
+                                    'A: $buyProductName x${formatQty(buyQtyStep)}',
                                     style: const TextStyle(
                                       color: Colors.white,
                                       fontSize: 12,
@@ -1170,35 +1177,28 @@ class _CartPageState extends State<CartPage> {
                                     ),
                                   ),
                                   Text(
-                                    'In cart: ${formatQty(buyQtyInCart)}',
+                                    'B: $freeProductName x${formatQty(freeQtyStep)} FREE',
                                     style: const TextStyle(
                                       color: Colors.white70,
                                       fontSize: 12,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    'Offer worth: ₹${offerWorth.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      color: Color(0xFF2EBF3B),
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
                                     ),
                                   ),
                                   Text(
-                                    'Get $freeProductName x${formatQty(freeQtyStep)} FREE (₹${freeUnitPrice.toStringAsFixed(2)})',
+                                    'Counts: A in cart ${formatQty(buyQtyInCart)} | Trigger ${formatQty(triggerCount)} | B free ${formatQty(freeQtyApplied)}',
                                     style: const TextStyle(
                                       color: Colors.white70,
                                       fontSize: 12,
                                     ),
                                   ),
-                                  if (maxOfferCount > 0)
-                                    Text(
-                                      'Global usage: ${formatQty(offerGivenCount)} / ${formatQty(maxOfferCount)} (remaining ${formatQty(globalRemaining)})',
-                                      style: const TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  if (maxCustomerCount > 0)
-                                    Text(
-                                      'Customer count: ${formatQty(offerCustomerCount)} / ${formatQty(maxCustomerCount)} (remaining ${formatQty(customerRemaining)})',
-                                      style: const TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 12,
-                                      ),
-                                    ),
                                   if (usageLimitEnabled)
                                     Text(
                                       'Usage: ${formatQty(customerUsageCount)} / ${formatQty(maxUsagePerCustomer)}',
@@ -1209,31 +1209,9 @@ class _CartPageState extends State<CartPage> {
                                     ),
                                   const SizedBox(height: 4),
                                   Text(
-                                    blockedForNewCustomer
-                                        ? (nextBillMessage ??
-                                              'This offer will be available from next bill after customer is created.')
-                                        : blockedWithoutCustomer
-                                        ? 'Customer is required for usage/customer limits.'
-                                        : globalLimitReached
-                                        ? 'Global offer limit reached.'
-                                        : customerLimitReached
-                                        ? 'Customer-count limit reached.'
-                                        : usageLimitReached
-                                        ? 'Usage limit reached for this customer.'
-                                        : isEligible
-                                        ? 'Potential free: $freeProductName x${formatQty(freeQtyApplied)} | Est. discount ₹${estimatedDiscount.toStringAsFixed(2)}'
-                                        : 'Need ${formatQty(remainingQty)} more $buyProductName',
+                                    statusMessage,
                                     style: TextStyle(
-                                      color: blockedForNewCustomer
-                                          ? Colors.orangeAccent
-                                          : blockedWithoutCustomer ||
-                                                globalLimitReached ||
-                                                customerLimitReached ||
-                                                usageLimitReached
-                                          ? Colors.redAccent
-                                          : isEligible
-                                          ? const Color(0xFF2EBF3B)
-                                          : Colors.orangeAccent,
+                                      color: statusColor,
                                       fontSize: 12,
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -1253,238 +1231,188 @@ class _CartPageState extends State<CartPage> {
                               ),
                             );
                           }),
-                          const SizedBox(height: 4),
-                          const Text(
-                            'Preview only. Final free item and discount are applied by server on submit.',
-                            style: TextStyle(
-                              color: Colors.white54,
-                              fontSize: 11,
-                            ),
-                          ),
                         ],
                       ),
                     ),
                   ),
                 if (productPriceOfferEnabled &&
                     productPriceOfferMatches.isNotEmpty)
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF2A1912),
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                        color: const Color(0xFFFF9F0A).withValues(alpha: 0.45),
-                      ),
-                    ),
-                    child: SingleChildScrollView(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'Product Price Offer',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 14,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          ...productPriceOfferMatches.map((match) {
-                            final productName =
-                                match['productName']?.toString() ?? 'Product';
-                            final quantityInCart = readMoney(
-                              match['quantityInCart'],
-                            );
-                            final baseUnitPrice = readMoney(
-                              match['baseUnitPrice'],
-                            );
-                            final discountPerUnit = readMoney(
-                              match['discountPerUnit'],
-                            );
-                            final offerUnitPrice = readMoney(
-                              match['offerUnitPrice'],
-                            );
-                            final predictedAppliedUnits = readMoney(
-                              match['predictedAppliedUnits'],
-                            );
-                            final predictedDiscountTotal = readMoney(
-                              match['predictedDiscountTotal'],
-                            );
-                            final predictedSubtotal = readMoney(
-                              match['predictedSubtotal'],
-                            );
-                            final predictedEffectiveUnitPrice = readMoney(
-                              match['predictedEffectiveUnitPrice'],
-                            );
-                            final usageLimitEnabled =
-                                match['usageLimitEnabled'] == true;
-                            final usageLimitReached =
-                                match['usageLimitReached'] == true;
-                            final globalLimitReached =
-                                match['globalLimitReached'] == true;
-                            final customerLimitReached =
-                                match['customerLimitReached'] == true;
-                            final blockedWithoutCustomer =
-                                match['blockedWithoutCustomer'] == true;
-                            final blockedForNewCustomer =
-                                match['blockedForNewCustomer'] == true;
-                            final nextBillMessage = match['nextBillMessage']
-                                ?.toString();
-                            final maxOfferCount = readMoney(
-                              match['maxOfferCount'],
-                            );
-                            final offerGivenCount = readMoney(
-                              match['offerGivenCount'],
-                            );
-                            final globalRemaining = readMoney(
-                              match['globalRemaining'],
-                            );
-                            final maxCustomerCount = readMoney(
-                              match['maxCustomerCount'],
-                            );
-                            final offerCustomerCount = readMoney(
-                              match['offerCustomerCount'],
-                            );
-                            final customerRemaining = readMoney(
-                              match['customerRemaining'],
-                            );
-                            final maxUsagePerCustomer = readMoney(
-                              match['maxUsagePerCustomer'],
-                            );
-                            final customerUsageCount = readMoney(
-                              match['customerUsageCount'],
-                            );
-                            final customerUsageRemaining = readMoney(
-                              match['customerUsageRemaining'],
-                            );
-                            final isEligible = match['eligible'] == true;
+                  Builder(
+                    builder: (context) {
+                      final match = productPriceOfferMatches.first;
+                      final productName =
+                          match['productName']?.toString() ?? 'Product';
+                      final quantityInCart = readMoney(match['quantityInCart']);
+                      final baseUnitPrice = readMoney(match['baseUnitPrice']);
+                      final discountPerUnit = readMoney(
+                        match['discountPerUnit'],
+                      );
+                      final offerUnitPrice = readMoney(match['offerUnitPrice']);
+                      final predictedAppliedUnits = readMoney(
+                        match['predictedAppliedUnits'],
+                      );
+                      final predictedDiscountTotal = readMoney(
+                        match['predictedDiscountTotal'],
+                      );
+                      final usageLimitEnabled =
+                          match['usageLimitEnabled'] == true;
+                      final usageLimitReached =
+                          match['usageLimitReached'] == true;
+                      final globalLimitReached =
+                          match['globalLimitReached'] == true;
+                      final customerLimitReached =
+                          match['customerLimitReached'] == true;
+                      final blockedWithoutCustomer =
+                          match['blockedWithoutCustomer'] == true;
+                      final blockedForNewCustomer =
+                          match['blockedForNewCustomer'] == true;
+                      final nextBillMessage = match['nextBillMessage']
+                          ?.toString();
+                      final maxUsagePerCustomer = readMoney(
+                        match['maxUsagePerCustomer'],
+                      );
+                      final customerUsageCount = readMoney(
+                        match['customerUsageCount'],
+                      );
+                      final customerUsageRemaining = readMoney(
+                        match['customerUsageRemaining'],
+                      );
+                      final isEligible = match['eligible'] == true;
+                      final regularUnits =
+                          (quantityInCart - predictedAppliedUnits).clamp(
+                            0.0,
+                            double.infinity,
+                          );
+                      final statusMessage = blockedForNewCustomer
+                          ? (nextBillMessage ??
+                                'This offer will be available from next bill after customer is created.')
+                          : blockedWithoutCustomer
+                          ? 'Customer is required for this offer.'
+                          : globalLimitReached
+                          ? 'Offer limit reached.'
+                          : customerLimitReached
+                          ? 'Customer limit reached.'
+                          : usageLimitReached
+                          ? 'Usage limit reached for this customer.'
+                          : isEligible
+                          ? 'Eligible now. Est. discount ₹${predictedDiscountTotal.toStringAsFixed(2)}'
+                          : 'No eligible discounted units in cart.';
+                      final statusColor = blockedForNewCustomer
+                          ? Colors.orangeAccent
+                          : blockedWithoutCustomer ||
+                                globalLimitReached ||
+                                customerLimitReached ||
+                                usageLimitReached
+                          ? Colors.redAccent
+                          : isEligible
+                          ? const Color(0xFF2EBF3B)
+                          : Colors.orangeAccent;
+                      final extraMatchCount =
+                          (productPriceOfferMatches.length - 1).clamp(
+                            0,
+                            productPriceOfferMatches.length,
+                          );
 
-                            return Container(
-                              width: double.infinity,
-                              margin: const EdgeInsets.only(bottom: 8),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 8,
+                      return Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF2A1912),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: const Color(
+                              0xFFFF9F0A,
+                            ).withValues(alpha: 0.45),
+                          ),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.max,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Product Price Offer',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
                               ),
-                              decoration: BoxDecoration(
-                                color: Colors.black.withValues(alpha: 0.2),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.08),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '$productName x${formatQty(quantityInCart)}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Text(
+                              '₹${baseUnitPrice.toStringAsFixed(2)} -> ₹${offerUnitPrice.toStringAsFixed(2)} | Worth ₹${discountPerUnit.toStringAsFixed(2)}/unit',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 11.5,
+                              ),
+                            ),
+                            Text(
+                              'Counts: In ${formatQty(quantityInCart)} | Disc ${formatQty(predictedAppliedUnits)} | Reg ${formatQty(regularUnits)}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 11.5,
+                              ),
+                            ),
+                            if (usageLimitEnabled)
+                              Text(
+                                'Usage: ${formatQty(customerUsageCount)} / ${formatQty(maxUsagePerCustomer)}'
+                                '${customerUsageRemaining > 0 ? ' | Left ${formatQty(customerUsageRemaining)}' : ''}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 11.5,
                                 ),
                               ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    '$productName x${formatQty(quantityInCart)}',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  Text(
-                                    'Unit: ₹${baseUnitPrice.toStringAsFixed(2)} | Discount: ₹${discountPerUnit.toStringAsFixed(2)} | Pay: ₹${offerUnitPrice.toStringAsFixed(2)}',
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  if (maxOfferCount > 0)
-                                    Text(
-                                      'Global usage: ${formatQty(offerGivenCount)} / ${formatQty(maxOfferCount)} (remaining ${formatQty(globalRemaining)})',
-                                      style: const TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  if (maxCustomerCount > 0)
-                                    Text(
-                                      'Customer count: ${formatQty(offerCustomerCount)} / ${formatQty(maxCustomerCount)} (remaining ${formatQty(customerRemaining)})',
-                                      style: const TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  if (usageLimitEnabled)
-                                    Text(
-                                      'Usage: ${formatQty(customerUsageCount)} / ${formatQty(maxUsagePerCustomer)}',
-                                      style: const TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    blockedForNewCustomer
-                                        ? (nextBillMessage ??
-                                              'This offer will be available from next bill after customer is created.')
-                                        : blockedWithoutCustomer
-                                        ? 'Customer is required for usage/customer limits.'
-                                        : globalLimitReached
-                                        ? 'Global offer limit reached.'
-                                        : customerLimitReached
-                                        ? 'Customer-count limit reached.'
-                                        : usageLimitReached
-                                        ? 'Usage limit reached for this customer.'
-                                        : isEligible
-                                        ? 'Discounted units: ${formatQty(predictedAppliedUnits)} | Est. discount ₹${predictedDiscountTotal.toStringAsFixed(2)}'
-                                        : 'No eligible discounted units in current cart.',
-                                    style: TextStyle(
-                                      color: blockedForNewCustomer
-                                          ? Colors.orangeAccent
-                                          : blockedWithoutCustomer ||
-                                                globalLimitReached ||
-                                                customerLimitReached ||
-                                                usageLimitReached
-                                          ? Colors.redAccent
-                                          : isEligible
-                                          ? const Color(0xFF2EBF3B)
-                                          : Colors.orangeAccent,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  Text(
-                                    'Preview subtotal: ₹${predictedSubtotal.toStringAsFixed(2)} | Effective unit: ₹${predictedEffectiveUnitPrice.toStringAsFixed(2)}',
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                  if (usageLimitEnabled &&
-                                      !blockedForNewCustomer &&
-                                      !usageLimitReached &&
-                                      customerUsageRemaining > 0)
-                                    Text(
-                                      'Remaining discounted units: ${formatQty(customerUsageRemaining)}',
-                                      style: const TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                ],
+                            const SizedBox(height: 3),
+                            Text(
+                              statusMessage,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: statusColor,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
                               ),
-                            );
-                          }),
-                          const SizedBox(height: 4),
-                          const Text(
-                            'Preview only. Final price-offer units and totals are applied by server on submit.',
-                            style: TextStyle(
-                              color: Colors.white54,
-                              fontSize: 11,
                             ),
-                          ),
-                        ],
-                      ),
-                    ),
+                            if (extraMatchCount > 0)
+                              Text(
+                                '+$extraMatchCount more product offer${extraMatchCount > 1 ? 's' : ''}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 11,
+                                ),
+                              ),
+                          ],
+                        ),
+                      );
+                    },
                   ),
                 if (customerEntryPercentageOfferEnabled)
                   Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 10,
+                    ),
                     decoration: BoxDecoration(
                       color: const Color(0xFF132323),
                       borderRadius: BorderRadius.circular(10),
@@ -1492,97 +1420,77 @@ class _CartPageState extends State<CartPage> {
                         color: const Color(0xFF26C6DA).withValues(alpha: 0.45),
                       ),
                     ),
-                    child: SingleChildScrollView(
-                      child: Builder(
-                        builder: (context) {
-                          final discountPercent = readMoney(
-                            customerEntryPercentageOfferData?['discountPercent'],
-                          );
-                          final scheduleMatched =
-                              customerEntryPercentageOfferData?['scheduleMatched'] ==
-                              true;
-                          final scheduleBlocked =
-                              customerEntryPercentageOfferData?['scheduleBlocked'] ==
-                              true;
+                    child: Builder(
+                      builder: (context) {
+                        final discountPercent = readMoney(
+                          customerEntryPercentageOfferData?['discountPercent'],
+                        );
+                        final scheduleMatched =
+                            customerEntryPercentageOfferData?['scheduleMatched'] ==
+                            true;
+                        final scheduleBlocked =
+                            customerEntryPercentageOfferData?['scheduleBlocked'] ==
+                            true;
 
-                          return Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Customer Entry Percentage Offer',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w700,
-                                ),
+                        return Column(
+                          mainAxisSize: MainAxisSize.max,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            const Text(
+                              'Customer Entry Percentage Offer',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
                               ),
-                              const SizedBox(height: 6),
-                              Text(
-                                'Discount: ${discountPercent.toStringAsFixed(2)}%',
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 12,
-                                ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              '${discountPercent.toStringAsFixed(2)}% OFF',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Color(0xFF26C6DA),
+                                fontSize: 20,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.2,
                               ),
-                              const Text(
-                                'No checkbox needed. Backend applies this on completed bill.',
-                                style: TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 12,
-                                ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              scheduleMatched
+                                  ? 'Auto-applies from backend'
+                                  : 'Not active now (time window).',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: scheduleMatched
+                                    ? Colors.white70
+                                    : Colors.orangeAccent,
+                                fontSize: 11,
                               ),
-                              const Text(
-                                'Compulsory when enabled and schedule is active.',
-                                style: TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 12,
-                                ),
-                              ),
-                              Text(
-                                'Schedule: ${scheduleMatched ? 'active now' : 'outside active window'}',
-                                style: TextStyle(
-                                  color: scheduleMatched
-                                      ? Colors.white70
-                                      : Colors.orangeAccent,
-                                  fontSize: 12,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                scheduleBlocked
-                                    ? 'Offer is outside active date/time window.'
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              scheduleBlocked
+                                  ? 'Check schedule in settings.'
+                                  : customerEntryPercentagePreviewEligible
+                                  ? 'Eligible now.'
+                                  : 'Eligibility is backend-validated.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: scheduleBlocked
+                                    ? Colors.orangeAccent
                                     : customerEntryPercentagePreviewEligible
-                                    ? 'Eligible preview. Final discount comes from backend on submit.'
-                                    : 'Final eligibility is checked by backend on submit.',
-                                style: TextStyle(
-                                  color: scheduleBlocked
-                                      ? Colors.orangeAccent
-                                      : customerEntryPercentagePreviewEligible
-                                      ? const Color(0xFF2EBF3B)
-                                      : Colors.white70,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                                    ? const Color(0xFF2EBF3B)
+                                    : Colors.white70,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
                               ),
-                              const SizedBox(height: 4),
-                              const Text(
-                                'This offer does not stack with Total Percentage Offer.',
-                                style: TextStyle(
-                                  color: Colors.white54,
-                                  fontSize: 11,
-                                ),
-                              ),
-                              const Text(
-                                'Final payable uses backend totalAmount after submit.',
-                                style: TextStyle(
-                                  color: Colors.white54,
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
-                          );
-                        },
-                      ),
+                            ),
+                          ],
+                        );
+                      },
                     ),
                   ),
                 if (totalPercentageOfferEnabled)
@@ -2243,7 +2151,7 @@ class _CartPageState extends State<CartPage> {
                                 ),
                                 const SizedBox(height: 8),
                                 SizedBox(
-                                  height: 250,
+                                  height: 150,
                                   child: PageView.builder(
                                     reverse: false,
                                     itemCount: offerCards.length,
@@ -2257,7 +2165,9 @@ class _CartPageState extends State<CartPage> {
                                         padding: const EdgeInsets.symmetric(
                                           horizontal: 2,
                                         ),
-                                        child: offerCards[index],
+                                        child: SizedBox.expand(
+                                          child: offerCards[index],
+                                        ),
                                       );
                                     },
                                   ),

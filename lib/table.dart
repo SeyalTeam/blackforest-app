@@ -466,6 +466,21 @@ class _TablePageState extends State<TablePage> {
                       color: Colors.black54,
                     ),
                   ),
+                  const SizedBox(height: 2),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Text(
+                      'By: ${_waiterLabel(runningBill)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.black45,
+                      ),
+                    ),
+                  ),
                 ],
               ],
             ),
@@ -564,6 +579,42 @@ class _TablePageState extends State<TablePage> {
       return kotNumberRaw.toUpperCase();
     }
     return 'KOT-$kotNumberRaw';
+  }
+
+  String _waiterLabel(dynamic runningBill) {
+    String readText(dynamic value) => value?.toString().trim() ?? '';
+
+    final createdBy = runningBill is Map ? runningBill['createdBy'] : null;
+    if (createdBy is Map) {
+      final user = Map<String, dynamic>.from(createdBy);
+
+      final direct = [
+        user['name'],
+        user['username'],
+        user['fullName'],
+        user['displayName'],
+        user['email'],
+      ].map(readText).firstWhere((value) => value.isNotEmpty, orElse: () => '');
+      if (direct.isNotEmpty) {
+        return direct;
+      }
+
+      final employee = user['employee'];
+      if (employee is Map) {
+        final employeeName = readText(employee['name']);
+        if (employeeName.isNotEmpty) {
+          return employeeName;
+        }
+      }
+    }
+
+    final fallback = [
+      runningBill is Map ? runningBill['createdByName'] : null,
+      runningBill is Map ? runningBill['waiterName'] : null,
+      runningBill is Map ? runningBill['assignedBy'] : null,
+    ].map(readText).firstWhere((value) => value.isNotEmpty, orElse: () => '');
+
+    return fallback.isNotEmpty ? fallback : 'N/A';
   }
 
   Widget _buildSharedTablesSection() {
