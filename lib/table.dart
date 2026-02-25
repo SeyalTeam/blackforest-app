@@ -699,6 +699,7 @@ class _TablePageState extends State<TablePage> {
     Timer? debounceTimer;
     bool isDialogActive = true;
     String latestLookupPhone = '';
+    bool didAutoLookup = false;
     Map<String, dynamic>? customerLookupData;
     bool isLookupInProgress = false;
     String? lookupError;
@@ -748,6 +749,9 @@ class _TablePageState extends State<TablePage> {
             final totalPercentageOfferData = readMap(
               customerLookupData?['totalPercentageOfferPreview'],
             );
+            final customerEntryPercentageOfferData = readMap(
+              customerLookupData?['customerEntryPercentageOfferPreview'],
+            );
 
             final productOfferMatches = readMapList(
               productOfferData?['matches'],
@@ -773,9 +777,15 @@ class _TablePageState extends State<TablePage> {
                     offerData?['historyBasedEligible'] == true);
             final totalPercentageOfferEnabled =
                 totalPercentageOfferData?['enabled'] == true;
+            final totalPercentageOfferPreviewEligible =
+                totalPercentageOfferData?['previewEligible'] == true;
+            final customerEntryPercentageOfferEnabled =
+                customerEntryPercentageOfferData?['enabled'] == true;
+            final customerEntryPercentageOfferPreviewEligible =
+                customerEntryPercentageOfferData?['previewEligible'] == true;
 
             String? activeOfferTitle;
-            List<String> activeOfferLines = const <String>[];
+            final activeOfferLines = <String>[];
             Color activeOfferBorderColor = const Color(0xFF2EBF3B);
 
             if (eligibleProductOfferMatches.isNotEmpty) {
@@ -786,10 +796,10 @@ class _TablePageState extends State<TablePage> {
                   : 'Free Product';
               final freeQty = readMoney(match['predictedFreeQuantity']);
               activeOfferTitle = 'Product to Product Offer';
-              activeOfferLines = [
+              activeOfferLines.addAll([
                 '$freeName FREE x${formatQty(freeQty)}',
                 'Applied by backend for this table order.',
-              ];
+              ]);
               activeOfferBorderColor = const Color(0xFF0A84FF);
             } else if (eligibleProductPriceOfferMatches.isNotEmpty) {
               final match = eligibleProductPriceOfferMatches.first;
@@ -800,10 +810,10 @@ class _TablePageState extends State<TablePage> {
               final discountPerUnit = readMoney(match['discountPerUnit']);
               final discountedUnits = readMoney(match['predictedAppliedUnits']);
               activeOfferTitle = 'Product Price Offer';
-              activeOfferLines = [
+              activeOfferLines.addAll([
                 '$productName discount ₹${discountPerUnit.toStringAsFixed(2)} x ${formatQty(discountedUnits)} unit(s)',
                 'Applied by backend for this table order.',
-              ];
+              ]);
               activeOfferBorderColor = const Color(0xFFF7A400);
             } else if (eligibleRandomOfferMatches.isNotEmpty) {
               final selectedMatchRaw = randomOfferData?['selectedMatch'];
@@ -819,29 +829,90 @@ class _TablePageState extends State<TablePage> {
                   ? selectedMatch['productName'].toString().trim()
                   : 'Random Product';
               activeOfferTitle = 'Random Product Offer';
-              activeOfferLines = [
+              activeOfferLines.addAll([
                 '$productName (FREE x1)',
                 'Applied by backend for this table order.',
-              ];
+              ]);
               activeOfferBorderColor = const Color(0xFF00B8D9);
             } else if (creditOfferEligible) {
               final offerAmount = readMoney(offerData?['offerAmount']);
               activeOfferTitle = 'Customer Credit Offer';
-              activeOfferLines = [
+              activeOfferLines.addAll([
                 'Eligible discount: ₹${offerAmount.toStringAsFixed(2)}',
                 'Used in final billing submit (backend validation).',
-              ];
+              ]);
               activeOfferBorderColor = const Color(0xFF2EBF3B);
-            } else if (totalPercentageOfferEnabled) {
+            } else if (totalPercentageOfferEnabled &&
+                totalPercentageOfferPreviewEligible) {
               final percent = readMoney(
                 totalPercentageOfferData?['discountPercent'],
               );
               activeOfferTitle = 'Total Percentage Offer';
-              activeOfferLines = [
+              activeOfferLines.addAll([
                 '${percent.toStringAsFixed(2)}% on final payable amount',
                 'Applied by backend if higher-priority offers are not used.',
-              ];
+              ]);
               activeOfferBorderColor = const Color(0xFF9B7DFF);
+            }
+
+            if (customerEntryPercentageOfferEnabled &&
+                customerEntryPercentageOfferPreviewEligible) {
+              final offer6Percent = readMoney(
+                customerEntryPercentageOfferData?['discountPercent'],
+              );
+              if (activeOfferTitle == null) {
+                activeOfferTitle = 'Customer Entry Percentage Offer';
+                activeOfferBorderColor = const Color(0xFF26C6DA);
+              }
+              activeOfferLines.add(
+                'Customer Entry % Offer: ${offer6Percent.toStringAsFixed(2)}% (backend auto-apply)',
+              );
+            }
+
+            if (!didAutoLookup) {
+              didAutoLookup = true;
+              WidgetsBinding.instance.addPostFrameCallback((_) async {
+                if (!isDialogActive || !mounted) return;
+                final rawPhone = phoneCtrl.text.trim();
+                final lookupPhone = rawPhone.length >= 10 ? rawPhone : '';
+                latestLookupPhone = rawPhone;
+                setDialogState(() {
+                  lookupError = null;
+                  isLookupInProgress = true;
+                });
+                try {
+                  final activeTableNumber =
+                      cartProvider.selectedTable?.trim() ?? '';
+                  final activeSection =
+                      cartProvider.selectedSection?.trim() ?? '';
+                  final data = await cartProvider.fetchCustomerData(
+                    lookupPhone,
+                    isTableOrder: true,
+                    tableSection: activeSection,
+                    tableNumber: activeTableNumber,
+                  );
+                  if (!isDialogActive || !mounted) return;
+                  setDialogState(() {
+                    customerLookupData = data;
+                    isLookupInProgress = false;
+                    lookupError = null;
+                  });
+                  final fetchedName = data?['name']?.toString().trim() ?? '';
+                  final isNewCustomerLookup = data?['isNewCustomer'] == true;
+                  if (!isNewCustomerLookup &&
+                      fetchedName.isNotEmpty &&
+                      nameCtrl.text.trim().isEmpty) {
+                    nameCtrl.text = fetchedName;
+                  }
+                } catch (_) {
+                  if (!isDialogActive || !mounted) return;
+                  setDialogState(() {
+                    customerLookupData = null;
+                    isLookupInProgress = false;
+                    lookupError = 'Unable to fetch customer details';
+                  });
+                }
+              });
             }
 
             return Dialog(
@@ -899,85 +970,89 @@ class _TablePageState extends State<TablePage> {
                               style: const TextStyle(color: Colors.white),
                               onChanged: (val) {
                                 setDialogState(() {});
-                                if (val.length >= 10) {
-                                  final lookupPhone = val.trim();
-                                  latestLookupPhone = lookupPhone;
-                                  setDialogState(() {
-                                    lookupError = null;
-                                    isLookupInProgress = true;
-                                  });
-                                  debounceTimer?.cancel();
-                                  debounceTimer = Timer(
-                                    const Duration(milliseconds: 600),
-                                    () async {
+                                final rawPhone = val.trim();
+                                final lookupPhone = rawPhone.length >= 10
+                                    ? rawPhone
+                                    : '';
+                                latestLookupPhone = rawPhone;
+                                setDialogState(() {
+                                  lookupError = null;
+                                  isLookupInProgress = true;
+                                });
+                                debounceTimer?.cancel();
+                                debounceTimer = Timer(
+                                  const Duration(milliseconds: 600),
+                                  () async {
+                                    if (!isDialogActive ||
+                                        rawPhone != latestLookupPhone) {
+                                      return;
+                                    }
+
+                                    try {
+                                      final activeTableNumber =
+                                          cartProvider.selectedTable?.trim() ??
+                                          '';
+                                      final activeSection =
+                                          cartProvider.selectedSection
+                                              ?.trim() ??
+                                          '';
+                                      final data = await cartProvider
+                                          .fetchCustomerData(
+                                            lookupPhone,
+                                            isTableOrder: true,
+                                            tableSection: activeSection,
+                                            tableNumber: activeTableNumber,
+                                          );
+                                      final latestPhone = phoneCtrl.text.trim();
+                                      final isSameLongPhone =
+                                          latestPhone == rawPhone;
+                                      final bothShortPhone =
+                                          latestPhone.length < 10 &&
+                                          rawPhone.length < 10;
                                       if (!isDialogActive ||
-                                          lookupPhone != latestLookupPhone) {
+                                          !mounted ||
+                                          (!isSameLongPhone &&
+                                              !bothShortPhone)) {
                                         return;
                                       }
-
-                                      try {
-                                        final activeTableNumber =
-                                            cartProvider.selectedTable
-                                                ?.trim() ??
-                                            '';
-                                        final activeSection =
-                                            cartProvider.selectedSection
-                                                ?.trim() ??
-                                            '';
-                                        final data = await cartProvider
-                                            .fetchCustomerData(
-                                              lookupPhone,
-                                              isTableOrder: true,
-                                              tableSection: activeSection,
-                                              tableNumber: activeTableNumber,
-                                            );
-                                        if (!isDialogActive ||
-                                            !mounted ||
-                                            lookupPhone !=
-                                                phoneCtrl.text.trim()) {
-                                          return;
-                                        }
-                                        setDialogState(() {
-                                          customerLookupData = data;
-                                          isLookupInProgress = false;
-                                          lookupError = null;
-                                        });
-                                        final fetchedName =
-                                            data?['name']?.toString().trim() ??
-                                            '';
-                                        final isNewCustomerLookup =
-                                            data?['isNewCustomer'] == true;
-                                        if (!isNewCustomerLookup &&
-                                            fetchedName.isNotEmpty &&
-                                            nameCtrl.text.trim().isEmpty) {
-                                          nameCtrl.text = fetchedName;
-                                        }
-                                      } catch (e) {
-                                        debugPrint("Lookup failed: $e");
-                                        if (!isDialogActive ||
-                                            !mounted ||
-                                            lookupPhone !=
-                                                phoneCtrl.text.trim()) {
-                                          return;
-                                        }
-                                        setDialogState(() {
-                                          customerLookupData = null;
-                                          isLookupInProgress = false;
-                                          lookupError =
-                                              'Unable to fetch customer details';
-                                        });
+                                      setDialogState(() {
+                                        customerLookupData = data;
+                                        isLookupInProgress = false;
+                                        lookupError = null;
+                                      });
+                                      final fetchedName =
+                                          data?['name']?.toString().trim() ??
+                                          '';
+                                      final isNewCustomerLookup =
+                                          data?['isNewCustomer'] == true;
+                                      if (!isNewCustomerLookup &&
+                                          fetchedName.isNotEmpty &&
+                                          nameCtrl.text.trim().isEmpty) {
+                                        nameCtrl.text = fetchedName;
                                       }
-                                    },
-                                  );
-                                } else {
-                                  latestLookupPhone = '';
-                                  debounceTimer?.cancel();
-                                  setDialogState(() {
-                                    customerLookupData = null;
-                                    lookupError = null;
-                                    isLookupInProgress = false;
-                                  });
-                                }
+                                    } catch (e) {
+                                      debugPrint("Lookup failed: $e");
+                                      final latestPhone = phoneCtrl.text.trim();
+                                      final isSameLongPhone =
+                                          latestPhone == rawPhone;
+                                      final bothShortPhone =
+                                          latestPhone.length < 10 &&
+                                          rawPhone.length < 10;
+                                      if (!isDialogActive ||
+                                          !mounted ||
+                                          (!isSameLongPhone &&
+                                              !bothShortPhone)) {
+                                        return;
+                                      }
+                                      setDialogState(() {
+                                        customerLookupData = null;
+                                        isLookupInProgress = false;
+                                        lookupError =
+                                            'Unable to fetch customer details';
+                                      });
+                                    }
+                                  },
+                                );
                               },
                               decoration: const InputDecoration(
                                 contentPadding: EdgeInsets.symmetric(
@@ -1168,14 +1243,14 @@ class _TablePageState extends State<TablePage> {
                                 Expanded(
                                   child: ElevatedButton(
                                     onPressed: () {
-                                      if (phoneCtrl.text.trim().isEmpty ||
+                                      if (phoneCtrl.text.trim().isEmpty &&
                                           nameCtrl.text.trim().isEmpty) {
                                         ScaffoldMessenger.of(
                                           context,
                                         ).showSnackBar(
                                           const SnackBar(
                                             content: Text(
-                                              "Please enter phone and customer name or use Skip",
+                                              "Please enter customer name or phone number, or use Skip",
                                             ),
                                           ),
                                         );
@@ -1218,12 +1293,12 @@ class _TablePageState extends State<TablePage> {
                               width: double.infinity,
                               child: ElevatedButton(
                                 onPressed: () {
-                                  if (phoneCtrl.text.trim().isEmpty ||
+                                  if (phoneCtrl.text.trim().isEmpty &&
                                       nameCtrl.text.trim().isEmpty) {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       const SnackBar(
                                         content: Text(
-                                          "Please enter phone and customer name",
+                                          "Please enter customer name or phone number",
                                         ),
                                       ),
                                     );

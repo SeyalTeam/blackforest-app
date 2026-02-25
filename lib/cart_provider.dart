@@ -1316,7 +1316,7 @@ class CartProvider extends ChangeNotifier {
   }) async {
     try {
       final normalizedPhone = phoneNumber.trim();
-      if (normalizedPhone.isEmpty) return null;
+      final hasPhoneLookup = normalizedPhone.isNotEmpty;
 
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
@@ -1328,18 +1328,22 @@ class CartProvider extends ChangeNotifier {
       };
 
       final responses = await Future.wait([
-        http.get(
-          Uri.parse(
-            'https://blackforest.vseyal.com/api/billings?where[customerDetails.phoneNumber][equals]=$normalizedPhone&where[status][not_equals]=cancelled&sort=-createdAt&limit=500&depth=4',
-          ),
-          headers: headers,
-        ),
-        http.get(
-          Uri.parse(
-            'https://blackforest.vseyal.com/api/customers?where[phoneNumber][equals]=$normalizedPhone&limit=1&depth=0',
-          ),
-          headers: headers,
-        ),
+        hasPhoneLookup
+            ? http.get(
+                Uri.parse(
+                  'https://blackforest.vseyal.com/api/billings?where[customerDetails.phoneNumber][equals]=$normalizedPhone&where[status][not_equals]=cancelled&sort=-createdAt&limit=500&depth=4',
+                ),
+                headers: headers,
+              )
+            : Future.value(http.Response('{"docs":[],"totalDocs":0}', 200)),
+        hasPhoneLookup
+            ? http.get(
+                Uri.parse(
+                  'https://blackforest.vseyal.com/api/customers?where[phoneNumber][equals]=$normalizedPhone&limit=1&depth=0',
+                ),
+                headers: headers,
+              )
+            : Future.value(http.Response('{"docs":[],"totalDocs":0}', 200)),
         http.get(
           Uri.parse(
             'https://blackforest.vseyal.com/api/globals/customer-offer-settings',
@@ -1996,7 +2000,6 @@ class CartProvider extends ChangeNotifier {
           !customerEntryPercentageOfferScheduleMatched;
       final customerEntryPercentageOfferPreviewEligible =
           enableCustomerEntryPercentageOffer &&
-          hasCustomerEntryForOffer &&
           !customerEntryPercentageOfferScheduleBlocked;
 
       final currentBillItems = [...recalledItems, ...cartItems];

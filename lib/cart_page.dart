@@ -703,15 +703,7 @@ class _CartPageState extends State<CartPage> {
             void Function(void Function()) setDialogState,
           ) async {
             final phone = rawPhone.trim();
-            if (phone.length < 10) {
-              setDialogState(() {
-                customerLookupData = null;
-                lookupError = null;
-                isLookupInProgress = false;
-                applyCustomerOffer = false;
-              });
-              return;
-            }
+            final lookupPhone = phone.length >= 10 ? phone : '';
 
             setDialogState(() {
               lookupError = null;
@@ -726,12 +718,16 @@ class _CartPageState extends State<CartPage> {
                   cartProvider.currentType == CartType.table &&
                   (activeTableNumber.isNotEmpty || activeSection.isNotEmpty);
               final data = await cartProvider.fetchCustomerData(
-                phone,
+                lookupPhone,
                 isTableOrder: lookupIsTableOrder,
                 tableSection: activeSection,
                 tableNumber: activeTableNumber,
               );
-              if (phoneCtrl.text.trim() != phone) return;
+              final latestPhone = phoneCtrl.text.trim();
+              final isSameLongPhone = latestPhone == phone;
+              final bothShortPhone =
+                  latestPhone.length < 10 && phone.length < 10;
+              if (!isSameLongPhone && !bothShortPhone) return;
 
               setDialogState(() {
                 customerLookupData = data;
@@ -756,7 +752,11 @@ class _CartPageState extends State<CartPage> {
                 applyCustomerOffer = eligible;
               });
             } catch (_) {
-              if (phoneCtrl.text.trim() != phone) return;
+              final latestPhone = phoneCtrl.text.trim();
+              final isSameLongPhone = latestPhone == phone;
+              final bothShortPhone =
+                  latestPhone.length < 10 && phone.length < 10;
+              if (!isSameLongPhone && !bothShortPhone) return;
               setDialogState(() {
                 customerLookupData = null;
                 isLookupInProgress = false;
@@ -768,7 +768,7 @@ class _CartPageState extends State<CartPage> {
 
           return StatefulBuilder(
             builder: (context, setDialogState) {
-              if (!didAutoLookup && phoneCtrl.text.trim().length >= 10) {
+              if (!didAutoLookup) {
                 didAutoLookup = true;
                 WidgetsBinding.instance.addPostFrameCallback((_) {
                   lookupCustomer(phoneCtrl.text, setDialogState);
@@ -1498,19 +1498,12 @@ class _CartPageState extends State<CartPage> {
                           final discountPercent = readMoney(
                             customerEntryPercentageOfferData?['discountPercent'],
                           );
-                          final hasCustomerEntry =
-                              customerEntryPercentageOfferData?['hasCustomerEntry'] ==
-                              true;
                           final scheduleMatched =
                               customerEntryPercentageOfferData?['scheduleMatched'] ==
                               true;
                           final scheduleBlocked =
                               customerEntryPercentageOfferData?['scheduleBlocked'] ==
                               true;
-                          final blockedByHigherPriority =
-                              highestPriorityAppliedPreviewName != null &&
-                              highestPriorityAppliedPreviewName !=
-                                  'Customer Entry Percentage Offer';
 
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1539,7 +1532,7 @@ class _CartPageState extends State<CartPage> {
                                 ),
                               ),
                               const Text(
-                                'Customer entry required: name or phone.',
+                                'Compulsory when enabled and schedule is active.',
                                 style: TextStyle(
                                   color: Colors.white70,
                                   fontSize: 12,
@@ -1556,18 +1549,13 @@ class _CartPageState extends State<CartPage> {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                blockedByHigherPriority
-                                    ? 'Blocked by higher-priority offer: $highestPriorityAppliedPreviewName.'
-                                    : !hasCustomerEntry
-                                    ? 'Enter customer name or phone to allow this offer.'
-                                    : scheduleBlocked
+                                scheduleBlocked
                                     ? 'Offer is outside active date/time window.'
                                     : customerEntryPercentagePreviewEligible
                                     ? 'Eligible preview. Final discount comes from backend on submit.'
                                     : 'Final eligibility is checked by backend on submit.',
                                 style: TextStyle(
-                                  color:
-                                      blockedByHigherPriority || scheduleBlocked
+                                  color: scheduleBlocked
                                       ? Colors.orangeAccent
                                       : customerEntryPercentagePreviewEligible
                                       ? const Color(0xFF2EBF3B)
@@ -2012,42 +2000,59 @@ class _CartPageState extends State<CartPage> {
                 randomCardIndex = runningCardIndex++;
               }
 
-              int? selectedCardIndex;
+              int? primaryOfferCardIndex;
               if (hasEligibleProductOffer &&
                   productToProductCardIndex != null) {
-                selectedCardIndex = productToProductCardIndex;
+                primaryOfferCardIndex = productToProductCardIndex;
               } else if (hasEligibleProductPriceOffer &&
                   productPriceCardIndex != null) {
-                selectedCardIndex = productPriceCardIndex;
+                primaryOfferCardIndex = productPriceCardIndex;
               } else if (hasEligibleRandomOffer && randomCardIndex != null) {
-                selectedCardIndex = randomCardIndex;
+                primaryOfferCardIndex = randomCardIndex;
               } else if (effectiveApplyCustomerOffer &&
                   creditCardIndex != null) {
-                selectedCardIndex = creditCardIndex;
-              } else if (customerEntryPercentagePreviewEligible &&
-                  customerEntryPercentageCardIndex != null) {
-                selectedCardIndex = customerEntryPercentageCardIndex;
+                primaryOfferCardIndex = creditCardIndex;
               } else if (totalPercentageCardIndex != null) {
-                selectedCardIndex = totalPercentageCardIndex;
+                primaryOfferCardIndex = totalPercentageCardIndex;
               } else if (canApplyCustomerOffer && creditCardIndex != null) {
-                selectedCardIndex = creditCardIndex;
-              } else if (customerEntryPercentageCardIndex != null) {
-                selectedCardIndex = customerEntryPercentageCardIndex;
+                primaryOfferCardIndex = creditCardIndex;
               } else if (productToProductCardIndex != null) {
-                selectedCardIndex = productToProductCardIndex;
+                primaryOfferCardIndex = productToProductCardIndex;
               } else if (productPriceCardIndex != null) {
-                selectedCardIndex = productPriceCardIndex;
+                primaryOfferCardIndex = productPriceCardIndex;
               } else if (randomCardIndex != null) {
-                selectedCardIndex = randomCardIndex;
+                primaryOfferCardIndex = randomCardIndex;
+              } else if (totalPercentageCardIndex != null) {
+                primaryOfferCardIndex = totalPercentageCardIndex;
               }
 
-              if (selectedCardIndex != null &&
-                  selectedCardIndex >= 0 &&
-                  selectedCardIndex < offerCards.length) {
-                final selectedCard = offerCards[selectedCardIndex];
+              final focusedCards = <Widget>[];
+              if (primaryOfferCardIndex != null &&
+                  primaryOfferCardIndex >= 0 &&
+                  primaryOfferCardIndex < offerCards.length) {
+                focusedCards.add(offerCards[primaryOfferCardIndex]);
+              }
+              if (customerEntryPercentageCardIndex != null &&
+                  customerEntryPercentageCardIndex >= 0 &&
+                  customerEntryPercentageCardIndex < offerCards.length &&
+                  customerEntryPercentagePreviewEligible) {
+                final customerEntryCard =
+                    offerCards[customerEntryPercentageCardIndex];
+                if (!focusedCards.contains(customerEntryCard)) {
+                  focusedCards.add(customerEntryCard);
+                }
+              }
+              if (focusedCards.isEmpty &&
+                  customerEntryPercentageCardIndex != null &&
+                  customerEntryPercentageCardIndex >= 0 &&
+                  customerEntryPercentageCardIndex < offerCards.length) {
+                focusedCards.add(offerCards[customerEntryPercentageCardIndex]);
+              }
+              if (focusedCards.isNotEmpty &&
+                  focusedCards.length < offerCards.length) {
                 offerCards
                   ..clear()
-                  ..add(selectedCard);
+                  ..addAll(focusedCards);
                 offerPageIndex = 0;
               }
               if (offerPageIndex >= offerCards.length) {
@@ -2230,7 +2235,7 @@ class _CartPageState extends State<CartPage> {
                               if (hasOfferPreview && offerCards.isNotEmpty) ...[
                                 const SizedBox(height: 12),
                                 const Text(
-                                  'One offer per bill. Priority: Buy A Get B -> Product Price -> Random Product -> Customer Credit -> Customer Entry Percentage -> Total Percentage.',
+                                  'Up to 2 offers per bill: Customer Entry Percentage + one backend-selected offer path.',
                                   style: TextStyle(
                                     color: Colors.white54,
                                     fontSize: 11,
@@ -3314,14 +3319,14 @@ class _CartPageState extends State<CartPage> {
 
   Future<bool> _confirmKotOfferPreview(CartProvider cartProvider) async {
     final phone = (cartProvider.customerPhone ?? '').trim();
-    if (phone.length < 10) return true;
+    final lookupPhone = phone.length >= 10 ? phone : '';
 
     final tableNumber = (cartProvider.selectedTable ?? '').trim();
     final section = (cartProvider.selectedSection ?? '').trim();
 
     try {
       final data = await cartProvider.fetchCustomerData(
-        phone,
+        lookupPhone,
         isTableOrder: true,
         tableSection: section,
         tableNumber: tableNumber,
@@ -3424,14 +3429,19 @@ class _CartPageState extends State<CartPage> {
         });
       } else if (creditOfferEnabled) {
         previewLines.add('Customer Credit Offer may apply on final billing.');
-      } else if (customerEntryPercentageOfferEnabled &&
-          customerEntryPercentageOfferPreviewEligible) {
-        previewLines.add(
-          'Customer Entry Percentage Offer may apply on final billing.',
-        );
       } else if (totalPercentageOfferEnabled &&
           totalPercentageOfferPreviewEligible) {
         previewLines.add('Total Percentage Offer may apply on final billing.');
+      }
+
+      if (customerEntryPercentageOfferEnabled &&
+          customerEntryPercentageOfferPreviewEligible) {
+        final offer6Percent = readMoney(
+          customerEntryPercentageOfferData?['discountPercent'],
+        );
+        previewLines.add(
+          'Customer Entry Percentage Offer: ${offer6Percent.toStringAsFixed(2)}% auto-applied by backend.',
+        );
       }
 
       if (offerPreviewItems.isEmpty && previewLines.isEmpty) {
