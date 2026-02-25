@@ -1,4 +1,5 @@
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:blackforest_app/table_customer_details_visibility_service.dart';
 
 const String _favoriteCategoryPrefix = 'favorite_category_ids_';
 
@@ -11,6 +12,7 @@ Future<void> clearSessionPreservingFavorites(SharedPreferences prefs) async {
   }
 
   await prefs.clear();
+  TableCustomerDetailsVisibilityService.clearCache();
 
   for (final entry in favoritesBackup.entries) {
     await prefs.setStringList(entry.key, entry.value);

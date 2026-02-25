@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io' as io; // For Platform check
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:http/http.dart' as http;
+import 'package:blackforest_app/app_http.dart' as http;
 import 'package:provider/provider.dart'; // For cart badge
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobile_scanner/mobile_scanner.dart'; // Import for scanner

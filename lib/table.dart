@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:blackforest_app/app_http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:provider/provider.dart';
@@ -9,6 +9,7 @@ import 'package:blackforest_app/cart_provider.dart';
 import 'package:blackforest_app/categories_page.dart';
 import 'package:blackforest_app/cart_page.dart';
 import 'package:blackforest_app/customer_history_dialog.dart';
+import 'package:blackforest_app/table_customer_details_visibility_service.dart';
 
 class TablePage extends StatefulWidget {
   const TablePage({super.key});
@@ -26,7 +27,26 @@ class _TablePageState extends State<TablePage> {
   final Map<String, dynamic> _pendingBillsByTableKey = {};
   final List<dynamic> _sharedPendingBills = [];
   bool _isHandlingTableTap = false;
+  bool _isFetchingPendingBills = false;
   Timer? _timer;
+
+  List<Map<String, dynamic>> _activeItemsFromBill(dynamic bill) {
+    if (bill is! Map) return const <Map<String, dynamic>>[];
+    final items = bill['items'];
+    if (items is! List || items.isEmpty) {
+      return const <Map<String, dynamic>>[];
+    }
+
+    final activeItems = <Map<String, dynamic>>[];
+    for (final rawItem in items) {
+      if (rawItem is! Map) continue;
+      final item = Map<String, dynamic>.from(rawItem);
+      final status = item['status']?.toString().toLowerCase().trim() ?? '';
+      if (status == 'cancelled') continue;
+      activeItems.add(item);
+    }
+    return activeItems;
+  }
 
   @override
   void initState() {
@@ -47,6 +67,9 @@ class _TablePageState extends State<TablePage> {
         setState(() {
           // Trigger rebuild to update times
         });
+        if (timer.tick % 5 == 0) {
+          unawaited(_fetchPendingBills());
+        }
       }
     });
   }
@@ -61,6 +84,12 @@ class _TablePageState extends State<TablePage> {
     if (_token != null && _branchId != null) {
       _fetchTables();
       _fetchPendingBills();
+      unawaited(
+        TableCustomerDetailsVisibilityService.shouldShowForBranch(
+          branchId: _branchId,
+          token: _token,
+        ),
+      );
     } else {
       setState(() {
         _isLoading = false;
@@ -111,18 +140,18 @@ class _TablePageState extends State<TablePage> {
   }
 
   Future<void> _fetchPendingBills() async {
-    if (_token == null || _branchId == null) return;
+    if (_token == null || _branchId == null || _isFetchingPendingBills) return;
+    _isFetchingPendingBills = true;
 
     try {
       final now = DateTime.now();
-      final todayStart = DateTime(
-        now.year,
-        now.month,
-        now.day,
-      ).toIso8601String();
+      final localDayStart = DateTime(now.year, now.month, now.day);
+      // Convert local-day boundary to UTC so backend date filter includes
+      // bills created after local midnight (e.g. 00:xx local time).
+      final todayStart = localDayStart.toUtc().toIso8601String();
 
       final url = Uri.parse(
-        'https://blackforest.vseyal.com/api/billings?where[status][in]=pending,ordered&where[branch][equals]=$_branchId&where[createdAt][greater_than_equal]=$todayStart&limit=100&depth=3',
+        'https://blackforest.vseyal.com/api/billings?where[status][in]=pending,ordered,confirmed,prepared,delivered&where[branch][equals]=$_branchId&where[createdAt][greater_than_equal]=$todayStart&limit=100&depth=3',
       );
 
       final response = await http.get(
@@ -139,6 +168,9 @@ class _TablePageState extends State<TablePage> {
         final nextByTableKey = <String, dynamic>{};
         final nextSharedBills = <dynamic>[];
         for (final bill in docs) {
+          if (_activeItemsFromBill(bill).isEmpty) {
+            continue;
+          }
           final details = bill['tableDetails'];
           if (details == null) continue;
           final tableNumber = details['tableNumber']?.toString();
@@ -189,6 +221,8 @@ class _TablePageState extends State<TablePage> {
       }
     } catch (e) {
       debugPrint("Error fetching pending bills: $e");
+    } finally {
+      _isFetchingPendingBills = false;
     }
   }
 
@@ -325,33 +359,16 @@ class _TablePageState extends State<TablePage> {
   Color _getTableColor(dynamic runningBill) {
     if (runningBill == null) return const Color(0xFFEEEEEE);
 
-    final items = runningBill['items'] as List?;
-    if (items == null || items.isEmpty) {
-      return const Color(0xFFFFF176); // Default to Yellow (Ordered)
+    final items = _activeItemsFromBill(runningBill);
+    if (items.isEmpty) {
+      return const Color(0xFFEEEEEE);
     }
 
     // Map statuses to priority (1 = lowest, 4 = highest)
     int lowestPriority = 4;
 
-    for (var item in items) {
-      final status = item['status']?.toString().toLowerCase() ?? 'ordered';
-      int priority;
-      switch (status) {
-        case 'ordered':
-          priority = 1;
-          break;
-        case 'confirmed':
-          priority = 2;
-          break;
-        case 'prepared':
-          priority = 3;
-          break;
-        case 'delivered':
-          priority = 4;
-          break;
-        default:
-          priority = 1;
-      }
+    for (final item in items) {
+      final priority = _statusPriority(item['status']);
       if (priority < lowestPriority) {
         lowestPriority = priority;
       }
@@ -468,28 +485,11 @@ class _TablePageState extends State<TablePage> {
     final diff = DateTime.now().difference(createdAt);
     if (diff.isNegative) return const SizedBox();
 
-    final items = runningBill['items'] as List?;
-    if (items != null && items.isNotEmpty) {
+    final items = _activeItemsFromBill(runningBill);
+    if (items.isNotEmpty) {
       int lowestPriority = 4;
-      for (var item in items) {
-        final status = item['status']?.toString().toLowerCase() ?? 'ordered';
-        int priority;
-        switch (status) {
-          case 'ordered':
-            priority = 1;
-            break;
-          case 'confirmed':
-            priority = 2;
-            break;
-          case 'prepared':
-            priority = 3;
-            break;
-          case 'delivered':
-            priority = 4;
-            break;
-          default:
-            priority = 1;
-        }
+      for (final item in items) {
+        final priority = _statusPriority(item['status']);
         if (priority < lowestPriority) {
           lowestPriority = priority;
         }
@@ -515,12 +515,55 @@ class _TablePageState extends State<TablePage> {
     );
   }
 
-  String _kotLabel(dynamic runningBill) {
-    final inv = runningBill['invoiceNumber']?.toString() ?? '';
-    if (inv.contains('-')) {
-      return 'KOT-${inv.split('-').last.replaceAll('KOT', '')}';
+  int _statusPriority(dynamic rawStatus) {
+    final status = rawStatus?.toString().toLowerCase().trim() ?? '';
+    switch (status) {
+      case 'cancelled':
+        return 99;
+      case 'pending':
+      case 'ordered':
+        return 1;
+      case 'confirmed':
+        return 2;
+      case 'prepared':
+        return 3;
+      case 'delivered':
+        return 4;
+      default:
+        return 1;
     }
-    return inv;
+  }
+
+  String _kotLabel(dynamic runningBill) {
+    String readText(dynamic value) => value?.toString().trim() ?? '';
+
+    final invoiceNumber = readText(runningBill['invoiceNumber']);
+    if (invoiceNumber.isNotEmpty) {
+      if (invoiceNumber.contains('-')) {
+        final suffix = invoiceNumber.split('-').last.trim();
+        final cleanedSuffix = suffix
+            .replaceFirst(RegExp(r'^kot(?:-|\s)*', caseSensitive: false), '')
+            .trim();
+        if (cleanedSuffix.isNotEmpty) {
+          return 'KOT-$cleanedSuffix';
+        }
+      }
+      return invoiceNumber;
+    }
+
+    final kotNumberRaw = readText(runningBill['kotNumber']);
+    if (kotNumberRaw.isEmpty) {
+      return 'KOT';
+    }
+
+    final digitsOnly = kotNumberRaw.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digitsOnly.isNotEmpty) {
+      return 'KOT-$digitsOnly';
+    }
+    if (kotNumberRaw.toUpperCase().startsWith('KOT')) {
+      return kotNumberRaw.toUpperCase();
+    }
+    return 'KOT-$kotNumberRaw';
   }
 
   Widget _buildSharedTablesSection() {
@@ -618,11 +661,10 @@ class _TablePageState extends State<TablePage> {
       itemBuilder: (context, index) {
         final tableNumber = index + 1;
 
-        final runningBill =
-            _pendingBillsByTableKey[_tableKey(
-              tableNumber.toString(),
-              sectionName,
-            )];
+        final runningBill = _findRunningBillForGrid(
+          tableNumber: tableNumber.toString(),
+          sectionName: sectionName,
+        );
 
         return _buildTableTile(
           tableLabel: 'Table $tableNumber',
@@ -645,8 +687,9 @@ class _TablePageState extends State<TablePage> {
   }
 
   Future<Map<String, dynamic>?> _showCustomerDetailsDialog(
-    CartProvider cartProvider,
-  ) async {
+    CartProvider cartProvider, {
+    bool allowSkip = true,
+  }) async {
     final nameCtrl = TextEditingController(
       text: cartProvider.customerName ?? '',
     );
@@ -1093,82 +1136,129 @@ class _TablePageState extends State<TablePage> {
                             ),
                           ],
                           const SizedBox(height: 28),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: OutlinedButton(
-                                  onPressed: () {
-                                    isDialogActive = false;
-                                    debounceTimer?.cancel();
-                                    Navigator.pop(
-                                      dialogContext,
-                                      <String, dynamic>{},
-                                    );
-                                  },
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.white70,
-                                    side: const BorderSide(
-                                      color: Colors.white24,
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 12,
-                                    ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
-                                  ),
-                                  child: const Text("Skip"),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: ElevatedButton(
-                                  onPressed: () {
-                                    if (phoneCtrl.text.trim().isEmpty ||
-                                        nameCtrl.text.trim().isEmpty) {
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        const SnackBar(
-                                          content: Text(
-                                            "Please enter phone and customer name or use Skip",
-                                          ),
-                                        ),
+                          if (allowSkip)
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton(
+                                    onPressed: () {
+                                      isDialogActive = false;
+                                      debounceTimer?.cancel();
+                                      Navigator.pop(
+                                        dialogContext,
+                                        <String, dynamic>{},
                                       );
-                                      return;
-                                    }
-
-                                    isDialogActive = false;
-                                    debounceTimer?.cancel();
-                                    Navigator.pop(
-                                      dialogContext,
-                                      <String, dynamic>{
-                                        'name': nameCtrl.text.trim(),
-                                        'phone': phoneCtrl.text.trim(),
-                                      },
-                                    );
-                                  },
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF0A84FF),
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 12,
+                                    },
+                                    style: OutlinedButton.styleFrom(
+                                      foregroundColor: Colors.white70,
+                                      side: const BorderSide(
+                                        color: Colors.white24,
+                                      ),
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 12,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
                                     ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(10),
-                                    ),
+                                    child: const Text("Skip"),
                                   ),
-                                  child: const Text(
-                                    "Submit",
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: ElevatedButton(
+                                    onPressed: () {
+                                      if (phoneCtrl.text.trim().isEmpty ||
+                                          nameCtrl.text.trim().isEmpty) {
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              "Please enter phone and customer name or use Skip",
+                                            ),
+                                          ),
+                                        );
+                                        return;
+                                      }
+
+                                      isDialogActive = false;
+                                      debounceTimer?.cancel();
+                                      Navigator.pop(
+                                        dialogContext,
+                                        <String, dynamic>{
+                                          'name': nameCtrl.text.trim(),
+                                          'phone': phoneCtrl.text.trim(),
+                                        },
+                                      );
+                                    },
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF0A84FF),
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 12,
+                                      ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
+                                    child: const Text(
+                                      "Submit",
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                      ),
                                     ),
                                   ),
                                 ),
+                              ],
+                            )
+                          else
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton(
+                                onPressed: () {
+                                  if (phoneCtrl.text.trim().isEmpty ||
+                                      nameCtrl.text.trim().isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          "Please enter phone and customer name",
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  }
+
+                                  isDialogActive = false;
+                                  debounceTimer?.cancel();
+                                  Navigator.pop(
+                                    dialogContext,
+                                    <String, dynamic>{
+                                      'name': nameCtrl.text.trim(),
+                                      'phone': phoneCtrl.text.trim(),
+                                    },
+                                  );
+                                },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF0A84FF),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 12,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                                child: const Text(
+                                  "Submit",
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
                               ),
-                            ],
-                          ),
+                            ),
                           if (phoneCtrl.text.length >= 10) ...[
                             const SizedBox(height: 20),
                             Center(
@@ -1253,25 +1343,22 @@ class _TablePageState extends State<TablePage> {
     if (_isHandlingTableTap) return;
     _isHandlingTableTap = true;
 
-    final isRunning = runningBill != null;
+    final activeItems = _activeItemsFromBill(runningBill);
+    final isRunning = runningBill != null && activeItems.isNotEmpty;
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
+    cartProvider.setCartType(CartType.table, notify: false);
 
     try {
       if (isRunning) {
         // If running, we should "recall" it
-        final itemsList = (runningBill['items'] as List)
-            .where((item) => item['status']?.toString() != 'cancelled')
-            .toList();
-        final List<CartItem> recalledItems = itemsList.map((item) {
+        final List<CartItem> recalledItems = activeItems.map((item) {
           double toSafeDouble(dynamic value) {
             if (value is num) return value.toDouble();
             if (value is String) return double.tryParse(value) ?? 0.0;
             return 0.0;
           }
 
-          final itemMap = item is Map
-              ? Map<String, dynamic>.from(item)
-              : <String, dynamic>{};
+          final itemMap = item;
           final prod = item['product'];
           String? cid;
           final String pid = (prod is Map)
@@ -1391,22 +1478,52 @@ class _TablePageState extends State<TablePage> {
         // Clear notifications for this bill since we are opening its cart
         cartProvider.markBillAsRead(runningBill['id']);
       } else {
-        cartProvider.setSelectedTable(tableNumber.toString(), sectionName);
+        final targetTable = tableNumber.toString();
+        final targetSection = sectionName.trim().toLowerCase();
+        final currentTable = cartProvider.selectedTable?.trim();
+        final currentSection = (cartProvider.selectedSection ?? '')
+            .trim()
+            .toLowerCase();
+
+        // Reopening a non-running table must always start fresh, even if
+        // it's the same table selected earlier.
+        if (currentTable == targetTable && currentSection == targetSection) {
+          cartProvider.clearCart();
+          cartProvider.setSelectedTableMetadata(targetTable, sectionName);
+        } else {
+          cartProvider.setSelectedTable(targetTable, sectionName);
+        }
+        // Non-running table should always start with fresh customer info.
+        cartProvider.setCustomerDetails();
 
         if (!openCart) {
-          final customerDetails = await _showCustomerDetailsDialog(
-            cartProvider,
-          );
+          final customerDetailsVisibilityConfig =
+              await TableCustomerDetailsVisibilityService.getConfigForBranch(
+                branchId: _branchId,
+                token: _token,
+              );
           if (!mounted) return;
-          if (customerDetails == null) return;
 
-          if (customerDetails.isEmpty) {
+          if (!customerDetailsVisibilityConfig
+              .showCustomerDetailsForTableOrders) {
             cartProvider.setCustomerDetails();
           } else {
-            cartProvider.setCustomerDetails(
-              name: customerDetails['name']?.toString(),
-              phone: customerDetails['phone']?.toString(),
+            final customerDetails = await _showCustomerDetailsDialog(
+              cartProvider,
+              allowSkip: customerDetailsVisibilityConfig
+                  .allowSkipCustomerDetailsForTableOrders,
             );
+            if (!mounted) return;
+            if (customerDetails == null) return;
+
+            if (customerDetails.isEmpty) {
+              cartProvider.setCustomerDetails();
+            } else {
+              cartProvider.setCustomerDetails(
+                name: customerDetails['name']?.toString(),
+                phone: customerDetails['phone']?.toString(),
+              );
+            }
           }
         }
       }
@@ -1415,14 +1532,15 @@ class _TablePageState extends State<TablePage> {
       // Let dialog overlay fully dispose before route push.
       await Future<void>.delayed(const Duration(milliseconds: 16));
       if (!mounted) return;
+      FocusManager.instance.primaryFocus?.unfocus();
 
       if (openCart) {
-        Navigator.push(
+        await Navigator.push(
           context,
           MaterialPageRoute(builder: (context) => const CartPage()),
         );
       } else {
-        Navigator.push(
+        await Navigator.push(
           context,
           MaterialPageRoute(
             builder: (context) =>
@@ -1444,8 +1562,9 @@ class _TablePageState extends State<TablePage> {
       cartProvider.setCartType(CartType.table, notify: false);
       cartProvider.startSharedTableOrder();
       if (!mounted) return;
+      FocusManager.instance.primaryFocus?.unfocus();
 
-      Navigator.push(
+      await Navigator.push(
         context,
         MaterialPageRoute(
           builder: (context) =>
@@ -1471,8 +1590,60 @@ class _TablePageState extends State<TablePage> {
     return leftTime.isAfter(rightTime);
   }
 
+  dynamic _findRunningBillForGrid({
+    required String tableNumber,
+    required String sectionName,
+  }) {
+    final exactKey = _tableKey(tableNumber, sectionName);
+    final exact = _pendingBillsByTableKey[exactKey];
+    if (exact != null) return exact;
+
+    final normalizedTable = _normalizeTableToken(tableNumber);
+    final normalizedSection = _normalizeSectionName(sectionName);
+
+    for (final bill in _pendingBillsByTableKey.values) {
+      final details = bill['tableDetails'];
+      if (details == null) continue;
+
+      final billTable = _normalizeTableToken(
+        details['tableNumber']?.toString() ?? '',
+      );
+      if (billTable != normalizedTable) continue;
+
+      final billSection = _normalizeSectionName(
+        details['section']?.toString() ?? '',
+      );
+      if (billSection == normalizedSection) {
+        return bill;
+      }
+    }
+
+    return null;
+  }
+
+  String _normalizeSectionName(String section) {
+    return section.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+  }
+
+  String _normalizeTableToken(String raw) {
+    final trimmed = raw.trim();
+    final parsed = int.tryParse(trimmed);
+    if (parsed != null) return parsed.toString();
+
+    final withoutPrefix = trimmed.replaceFirst(
+      RegExp(r'^table[\s\-_:]*', caseSensitive: false),
+      '',
+    );
+    final parsedWithoutPrefix = int.tryParse(withoutPrefix);
+    if (parsedWithoutPrefix != null) return parsedWithoutPrefix.toString();
+
+    return trimmed.toLowerCase();
+  }
+
   String _tableKey(String tableNumber, String sectionName) {
-    return '$tableNumber|$sectionName';
+    final normalizedSection = _normalizeSectionName(sectionName);
+    final normalizedTable = _normalizeTableToken(tableNumber);
+    return '$normalizedTable|$normalizedSection';
   }
 }
 

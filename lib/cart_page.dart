@@ -7,7 +7,7 @@ import 'package:blackforest_app/cart_provider.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:blackforest_app/categories_page.dart';
 import 'package:blackforest_app/table.dart';
-import 'package:http/http.dart' as http;
+import 'package:blackforest_app/app_http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:flutter/services.dart';
@@ -19,6 +19,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
 import 'package:blackforest_app/customer_history_dialog.dart';
+import 'package:blackforest_app/table_customer_details_visibility_service.dart';
 
 class CartPage extends StatefulWidget {
   const CartPage({super.key});
@@ -488,6 +489,7 @@ class _CartPageState extends State<CartPage> {
     bool isReminder = false,
   }) async {
     if (_isBillingInProgress) return; // lock
+    FocusManager.instance.primaryFocus?.unfocus();
     setState(() => _isBillingInProgress = true);
 
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
@@ -519,7 +521,48 @@ class _CartPageState extends State<CartPage> {
     }
 
     Map<String, dynamic>? customerDetails;
-    if (_addCustomerDetails && status != 'pending') {
+    final hasTableForCustomerFlow =
+        cartProvider.selectedTable?.trim().isNotEmpty == true;
+    final hasSectionForCustomerFlow =
+        cartProvider.selectedSection?.trim().isNotEmpty == true;
+    final isTableOrderForCustomerFlow =
+        cartProvider.currentType == CartType.table &&
+        (hasTableForCustomerFlow ||
+            hasSectionForCustomerFlow ||
+            cartProvider.isSharedTableOrder);
+    bool showCustomerDetailsForTableOrders = true;
+    bool allowSkipCustomerDetailsForTableOrders = true;
+    bool showCustomerDetailsForBillingOrders = true;
+    bool allowSkipCustomerDetailsForBillingOrders = true;
+    if (status != 'pending') {
+      final customerDetailsVisibilityConfig =
+          await TableCustomerDetailsVisibilityService.getConfigForBranch(
+            branchId: _branchId,
+          );
+      showCustomerDetailsForTableOrders =
+          customerDetailsVisibilityConfig.showCustomerDetailsForTableOrders;
+      allowSkipCustomerDetailsForTableOrders = customerDetailsVisibilityConfig
+          .allowSkipCustomerDetailsForTableOrders;
+      showCustomerDetailsForBillingOrders =
+          customerDetailsVisibilityConfig.showCustomerDetailsForBillingOrders;
+      allowSkipCustomerDetailsForBillingOrders = customerDetailsVisibilityConfig
+          .allowSkipCustomerDetailsForBillingOrders;
+      if (!mounted) return;
+    }
+
+    final showCustomerDetailsForActiveFlow = isTableOrderForCustomerFlow
+        ? showCustomerDetailsForTableOrders
+        : showCustomerDetailsForBillingOrders;
+    final allowSkipForActiveFlow = isTableOrderForCustomerFlow
+        ? allowSkipCustomerDetailsForTableOrders
+        : allowSkipCustomerDetailsForBillingOrders;
+
+    final shouldShowCustomerDetailsDialog =
+        _addCustomerDetails &&
+        status != 'pending' &&
+        showCustomerDetailsForActiveFlow;
+
+    if (shouldShowCustomerDetailsDialog) {
       customerDetails = await showDialog<Map<String, dynamic>>(
         context: context,
         barrierDismissible: false,
@@ -2096,106 +2139,166 @@ class _CartPageState extends State<CartPage> {
                                 ),
                               ],
                               const SizedBox(height: 28),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: OutlinedButton(
-                                      onPressed: () {
-                                        debounceTimer?.cancel();
-                                        Navigator.pop(
-                                          context,
-                                          <String, dynamic>{},
-                                        );
-                                      },
-                                      style: OutlinedButton.styleFrom(
-                                        foregroundColor: Colors.white70,
-                                        side: BorderSide(color: Colors.white24),
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 12,
+                              if (allowSkipForActiveFlow)
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: OutlinedButton(
+                                        onPressed: () {
+                                          debounceTimer?.cancel();
+                                          Navigator.pop(
+                                            context,
+                                            <String, dynamic>{},
+                                          );
+                                        },
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: Colors.white70,
+                                          side: BorderSide(
+                                            color: Colors.white24,
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 12,
+                                          ),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                          ),
                                         ),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            10,
+                                        child: const Text("Skip"),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: ElevatedButton(
+                                        onPressed: () {
+                                          if (nameCtrl.text.trim().isEmpty) {
+                                            if (!mounted) return;
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                  "Please enter customer name or use Skip",
+                                                ),
+                                              ),
+                                            );
+                                            return;
+                                          }
+                                          if (phoneCtrl.text.trim().isEmpty) {
+                                            if (!mounted) return;
+                                            ScaffoldMessenger.of(
+                                              context,
+                                            ).showSnackBar(
+                                              const SnackBar(
+                                                content: Text(
+                                                  "Phone number is required when adding a customer name",
+                                                ),
+                                              ),
+                                            );
+                                            return;
+                                          }
+                                          debounceTimer?.cancel();
+                                          Navigator.pop(
+                                            context,
+                                            <String, dynamic>{
+                                              'name': nameCtrl.text,
+                                              'phone': phoneCtrl.text,
+                                              'applyCustomerOffer':
+                                                  effectiveApplyCustomerOffer,
+                                              'hasProductOfferMatch':
+                                                  hasEligibleProductOffer,
+                                              'hasProductPriceOfferMatch':
+                                                  hasEligibleProductPriceOffer,
+                                              'hasTotalPercentageOfferEnabled':
+                                                  totalPercentageOfferEnabled,
+                                              'hasRandomOfferMatch':
+                                                  hasEligibleRandomOffer,
+                                            },
+                                          );
+                                        },
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: const Color(
+                                            0xFF0A84FF,
+                                          ),
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 12,
+                                          ),
+                                          shape: RoundedRectangleBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                          ),
+                                        ),
+                                        child: const Text(
+                                          "Submit",
+                                          style: TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
                                           ),
                                         ),
                                       ),
-                                      child: const Text("Skip"),
                                     ),
-                                  ),
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: ElevatedButton(
-                                      onPressed: () {
-                                        if (nameCtrl.text.trim().isEmpty) {
-                                          if (!mounted) return;
-                                          ScaffoldMessenger.of(
-                                            context,
-                                          ).showSnackBar(
-                                            const SnackBar(
-                                              content: Text(
-                                                "Please enter customer name or use Skip",
-                                              ),
-                                            ),
-                                          );
-                                          return;
-                                        }
-                                        if (phoneCtrl.text.trim().isEmpty) {
-                                          if (!mounted) return;
-                                          ScaffoldMessenger.of(
-                                            context,
-                                          ).showSnackBar(
-                                            const SnackBar(
-                                              content: Text(
-                                                "Phone number is required when adding a customer name",
-                                              ),
-                                            ),
-                                          );
-                                          return;
-                                        }
-                                        debounceTimer?.cancel();
-                                        Navigator.pop(
+                                  ],
+                                )
+                              else
+                                SizedBox(
+                                  width: double.infinity,
+                                  child: ElevatedButton(
+                                    onPressed: () {
+                                      final customerName = nameCtrl.text.trim();
+                                      final customerPhone = phoneCtrl.text
+                                          .trim();
+                                      if (customerName.isEmpty ||
+                                          customerPhone.isEmpty) {
+                                        if (!mounted) return;
+                                        ScaffoldMessenger.of(
                                           context,
-                                          <String, dynamic>{
-                                            'name': nameCtrl.text,
-                                            'phone': phoneCtrl.text,
-                                            'applyCustomerOffer':
-                                                effectiveApplyCustomerOffer,
-                                            'hasProductOfferMatch':
-                                                hasEligibleProductOffer,
-                                            'hasProductPriceOfferMatch':
-                                                hasEligibleProductPriceOffer,
-                                            'hasTotalPercentageOfferEnabled':
-                                                totalPercentageOfferEnabled,
-                                            'hasRandomOfferMatch':
-                                                hasEligibleRandomOffer,
-                                          },
-                                        );
-                                      },
-                                      style: ElevatedButton.styleFrom(
-                                        backgroundColor: const Color(
-                                          0xFF0A84FF,
-                                        ),
-                                        padding: const EdgeInsets.symmetric(
-                                          vertical: 12,
-                                        ),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            10,
+                                        ).showSnackBar(
+                                          const SnackBar(
+                                            content: Text(
+                                              "Please enter customer name and phone number",
+                                            ),
                                           ),
-                                        ),
+                                        );
+                                        return;
+                                      }
+                                      debounceTimer?.cancel();
+                                      Navigator.pop(context, <String, dynamic>{
+                                        'name': customerName,
+                                        'phone': customerPhone,
+                                        'applyCustomerOffer':
+                                            effectiveApplyCustomerOffer,
+                                        'hasProductOfferMatch':
+                                            hasEligibleProductOffer,
+                                        'hasProductPriceOfferMatch':
+                                            hasEligibleProductPriceOffer,
+                                        'hasTotalPercentageOfferEnabled':
+                                            totalPercentageOfferEnabled,
+                                        'hasRandomOfferMatch':
+                                            hasEligibleRandomOffer,
+                                      });
+                                    },
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF0A84FF),
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 12,
                                       ),
-                                      child: const Text(
-                                        "Submit",
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 16,
-                                          fontWeight: FontWeight.bold,
-                                        ),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
+                                    child: const Text(
+                                      "Submit",
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
                                       ),
                                     ),
                                   ),
-                                ],
-                              ),
+                                ),
                               if (phoneCtrl.text.length >= 10) ...[
                                 const SizedBox(height: 20),
                                 Center(
@@ -2270,11 +2373,16 @@ class _CartPageState extends State<CartPage> {
         return;
       }
     } else {
-      // For KOT/RE-KOT (pending), use existing details or empty map
-      customerDetails = {
-        'name': cartProvider.customerName ?? '',
-        'phone': cartProvider.customerPhone ?? '',
-      };
+      if (status != 'pending' && !showCustomerDetailsForActiveFlow) {
+        cartProvider.setCustomerDetails();
+        customerDetails = {'name': '', 'phone': ''};
+      } else {
+        // For KOT/RE-KOT (pending), use existing details or empty map
+        customerDetails = {
+          'name': cartProvider.customerName ?? '',
+          'phone': cartProvider.customerPhone ?? '',
+        };
+      }
     }
 
     final shouldApplyCustomerOffer =
@@ -2468,6 +2576,19 @@ class _CartPageState extends State<CartPage> {
         return payload;
       }
 
+      bool hasActiveLookupItems(dynamic rawItems) {
+        if (rawItems is! List || rawItems.isEmpty) return false;
+        for (final rawItem in rawItems) {
+          if (rawItem is! Map) continue;
+          final status =
+              rawItem['status']?.toString().toLowerCase().trim() ?? '';
+          if (status != 'cancelled') {
+            return true;
+          }
+        }
+        return false;
+      }
+
       // 1. Combine active cart items with previously ordered items
       // OLD LOGIC: Merged by product ID (caused "2x Tea" instead of "1 Tea, 1 Tea")
       // NEW LOGIC: Just append new items to the list. Server handles them as separate subdocs.
@@ -2493,10 +2614,18 @@ class _CartPageState extends State<CartPage> {
           billId == null &&
           hasTableNumberForSubmit &&
           hasSectionForSubmit) {
+        final lookupNow = DateTime.now();
+        final lookupDayStart = DateTime(
+          lookupNow.year,
+          lookupNow.month,
+          lookupNow.day,
+        );
+        final todayStartForLookup = lookupDayStart.toUtc().toIso8601String();
         final lookupParams = <String, String>{
           'where[status][in]': 'pending,ordered',
           'where[tableDetails.tableNumber][equals]': tableNumberForSubmit!,
           'where[tableDetails.section][equals]': sectionForSubmit!,
+          'where[createdAt][greater_than_equal]': todayStartForLookup,
           'limit': '5',
           'sort': '-updatedAt',
           'depth': '3',
@@ -2523,45 +2652,60 @@ class _CartPageState extends State<CartPage> {
                 ? docsRaw.whereType<Map>().toList()
                 : const <Map>[];
             if (docs.isNotEmpty) {
-              final existingBillDoc = Map<String, dynamic>.from(docs.first);
-              final existingBillId =
-                  parseAnyId(existingBillDoc['id']) ??
-                  parseAnyId(existingBillDoc['_id']);
-              if (existingBillId != null && existingBillId.isNotEmpty) {
-                billId = existingBillId;
-                final existingCustomerDetails =
-                    existingBillDoc['customerDetails'];
-                if (existingCustomerDetails is Map) {
-                  final customerMap = Map<String, dynamic>.from(
-                    existingCustomerDetails,
-                  );
-                  final existingName =
-                      customerMap['name']?.toString().trim() ?? '';
-                  final existingPhone =
-                      customerMap['phoneNumber']?.toString().trim() ?? '';
-                  if (billingCustomerName.isEmpty && existingName.isNotEmpty) {
-                    billingCustomerName = existingName;
-                  }
-                  if (billingCustomerPhone.isEmpty &&
-                      existingPhone.isNotEmpty) {
-                    billingCustomerPhone = existingPhone;
-                  }
+              Map<String, dynamic>? existingBillDoc;
+              for (final rawDoc in docs) {
+                final doc = Map<String, dynamic>.from(rawDoc);
+                if (!hasActiveLookupItems(doc['items'])) {
+                  continue;
                 }
-
-                final existingItemsRaw = existingBillDoc['items'];
-                if (existingItemsRaw is List) {
-                  for (final rawItem in existingItemsRaw) {
-                    if (rawItem is! Map) continue;
-                    final mapped = toPurchasedPatchItem(
-                      Map<String, dynamic>.from(rawItem),
-                    );
-                    if (mapped == null) continue;
-                    existingServerItemsPayload.add(mapped);
-                  }
-                }
+                existingBillDoc = doc;
+                break;
+              }
+              if (existingBillDoc == null) {
                 debugPrint(
-                  '📦 Reusing existing table bill via lookup: $billId (items preserved: ${existingServerItemsPayload.length})',
+                  '📦 Existing table bill lookup skipped: no active (non-cancelled) items found for table today.',
                 );
+              } else {
+                final existingBillId =
+                    parseAnyId(existingBillDoc['id']) ??
+                    parseAnyId(existingBillDoc['_id']);
+                if (existingBillId != null && existingBillId.isNotEmpty) {
+                  billId = existingBillId;
+                  final existingCustomerDetails =
+                      existingBillDoc['customerDetails'];
+                  if (existingCustomerDetails is Map) {
+                    final customerMap = Map<String, dynamic>.from(
+                      existingCustomerDetails,
+                    );
+                    final existingName =
+                        customerMap['name']?.toString().trim() ?? '';
+                    final existingPhone =
+                        customerMap['phoneNumber']?.toString().trim() ?? '';
+                    if (billingCustomerName.isEmpty &&
+                        existingName.isNotEmpty) {
+                      billingCustomerName = existingName;
+                    }
+                    if (billingCustomerPhone.isEmpty &&
+                        existingPhone.isNotEmpty) {
+                      billingCustomerPhone = existingPhone;
+                    }
+                  }
+
+                  final existingItemsRaw = existingBillDoc['items'];
+                  if (existingItemsRaw is List) {
+                    for (final rawItem in existingItemsRaw) {
+                      if (rawItem is! Map) continue;
+                      final mapped = toPurchasedPatchItem(
+                        Map<String, dynamic>.from(rawItem),
+                      );
+                      if (mapped == null) continue;
+                      existingServerItemsPayload.add(mapped);
+                    }
+                  }
+                  debugPrint(
+                    '📦 Reusing existing table bill via lookup: $billId (items preserved: ${existingServerItemsPayload.length})',
+                  );
+                }
               }
             }
           }
@@ -2986,6 +3130,9 @@ class _CartPageState extends State<CartPage> {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(successMessage)));
+        FocusManager.instance.primaryFocus?.unfocus();
+        await Future<void>.delayed(const Duration(milliseconds: 16));
+        if (!mounted) return;
         if (status == 'pending' && cartProvider.currentType == CartType.table) {
           Navigator.pushAndRemoveUntil(
             context,
@@ -3010,7 +3157,9 @@ class _CartPageState extends State<CartPage> {
         context,
       ).showSnackBar(SnackBar(content: Text('Error: $e')));
     } finally {
-      setState(() => _isBillingInProgress = false);
+      if (mounted) {
+        setState(() => _isBillingInProgress = false);
+      }
     }
   }
 
@@ -4301,18 +4450,6 @@ class _CartPageState extends State<CartPage> {
                 (cartProvider.recalledBillId == null ||
                     cartProvider.cartItems.isNotEmpty);
 
-            final selectedSharedTable =
-                cartProvider.selectedTable?.trim() ?? '';
-            if (cartProvider.isSharedTableOrder &&
-                selectedSharedTable.isNotEmpty &&
-                _sharedTableController.text != selectedSharedTable) {
-              _sharedTableController.text = selectedSharedTable;
-            }
-            if (!cartProvider.isSharedTableOrder &&
-                _sharedTableController.text.isNotEmpty) {
-              _sharedTableController.clear();
-            }
-
             // Calculate total items as sum of quantities (assuming double, but display as int if whole)
             final totalQuantity = cartProvider.cartItems.fold<double>(
               0,
@@ -4789,6 +4926,14 @@ class _CartPageState extends State<CartPage> {
                                 controller: _sharedTableController,
                                 style: const TextStyle(color: Colors.white),
                                 textInputAction: TextInputAction.done,
+                                onTapOutside: (_) => FocusManager
+                                    .instance
+                                    .primaryFocus
+                                    ?.unfocus(),
+                                onEditingComplete: () => FocusManager
+                                    .instance
+                                    .primaryFocus
+                                    ?.unfocus(),
                                 inputFormatters: [
                                   FilteringTextInputFormatter.allow(
                                     RegExp(r'[a-zA-Z0-9\- ]'),

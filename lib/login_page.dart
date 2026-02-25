@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:blackforest_app/app_http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/categories_page.dart';
 import 'package:blackforest_app/session_prefs.dart';
 import 'package:blackforest_app/auth_flags.dart';
+import 'package:blackforest_app/table_customer_details_visibility_service.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -107,6 +108,8 @@ class LoginPage extends StatefulWidget {
 }
 
 class _LoginPageState extends State<LoginPage> {
+  static const String _appVersion = '1.0.0+1';
+
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController(); // username input
   final _passwordController = TextEditingController();
@@ -129,12 +132,14 @@ class _LoginPageState extends State<LoginPage> {
 
     if (token != null) {
       try {
-        final res = await http.get(
-          Uri.parse(
-            "https://blackforest.vseyal.com/api/users/me?depth=5&showHiddenFields=true",
-          ),
-          headers: {"Authorization": "Bearer $token"},
-        );
+        final res = await http
+            .get(
+              Uri.parse(
+                "https://blackforest.vseyal.com/api/users/me?depth=5&showHiddenFields=true",
+              ),
+              headers: {"Authorization": "Bearer $token"},
+            )
+            .timeout(const Duration(seconds: 12));
 
         if (res.statusCode == 200) {
           final body = jsonDecode(res.body);
@@ -767,6 +772,7 @@ class _LoginPageState extends State<LoginPage> {
 
         // Save Session
         final prefs = await SharedPreferences.getInstance();
+        TableCustomerDetailsVisibilityService.clearCache();
         await prefs.setString("token", data["token"]);
         await prefs.setString("role", role);
         await prefs.setString("email", finalEmail);
@@ -991,6 +997,23 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                     ),
                   ],
+                ),
+              ),
+            ),
+          ),
+
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 10,
+            child: SafeArea(
+              child: Text(
+                'Version $_appVersion',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white60,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ),

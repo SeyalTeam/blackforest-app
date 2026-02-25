@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:http/http.dart' as http;
+import 'package:blackforest_app/app_http.dart' as http;
 import 'package:intl/intl.dart';
 
 class EmployeePage extends StatefulWidget {

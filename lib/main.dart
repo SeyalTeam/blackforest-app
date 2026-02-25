@@ -5,16 +5,21 @@ import 'package:blackforest_app/cart_provider.dart';
 import 'package:blackforest_app/login_page.dart';
 import 'package:blackforest_app/categories_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:http/http.dart' as http;
+import 'package:blackforest_app/app_http.dart' as http;
 import 'dart:convert';
 
 import 'package:blackforest_app/notification_service.dart';
 import 'package:blackforest_app/auth_flags.dart';
+import 'package:blackforest_app/auth_session_manager.dart';
 import 'package:blackforest_app/session_prefs.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await NotificationService().init();
+  try {
+    await NotificationService().init().timeout(const Duration(seconds: 8));
+  } catch (_) {
+    // Startup must continue even if notification init fails.
+  }
   runApp(
     MultiProvider(
       providers: [ChangeNotifierProvider(create: (context) => CartProvider())],
@@ -30,13 +35,20 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
   StreamSubscription? _notificationSubscription;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    AuthSessionManager.instance.attachNavigatorKey(_navigatorKey);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      AuthSessionManager.instance.startHeartbeat();
+    });
+
     _notificationSubscription = NotificationService().onNotificationClick
         .listen((payload) {
           if (payload != null && payload.isNotEmpty) {
@@ -66,8 +78,23 @@ class _MyAppState extends State<MyApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _notificationSubscription?.cancel();
+    AuthSessionManager.instance.stopHeartbeat();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      AuthSessionManager.instance.verifySession(force: true);
+      AuthSessionManager.instance.startHeartbeat();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.detached) {
+      AuthSessionManager.instance.stopHeartbeat();
+    }
   }
 
   void _handleNotificationClick(String billId) {
@@ -86,12 +113,14 @@ class _MyAppState extends State<MyApp> {
     if (token != null) {
       // Validate token (recommended for security)
       try {
-        final response = await http.get(
-          Uri.parse(
-            'https://blackforest.vseyal.com/api/users/me?depth=5&showHiddenFields=true',
-          ),
-          headers: {'Authorization': 'Bearer $token'},
-        );
+        final response = await http
+            .get(
+              Uri.parse(
+                'https://blackforest.vseyal.com/api/users/me?depth=5&showHiddenFields=true',
+              ),
+              headers: {'Authorization': 'Bearer $token'},
+            )
+            .timeout(const Duration(seconds: 12));
         if (response.statusCode == 200) {
           try {
             final body = jsonDecode(response.body);
