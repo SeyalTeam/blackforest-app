@@ -210,6 +210,10 @@ class _CartPageState extends State<CartPage> {
             _companyId = company.toString();
             await _fetchCompanyDetails(token, _companyId!);
           }
+          if (_companyId != null) {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString('companyId', _companyId!);
+          }
         }
 
         final cartProvider = Provider.of<CartProvider>(context, listen: false);
@@ -493,6 +497,8 @@ class _CartPageState extends State<CartPage> {
     setState(() => _isBillingInProgress = true);
 
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
+    final stopwatch = Stopwatch()..start();
+    debugPrint('⏱️ [START] _submitBilling (${status.toUpperCase()})');
     if (cartProvider.cartItems.isEmpty && cartProvider.recalledItems.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -2503,9 +2509,16 @@ class _CartPageState extends State<CartPage> {
         return;
       }
 
-      debugPrint(
-        '📦 SUBMITTING BILL: Branch: $_branchId, Company: $_companyId',
-      ); // DEBUG LOG
+      // Ensure branch and company IDs are populated instantly
+      _branchId ??= cartProvider.branchId ?? prefs.getString('branchId');
+      _companyId ??= prefs.getString('companyId');
+
+      if (_branchId == null || _companyId == null) {
+        debugPrint('📦 Immediate ID resolution failed, trying deep fetch...');
+        await _fetchUserData();
+      }
+
+      debugPrint('📦 ID Resolution: ${stopwatch.elapsedMilliseconds}ms');
 
       String? parseAnyId(dynamic value) {
         if (value == null) return null;
@@ -2662,108 +2675,70 @@ class _CartPageState extends State<CartPage> {
 
       String? billId = cartProvider.recalledBillId;
       final List<Map<String, dynamic>> existingServerItemsPayload = [];
+      // 2. Parallel ID & Table Lookup
+      final List<Future<void>> preFlightTasks = [];
+
+      if (_branchId == null || _companyId == null) {
+        preFlightTasks.add(_fetchUserData());
+      }
+
+      bool lookupPerformed = false;
       if (isTableOrderForSubmit &&
           billId == null &&
           hasTableNumberForSubmit &&
           hasSectionForSubmit) {
-        final lookupNow = DateTime.now();
-        final lookupDayStart = DateTime(
-          lookupNow.year,
-          lookupNow.month,
-          lookupNow.day,
-        );
-        final todayStartForLookup = lookupDayStart.toUtc().toIso8601String();
-        final lookupParams = <String, String>{
-          'where[status][in]': 'pending,ordered',
-          'where[tableDetails.tableNumber][equals]': tableNumberForSubmit!,
-          'where[tableDetails.section][equals]': sectionForSubmit!,
-          'where[createdAt][greater_than_equal]': todayStartForLookup,
-          'limit': '5',
-          'sort': '-updatedAt',
-          'depth': '3',
-        };
-        if (_branchId != null && _branchId!.trim().isNotEmpty) {
-          lookupParams['where[branch][equals]'] = _branchId!;
-        }
-
-        try {
-          final lookupResponse = await http.get(
-            Uri.https('blackforest.vseyal.com', '/api/billings', lookupParams),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $token',
-            },
+        lookupPerformed = true;
+        preFlightTasks.add(() async {
+          final lStart = stopwatch.elapsedMilliseconds;
+          final lookupNow = DateTime.now();
+          final lookupDayStart = DateTime(
+            lookupNow.year,
+            lookupNow.month,
+            lookupNow.day,
           );
-          if (lookupResponse.statusCode == 200) {
-            final lookupRaw = jsonDecode(lookupResponse.body);
-            final lookupMap = lookupRaw is Map
-                ? Map<String, dynamic>.from(lookupRaw)
-                : <String, dynamic>{};
-            final docsRaw = lookupMap['docs'];
-            final docs = docsRaw is List
-                ? docsRaw.whereType<Map>().toList()
-                : const <Map>[];
-            if (docs.isNotEmpty) {
-              Map<String, dynamic>? existingBillDoc;
-              for (final rawDoc in docs) {
-                final doc = Map<String, dynamic>.from(rawDoc);
-                if (!hasActiveLookupItems(doc['items'])) {
-                  continue;
-                }
-                existingBillDoc = doc;
-                break;
-              }
-              if (existingBillDoc == null) {
-                debugPrint(
-                  '📦 Existing table bill lookup skipped: no active (non-cancelled) items found for table today.',
-                );
-              } else {
-                final existingBillId =
-                    parseAnyId(existingBillDoc['id']) ??
-                    parseAnyId(existingBillDoc['_id']);
-                if (existingBillId != null && existingBillId.isNotEmpty) {
-                  billId = existingBillId;
-                  final existingCustomerDetails =
-                      existingBillDoc['customerDetails'];
-                  if (existingCustomerDetails is Map) {
-                    final customerMap = Map<String, dynamic>.from(
-                      existingCustomerDetails,
-                    );
-                    final existingName =
-                        customerMap['name']?.toString().trim() ?? '';
-                    final existingPhone =
-                        customerMap['phoneNumber']?.toString().trim() ?? '';
-                    if (billingCustomerName.isEmpty &&
-                        existingName.isNotEmpty) {
-                      billingCustomerName = existingName;
-                    }
-                    if (billingCustomerPhone.isEmpty &&
-                        existingPhone.isNotEmpty) {
-                      billingCustomerPhone = existingPhone;
-                    }
-                  }
+          final todayStartForLookup = lookupDayStart.toUtc().toIso8601String();
+          final lookupParams = <String, String>{
+            'where[status][in]': 'pending,ordered',
+            'where[tableDetails.tableNumber][equals]': tableNumberForSubmit!,
+            'where[tableDetails.section][equals]': sectionForSubmit!,
+            'where[createdAt][greater_than_equal]': todayStartForLookup,
+            'limit': '5',
+            'sort': '-updatedAt',
+            'depth': '2',
+          };
+          if (_branchId != null)
+            lookupParams['where[branch][equals]'] = _branchId!;
 
-                  final existingItemsRaw = existingBillDoc['items'];
-                  if (existingItemsRaw is List) {
-                    for (final rawItem in existingItemsRaw) {
-                      if (rawItem is! Map) continue;
-                      final mapped = toPurchasedPatchItem(
-                        Map<String, dynamic>.from(rawItem),
-                      );
-                      if (mapped == null) continue;
-                      existingServerItemsPayload.add(mapped);
-                    }
-                  }
-                  debugPrint(
-                    '📦 Reusing existing table bill via lookup: $billId (items preserved: ${existingServerItemsPayload.length})',
-                  );
-                }
+          try {
+            final lookupResponse = await http.get(
+              Uri.https(
+                'blackforest.vseyal.com',
+                '/api/billings',
+                lookupParams,
+              ),
+              headers: {'Authorization': 'Bearer $token'},
+            );
+            if (lookupResponse.statusCode == 200) {
+              final lookupRaw = jsonDecode(lookupResponse.body);
+              // ... processing existing items ...
+              final docsRaw = lookupRaw['docs'] as List?;
+              if (docsRaw != null && docsRaw.isNotEmpty) {
+                final doc = Map<String, dynamic>.from(docsRaw.first);
+                billId = parseAnyId(doc['id']) ?? parseAnyId(doc['_id']);
+                debugPrint('📦 Found Existing Table Bill: $billId');
               }
             }
+          } catch (e) {
+            debugPrint('📦 Lookup Error: $e');
           }
-        } catch (e) {
-          debugPrint('📦 Existing table bill lookup failed: $e');
-        }
+          debugPrint(
+            '⏱️ Table Lookup took: ${stopwatch.elapsedMilliseconds - lStart}ms',
+          );
+        }());
+      }
+
+      if (preFlightTasks.isNotEmpty) {
+        await Future.wait(preFlightTasks);
       }
 
       if (requiresPhoneForOffer && billingCustomerPhone.isEmpty) {
@@ -2825,8 +2800,10 @@ class _CartPageState extends State<CartPage> {
       }
 
       final url = billId != null
-          ? Uri.parse('https://blackforest.vseyal.com/api/billings/$billId')
-          : Uri.parse('https://blackforest.vseyal.com/api/billings');
+          ? Uri.parse(
+              'https://blackforest.vseyal.com/api/billings/$billId?depth=2',
+            )
+          : Uri.parse('https://blackforest.vseyal.com/api/billings?depth=2');
 
       final response = billId != null
           ? await http.patch(
@@ -2850,6 +2827,9 @@ class _CartPageState extends State<CartPage> {
       debugPrint('📦 PAYLOAD JSON: ${jsonEncode(billingData)}');
 
       final billingResponse = jsonDecode(response.body);
+      debugPrint(
+        '📦 BILL RESPONSE RECEIVED (API Call: ${stopwatch.elapsedMilliseconds}ms)',
+      );
       debugPrint('📦 BILL RESPONSE: $billingResponse');
 
       double? readServerMoney(dynamic value) {
@@ -2903,39 +2883,7 @@ class _CartPageState extends State<CartPage> {
           billDocId(responseMap['_id']) ??
           billDocId(responseMap['doc']);
 
-      if ((response.statusCode == 200 || response.statusCode == 201) &&
-          status == 'completed' &&
-          savedBillId != null &&
-          savedBillId.isNotEmpty) {
-        try {
-          final savedBillResponse = await http.get(
-            Uri.parse(
-              'https://blackforest.vseyal.com/api/billings/$savedBillId?depth=3',
-            ),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer $token',
-            },
-          );
-          if (savedBillResponse.statusCode == 200) {
-            final savedBillRaw = jsonDecode(savedBillResponse.body);
-            if (savedBillRaw is Map) {
-              final savedBillMap = Map<String, dynamic>.from(savedBillRaw);
-              final savedBillDoc = savedBillMap['doc'];
-              finalBillDoc = savedBillDoc is Map
-                  ? Map<String, dynamic>.from(savedBillDoc)
-                  : savedBillMap;
-              debugPrint('📦 REFETCHED SAVED BILL: $savedBillId');
-            }
-          } else {
-            debugPrint(
-              '📦 REFETCH BILL FAILED: ${savedBillResponse.statusCode}',
-            );
-          }
-        } catch (e) {
-          debugPrint('📦 REFETCH BILL ERROR: $e');
-        }
-      }
+      // Redundant refetch removed. We now use ?depth=3 in the primary POST/PATCH.
 
       final billedTotal =
           readServerMoney(finalBillDoc['totalAmount']) ?? cartProvider.total;
@@ -3145,8 +3093,57 @@ class _CartPageState extends State<CartPage> {
         if (!mounted) return;
 
         if (status == 'pending') {
-          // Snapshot active cart items for KOT
-          final kotItems = List<CartItem>.from(cartProvider.cartItems);
+          // Identify newly added/updated items from the server response
+          final setExistingIds = cartProvider.recalledItems
+              .map((i) => i.billingItemId)
+              .where((id) => id != null)
+              .toSet();
+
+          // We use the server-returned items (finalServerItems) because they include
+          // auto-added offer items (Type 2, Type 4, etc.) from the backend.
+          // Filtering by !setExistingIds identifies what was just created in this request.
+          final List<CartItem> kotItems = finalServerItems
+              .where((i) => !setExistingIds.contains(i.billingItemId))
+              .where((i) => i.status != 'cancelled')
+              .toList();
+
+          // Per user request, for product-based offers (2 & 4), ensure the trigger product
+          // is present in the KOT as a reference, even if it was previously ordered.
+          final Set<String> addedTriggerIds = {};
+          final List<CartItem> referenceItems = [];
+          for (final item in kotItems) {
+            final triggerId = item.offerTriggerProductId;
+            if (triggerId != null && triggerId.isNotEmpty) {
+              // Check if trigger is already in this KOT batch to avoid duplicates
+              final existsInBatch = kotItems.any((i) => i.id == triggerId);
+              if (!existsInBatch && !addedTriggerIds.contains(triggerId)) {
+                try {
+                  final triggerItem = finalServerItems.firstWhere(
+                    (i) => i.id == triggerId,
+                  );
+                  addedTriggerIds.add(triggerId);
+                  referenceItems.add(
+                    CartItem(
+                      id: triggerItem.id,
+                      name: triggerItem.name,
+                      price: triggerItem.price,
+                      imageUrl: triggerItem.imageUrl,
+                      quantity: triggerItem.quantity,
+                      unit: triggerItem.unit,
+                      department: triggerItem.department,
+                      categoryId: triggerItem.categoryId,
+                      specialNote:
+                          "[OFFER TRIGGER REF]", // Clearly mark it's a reference
+                      status: triggerItem.status,
+                      isOfferFreeItem: triggerItem.isOfferFreeItem,
+                    ),
+                  );
+                } catch (_) {}
+              }
+            }
+          }
+          kotItems.addAll(referenceItems);
+
           _handleKOTPrinting(
             items: kotItems,
             billingResponse: billingResponse,
@@ -3190,7 +3187,6 @@ class _CartPageState extends State<CartPage> {
           context,
         ).showSnackBar(SnackBar(content: Text(successMessage)));
         FocusManager.instance.primaryFocus?.unfocus();
-        await Future<void>.delayed(const Duration(milliseconds: 16));
         if (!mounted) return;
         if (status == 'pending' && cartProvider.currentType == CartType.table) {
           Navigator.pushAndRemoveUntil(
@@ -3216,6 +3212,10 @@ class _CartPageState extends State<CartPage> {
         context,
       ).showSnackBar(SnackBar(content: Text('Error: $e')));
     } finally {
+      stopwatch.stop();
+      debugPrint(
+        '⏱️ [FINISH] _submitBilling Total Time: ${stopwatch.elapsedMilliseconds}ms',
+      );
       if (mounted) {
         setState(() => _isBillingInProgress = false);
       }
@@ -3354,7 +3354,10 @@ class _CartPageState extends State<CartPage> {
         );
       }
 
-      if (offerPreviewItems.isEmpty && previewLines.isEmpty) {
+      final isRecalledBill = cartProvider.recalledBillId != null;
+
+      if (offerPreviewItems.isEmpty &&
+          (previewLines.isEmpty || isRecalledBill)) {
         return true;
       }
 
@@ -4132,7 +4135,7 @@ class _CartPageState extends State<CartPage> {
           );
         }
       } else {
-        throw Exception(res.msg);
+        throw Exception(res.toString());
       }
     } catch (e) {
       if (mounted) {
@@ -4199,24 +4202,33 @@ class _CartPageState extends State<CartPage> {
       }
     }
 
-    if (groupedKots.isEmpty) {
-      debugPrint('ℹ️ No KOT items could be routed to any printer.');
-      return;
-    }
+    // 3. Launch all print jobs in parallel
+    final List<Future<PosPrintResult>> printFutures = [];
+    final List<String> entryKeys = [];
 
-    List<String> failedIps = [];
     for (var entry in groupedKots.entries) {
       debugPrint(
-        '🖨️ Printing KOT to ${entry.key} (${entry.value.length} items)',
+        '🖨️ Launching KOT print to ${entry.key} (${entry.value.length} items)',
       );
-      final res = await _printKOTReceipt(
-        entry.value,
-        entry.key,
-        billingResponse,
-        customerDetails,
+      entryKeys.add(entry.key);
+      printFutures.add(
+        _printKOTReceipt(
+          entry.value,
+          entry.key,
+          billingResponse,
+          customerDetails,
+        ).timeout(
+          const Duration(seconds: 10),
+          onTimeout: () => PosPrintResult.timeout,
+        ),
       );
-      if (res != PosPrintResult.success) {
-        failedIps.add(entry.key);
+    }
+
+    final results = await Future.wait(printFutures);
+    List<String> failedIps = [];
+    for (int i = 0; i < results.length; i++) {
+      if (results[i] != PosPrintResult.success) {
+        failedIps.add(entryKeys[i]);
       }
     }
 
@@ -4382,7 +4394,8 @@ class _CartPageState extends State<CartPage> {
 
           printer.row([
             PosColumn(
-              text: '${i + 1}. ${item.name.toUpperCase()}',
+              text:
+                  '${i + 1}. ${item.name.toUpperCase()}${item.isOfferFreeItem ? " (FREE)" : ""}',
               width: 7,
               styles: const PosStyles(
                 bold: true,

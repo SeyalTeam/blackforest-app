@@ -761,6 +761,7 @@ class _TablePageState extends State<TablePage> {
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (dialogContext, setDialogState) {
+            int offerPageIndex = 0;
             double readMoney(dynamic value) {
               if (value is num) return value.toDouble();
               if (value is String) return double.tryParse(value) ?? 0.0;
@@ -835,90 +836,325 @@ class _TablePageState extends State<TablePage> {
             final customerEntryPercentageOfferPreviewEligible =
                 customerEntryPercentageOfferData?['previewEligible'] == true;
 
-            String? activeOfferTitle;
-            final activeOfferLines = <String>[];
-            Color activeOfferBorderColor = const Color(0xFF2EBF3B);
+            final scheduleMatched =
+                customerEntryPercentageOfferData?['scheduleMatched'] == true;
+            final scheduleBlocked =
+                customerEntryPercentageOfferData?['scheduleBlocked'] == true;
 
-            if (eligibleProductOfferMatches.isNotEmpty) {
-              final match = eligibleProductOfferMatches.first;
-              final freeName =
-                  match['freeProductName']?.toString().trim().isNotEmpty == true
-                  ? match['freeProductName'].toString().trim()
-                  : 'Free Product';
-              final freeQty = readMoney(match['predictedFreeQuantity']);
-              activeOfferTitle = 'Product to Product Offer';
-              activeOfferLines.addAll([
-                '$freeName FREE x${formatQty(freeQty)}',
-                'Applied by backend for this table order.',
-              ]);
-              activeOfferBorderColor = const Color(0xFF0A84FF);
-            } else if (eligibleProductPriceOfferMatches.isNotEmpty) {
-              final match = eligibleProductPriceOfferMatches.first;
-              final productName =
-                  match['productName']?.toString().trim().isNotEmpty == true
-                  ? match['productName'].toString().trim()
-                  : 'Product';
-              final discountPerUnit = readMoney(match['discountPerUnit']);
-              final discountedUnits = readMoney(match['predictedAppliedUnits']);
-              activeOfferTitle = 'Product Price Offer';
-              activeOfferLines.addAll([
-                '$productName discount ₹${discountPerUnit.toStringAsFixed(2)} x ${formatQty(discountedUnits)} unit(s)',
-                'Applied by backend for this table order.',
-              ]);
-              activeOfferBorderColor = const Color(0xFFF7A400);
-            } else if (eligibleRandomOfferMatches.isNotEmpty) {
-              final selectedMatchRaw = randomOfferData?['selectedMatch'];
-              Map<String, dynamic>? selectedMatch;
-              if (selectedMatchRaw is Map) {
-                selectedMatch = Map<String, dynamic>.from(selectedMatchRaw);
-              } else {
-                selectedMatch = eligibleRandomOfferMatches.first;
-              }
-              final productName =
-                  selectedMatch['productName']?.toString().trim().isNotEmpty ==
-                      true
-                  ? selectedMatch['productName'].toString().trim()
-                  : 'Random Product';
-              activeOfferTitle = 'Random Product Offer';
-              activeOfferLines.addAll([
-                '$productName (FREE x1)',
-                'Applied by backend for this table order.',
-              ]);
-              activeOfferBorderColor = const Color(0xFF00B8D9);
-            } else if (creditOfferEligible) {
-              final offerAmount = readMoney(offerData?['offerAmount']);
-              activeOfferTitle = 'Customer Credit Offer';
-              activeOfferLines.addAll([
-                'Eligible discount: ₹${offerAmount.toStringAsFixed(2)}',
-                'Used in final billing submit (backend validation).',
-              ]);
-              activeOfferBorderColor = const Color(0xFF2EBF3B);
-            } else if (totalPercentageOfferEnabled &&
-                totalPercentageOfferPreviewEligible) {
-              final percent = readMoney(
-                totalPercentageOfferData?['discountPercent'],
-              );
-              activeOfferTitle = 'Total Percentage Offer';
-              activeOfferLines.addAll([
-                '${percent.toStringAsFixed(2)}% on final payable amount',
-                'Applied by backend if higher-priority offers are not used.',
-              ]);
-              activeOfferBorderColor = const Color(0xFF9B7DFF);
-            }
-
-            if (customerEntryPercentageOfferEnabled &&
-                customerEntryPercentageOfferPreviewEligible) {
-              final offer6Percent = readMoney(
-                customerEntryPercentageOfferData?['discountPercent'],
-              );
-              if (activeOfferTitle == null) {
-                activeOfferTitle = 'Customer Entry Percentage Offer';
-                activeOfferBorderColor = const Color(0xFF26C6DA);
-              }
-              activeOfferLines.add(
-                'Customer Entry % Offer: ${offer6Percent.toStringAsFixed(2)}% (backend auto-apply)',
-              );
-            }
+            final offerCards = <Widget>[
+              if (customerEntryPercentageOfferEnabled)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF132323),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: const Color(0xFF26C6DA).withValues(alpha: 0.45),
+                    ),
+                  ),
+                  child: SingleChildScrollView(
+                    child: Builder(
+                      builder: (context) {
+                        final discountPercent = readMoney(
+                          customerEntryPercentageOfferData?['discountPercent'],
+                        );
+                        return Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            const Text(
+                              'Customer Entry Percentage Offer',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              '${discountPercent.toStringAsFixed(2)}% OFF',
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Color(0xFF26C6DA),
+                                fontSize: 20,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.2,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              scheduleMatched
+                                  ? 'Auto-applies from backend'
+                                  : 'Not active now (time window).',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: scheduleMatched
+                                    ? Colors.white70
+                                    : Colors.orangeAccent,
+                                fontSize: 11,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              scheduleBlocked
+                                  ? 'Check schedule in settings.'
+                                  : customerEntryPercentageOfferPreviewEligible
+                                  ? 'Eligible now.'
+                                  : 'Eligibility is backend-validated.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: scheduleBlocked
+                                    ? Colors.orangeAccent
+                                    : customerEntryPercentageOfferPreviewEligible
+                                    ? const Color(0xFF2EBF3B)
+                                    : Colors.white70,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              if (eligibleProductOfferMatches.isNotEmpty)
+                ...eligibleProductOfferMatches.map((match) {
+                  final freeName =
+                      match['freeProductName']?.toString().trim().isNotEmpty ==
+                          true
+                      ? match['freeProductName'].toString().trim()
+                      : 'Free Product';
+                  final freeQty = readMoney(match['predictedFreeQuantity']);
+                  return Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF121729),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: const Color(0xFF0A84FF).withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Product to Product Offer',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '$freeName FREE x${formatQty(freeQty)}',
+                            style: const TextStyle(
+                              color: Color(0xFF0A84FF),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const Text(
+                            'Applied by backend for this table order.',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+              if (eligibleProductPriceOfferMatches.isNotEmpty)
+                ...eligibleProductPriceOfferMatches.map((match) {
+                  final productName =
+                      match['productName']?.toString().trim().isNotEmpty == true
+                      ? match['productName'].toString().trim()
+                      : 'Product';
+                  final discountPerUnit = readMoney(match['discountPerUnit']);
+                  final discountedUnits = readMoney(
+                    match['predictedAppliedUnits'],
+                  );
+                  return Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF221A10),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: const Color(0xFFF7A400).withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Product Price Offer',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '$productName discount ₹${discountPerUnit.toStringAsFixed(2)} x ${formatQty(discountedUnits)} unit(s)',
+                            style: const TextStyle(
+                              color: Color(0xFFF7A400),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const Text(
+                            'Applied by backend for this table order.',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+              if (eligibleRandomOfferMatches.isNotEmpty)
+                ...eligibleRandomOfferMatches.map((match) {
+                  final productName =
+                      match['productName']?.toString().trim().isNotEmpty == true
+                      ? match['productName'].toString().trim()
+                      : 'Random Product';
+                  return Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF102123),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: const Color(0xFF00B8D9).withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Random Product Offer',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            '$productName (FREE x1)',
+                            style: const TextStyle(
+                              color: Color(0xFF00B8D9),
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const Text(
+                            'Applied by backend for this table order.',
+                            style: TextStyle(
+                              color: Colors.white70,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+              if (creditOfferEligible)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF111E13),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: const Color(0xFF2EBF3B).withValues(alpha: 0.45),
+                    ),
+                  ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Customer Credit Offer',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Eligible discount: ₹${readMoney(offerData?['offerAmount']).toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            color: Color(0xFF2EBF3B),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const Text(
+                          'Used in final billing submit (backend validation).',
+                          style: TextStyle(color: Colors.white70, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              if (totalPercentageOfferEnabled &&
+                  totalPercentageOfferPreviewEligible)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1F172B),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: const Color(0xFF9B7DFF).withValues(alpha: 0.45),
+                    ),
+                  ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Total Percentage Offer',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          '${readMoney(totalPercentageOfferData?['discountPercent']).toStringAsFixed(2)}% on final payable amount',
+                          style: const TextStyle(
+                            color: Color(0xFF9B7DFF),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const Text(
+                          'Applied by backend if higher-priority offers are not used.',
+                          style: TextStyle(color: Colors.white70, fontSize: 11),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ];
 
             if (!didAutoLookup) {
               didAutoLookup = true;
@@ -1206,59 +1442,62 @@ class _TablePageState extends State<TablePage> {
                               ),
                             ),
                           ],
-                          if (customerLookupData != null) ...[
+                          if (customerLookupData != null &&
+                              offerCards.isNotEmpty) ...[
+                            const SizedBox(height: 12),
+                            const Text(
+                              'Up to 2 offers per bill: Customer Entry Percentage + one backend-selected offer path.',
+                              style: TextStyle(
+                                color: Colors.white54,
+                                fontSize: 11,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            SizedBox(
+                              height:
+                                  130, // Slightly shorter for dialog density
+                              child: PageView.builder(
+                                reverse: false,
+                                itemCount: offerCards.length,
+                                onPageChanged: (index) {
+                                  setDialogState(() {
+                                    offerPageIndex = index;
+                                  });
+                                },
+                                itemBuilder: (context, index) {
+                                  return Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 2,
+                                    ),
+                                    child: SizedBox.expand(
+                                      child: offerCards[index],
+                                    ),
+                                  );
+                                },
+                              ),
+                            ),
                             const SizedBox(height: 10),
-                            Container(
-                              width: double.infinity,
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF102229),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: activeOfferTitle != null
-                                      ? activeOfferBorderColor.withValues(
-                                          alpha: 0.55,
-                                        )
-                                      : Colors.white24,
-                                ),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    activeOfferTitle ?? 'Offer Status',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w700,
-                                    ),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: List.generate(offerCards.length, (
+                                index,
+                              ) {
+                                final isActive = index == offerPageIndex;
+                                return AnimatedContainer(
+                                  duration: const Duration(milliseconds: 180),
+                                  margin: const EdgeInsets.symmetric(
+                                    horizontal: 3,
                                   ),
-                                  const SizedBox(height: 6),
-                                  if (activeOfferLines.isNotEmpty)
-                                    ...activeOfferLines.map(
-                                      (line) => Padding(
-                                        padding: const EdgeInsets.only(
-                                          bottom: 3,
-                                        ),
-                                        child: Text(
-                                          line,
-                                          style: const TextStyle(
-                                            color: Colors.white70,
-                                            fontSize: 12,
-                                          ),
-                                        ),
-                                      ),
-                                    )
-                                  else
-                                    const Text(
-                                      'No eligible offer for this table order right now.',
-                                      style: TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                ],
-                              ),
+                                  width: isActive ? 9 : 6,
+                                  height: isActive ? 9 : 6,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: isActive
+                                        ? const Color(0xFF0A84FF)
+                                        : Colors.white24,
+                                  ),
+                                );
+                              }),
                             ),
                           ],
                           const SizedBox(height: 28),

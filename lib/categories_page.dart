@@ -7,6 +7,7 @@ import 'package:blackforest_app/products_page.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
 import 'package:blackforest_app/cart_provider.dart';
+import 'package:blackforest_app/offer_banner.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:geolocator/geolocator.dart';
 
@@ -884,144 +885,159 @@ class _CategoriesPageState extends State<CategoriesPage> {
                 builder: (context, constraints) {
                   final orderedCategories = _orderedCategories();
                   final width = constraints.maxWidth;
-                  final crossAxisCount = (width > 600)
-                      ? 5
-                      : 3; // 3 on phones, 5 on desktop/web/tablets
-                  return GridView.builder(
-                    padding: const EdgeInsets.all(10),
-                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: crossAxisCount,
-                      crossAxisSpacing: 10,
-                      mainAxisSpacing: 10,
-                      childAspectRatio: 0.75, // Rectangular
-                    ),
-                    itemCount: orderedCategories.length,
-                    itemBuilder: (context, index) {
-                      final category = orderedCategories[index];
-                      final String categoryId =
-                          category['id']?.toString() ?? '';
-                      final String categoryName =
-                          category['name']?.toString() ?? 'Unknown';
-                      final isFavorite = _favoriteCategoryIds.contains(
-                        categoryId,
-                      );
+                  final crossAxisCount = (width > 600) ? 5 : 3;
 
-                      String? imageUrl;
-                      if (category['image'] != null &&
-                          category['image']['url'] != null) {
-                        imageUrl = category['image']['url'];
-                        if (imageUrl?.startsWith('/') ?? false) {
-                          imageUrl = 'https://blackforest.vseyal.com$imageUrl';
-                        }
-                      }
-                      imageUrl ??=
-                          'https://via.placeholder.com/150?text=No+Image'; // Fallback
-                      return GestureDetector(
-                        onTap: () {
-                          Navigator.push(
+                  return CustomScrollView(
+                    slivers: [
+                      const SliverToBoxAdapter(child: OfferBanner()),
+                      SliverPadding(
+                        padding: const EdgeInsets.all(10),
+                        sliver: SliverGrid(
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: crossAxisCount,
+                                crossAxisSpacing: 10,
+                                mainAxisSpacing: 10,
+                                childAspectRatio: 0.75,
+                              ),
+                          delegate: SliverChildBuilderDelegate((
                             context,
-                            MaterialPageRoute(
-                              builder: (context) => ProductsPage(
-                                categoryId: categoryId,
-                                categoryName: categoryName,
-                                sourcePage: widget.sourcePage,
-                              ),
-                            ),
-                          );
-                        },
-                        onLongPress: () =>
-                            _toggleFavoriteCategory(categoryId, categoryName),
-                        child: Container(
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(8),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.grey.withValues(alpha: 0.1),
-                                spreadRadius: 2,
-                                blurRadius: 4,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: Stack(
-                            children: [
-                              Column(
-                                children: [
-                                  Expanded(
-                                    flex: 8, // 80% image
-                                    child: ClipRRect(
-                                      borderRadius: const BorderRadius.vertical(
-                                        top: Radius.circular(8),
-                                      ),
-                                      child: CachedNetworkImage(
-                                        imageUrl: imageUrl,
-                                        fit: BoxFit.cover,
-                                        width: double.infinity,
-                                        placeholder: (context, url) =>
-                                            const Center(
-                                              child:
-                                                  CircularProgressIndicator(),
-                                            ),
-                                        errorWidget: (context, url, error) =>
-                                            const Center(
-                                              child: Text(
-                                                'No Image',
-                                                style: TextStyle(
-                                                  color: Colors.grey,
-                                                ),
-                                              ),
-                                            ),
-                                      ),
+                            index,
+                          ) {
+                            final category = orderedCategories[index];
+                            final String categoryId =
+                                category['id']?.toString() ?? '';
+                            final String categoryName =
+                                category['name']?.toString() ?? 'Unknown';
+                            final isFavorite = _favoriteCategoryIds.contains(
+                              categoryId,
+                            );
+
+                            String? imageUrl;
+                            if (category['image'] != null &&
+                                category['image']['url'] != null) {
+                              imageUrl = category['image']['url'];
+                              if (imageUrl?.startsWith('/') ?? false) {
+                                imageUrl =
+                                    'https://blackforest.vseyal.com$imageUrl';
+                              }
+                            }
+                            imageUrl ??=
+                                'https://via.placeholder.com/150?text=No+Image';
+                            return GestureDetector(
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => ProductsPage(
+                                      categoryId: categoryId,
+                                      categoryName: categoryName,
+                                      sourcePage: widget.sourcePage,
                                     ),
                                   ),
-                                  Expanded(
-                                    flex: 2, // 20% name
-                                    child: Container(
-                                      width: double.infinity,
-                                      decoration: const BoxDecoration(
-                                        color: Colors.black,
-                                        borderRadius: BorderRadius.vertical(
-                                          bottom: Radius.circular(8),
-                                        ),
-                                      ),
-                                      alignment: Alignment.center,
-                                      child: Text(
-                                        categoryName,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                        textAlign: TextAlign.center,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  ),
-                                ],
+                                );
+                              },
+                              onLongPress: () => _toggleFavoriteCategory(
+                                categoryId,
+                                categoryName,
                               ),
-                              if (isFavorite)
-                                Positioned(
-                                  top: 8,
-                                  right: 8,
-                                  child: Container(
-                                    padding: const EdgeInsets.all(4),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black.withValues(
-                                        alpha: 0.35,
-                                      ),
-                                      shape: BoxShape.circle,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(8),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.grey.withValues(alpha: 0.1),
+                                      spreadRadius: 2,
+                                      blurRadius: 4,
+                                      offset: const Offset(0, 2),
                                     ),
-                                    child: Icon(
-                                      Icons.star,
-                                      size: 20,
-                                      color: Colors.yellow.shade700,
-                                    ),
-                                  ),
+                                  ],
                                 ),
-                            ],
-                          ),
+                                child: Stack(
+                                  children: [
+                                    Column(
+                                      children: [
+                                        Expanded(
+                                          flex: 8,
+                                          child: ClipRRect(
+                                            borderRadius:
+                                                const BorderRadius.vertical(
+                                                  top: Radius.circular(8),
+                                                ),
+                                            child: CachedNetworkImage(
+                                              imageUrl: imageUrl,
+                                              fit: BoxFit.cover,
+                                              width: double.infinity,
+                                              placeholder: (context, url) =>
+                                                  const Center(
+                                                    child:
+                                                        CircularProgressIndicator(),
+                                                  ),
+                                              errorWidget:
+                                                  (context, url, error) =>
+                                                      const Center(
+                                                        child: Text(
+                                                          'No Image',
+                                                          style: TextStyle(
+                                                            color: Colors.grey,
+                                                          ),
+                                                        ),
+                                                      ),
+                                            ),
+                                          ),
+                                        ),
+                                        Expanded(
+                                          flex: 2,
+                                          child: Container(
+                                            width: double.infinity,
+                                            decoration: const BoxDecoration(
+                                              color: Colors.black,
+                                              borderRadius:
+                                                  BorderRadius.vertical(
+                                                    bottom: Radius.circular(8),
+                                                  ),
+                                            ),
+                                            alignment: Alignment.center,
+                                            child: Text(
+                                              categoryName,
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                              textAlign: TextAlign.center,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    if (isFavorite)
+                                      Positioned(
+                                        top: 8,
+                                        right: 8,
+                                        child: Container(
+                                          padding: const EdgeInsets.all(4),
+                                          decoration: BoxDecoration(
+                                            color: Colors.black.withValues(
+                                              alpha: 0.35,
+                                            ),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: Icon(
+                                            Icons.star,
+                                            size: 20,
+                                            color: Colors.yellow.shade700,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          }, childCount: orderedCategories.length),
                         ),
-                      );
-                    },
+                      ),
+                    ],
                   );
                 },
               ),

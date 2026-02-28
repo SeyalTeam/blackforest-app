@@ -288,6 +288,7 @@ enum CartType { billing, table }
 
 class CartProvider extends ChangeNotifier {
   static const String sharedTablesSectionName = 'Shared Tables';
+  static const Duration _offerSettingsCacheTtl = Duration(seconds: 60);
   CartType _currentType = CartType.billing;
 
   // New Items (Draft)
@@ -338,6 +339,8 @@ class CartProvider extends ChangeNotifier {
   List<Map<String, dynamic>> _kitchenNotifications = [];
   final Set<String> _readNotificationIds = {};
   final _audioPlayer = AudioPlayer();
+  Map<String, dynamic>? _cachedOfferSettings;
+  DateTime? _cachedOfferSettingsAt;
 
   // Getters for current cart
   CartType get currentType => _currentType;
@@ -393,6 +396,7 @@ class CartProvider extends ChangeNotifier {
   String? get printerIp => _printerIp;
   int get printerPort => _printerPort;
   String? get printerProtocol => _printerProtocol;
+  String? get branchId => _branchId;
 
   CartProvider() {
     _loadCarts();
@@ -1313,6 +1317,7 @@ class CartProvider extends ChangeNotifier {
     bool? isTableOrder,
     String? tableSection,
     String? tableNumber,
+    bool includeBillHistory = true,
   }) async {
     try {
       final normalizedPhone = phoneNumber.trim();
@@ -1327,8 +1332,10 @@ class CartProvider extends ChangeNotifier {
         'Content-Type': 'application/json',
       };
 
-      final responses = await Future.wait([
-        hasPhoneLookup
+      final shouldFetchBills = hasPhoneLookup && includeBillHistory;
+
+      final responses = await Future.wait<dynamic>([
+        shouldFetchBills
             ? http.get(
                 Uri.parse(
                   'https://blackforest.vseyal.com/api/billings?where[customerDetails.phoneNumber][equals]=$normalizedPhone&where[status][not_equals]=cancelled&sort=-createdAt&limit=500&depth=4',
@@ -1344,17 +1351,12 @@ class CartProvider extends ChangeNotifier {
                 headers: headers,
               )
             : Future.value(http.Response('{"docs":[],"totalDocs":0}', 200)),
-        http.get(
-          Uri.parse(
-            'https://blackforest.vseyal.com/api/globals/customer-offer-settings',
-          ),
-          headers: headers,
-        ),
+        _getCustomerOfferSettings(headers),
       ]);
 
-      final billsResponse = responses[0];
-      final customersResponse = responses[1];
-      final offerSettingsResponse = responses[2];
+      final billsResponse = responses[0] as http.Response;
+      final customersResponse = responses[1] as http.Response;
+      final offerSettings = responses[2] as Map<String, dynamic>?;
 
       if (billsResponse.statusCode != 200) {
         throw Exception('Failed to fetch metrics: ${billsResponse.statusCode}');
@@ -1377,14 +1379,6 @@ class CartProvider extends ChangeNotifier {
         final docs = customerData['docs'];
         if (docs is List && docs.isNotEmpty && docs.first is Map) {
           customerDoc = Map<String, dynamic>.from(docs.first as Map);
-        }
-      }
-
-      Map<String, dynamic>? offerSettings;
-      if (offerSettingsResponse.statusCode == 200) {
-        final settingsData = jsonDecode(offerSettingsResponse.body);
-        if (settingsData is Map) {
-          offerSettings = Map<String, dynamic>.from(settingsData);
         }
       }
 
@@ -2810,6 +2804,40 @@ class CartProvider extends ChangeNotifier {
     } catch (e) {
       debugPrint("Error fetching customer data: $e");
       rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>?> _getCustomerOfferSettings(
+    Map<String, String> headers,
+  ) async {
+    final now = DateTime.now();
+    final cached = _cachedOfferSettings;
+    if (cached != null &&
+        _cachedOfferSettingsAt != null &&
+        now.difference(_cachedOfferSettingsAt!) < _offerSettingsCacheTtl) {
+      return Map<String, dynamic>.from(cached);
+    }
+
+    try {
+      final response = await http.get(
+        Uri.parse(
+          'https://blackforest.vseyal.com/api/globals/customer-offer-settings',
+        ),
+        headers: headers,
+      );
+      if (response.statusCode != 200) {
+        return cached == null ? null : Map<String, dynamic>.from(cached);
+      }
+      final settingsData = jsonDecode(response.body);
+      if (settingsData is! Map) {
+        return cached == null ? null : Map<String, dynamic>.from(cached);
+      }
+      final settingsMap = Map<String, dynamic>.from(settingsData);
+      _cachedOfferSettings = settingsMap;
+      _cachedOfferSettingsAt = now;
+      return Map<String, dynamic>.from(settingsMap);
+    } catch (_) {
+      return cached == null ? null : Map<String, dynamic>.from(cached);
     }
   }
 }
