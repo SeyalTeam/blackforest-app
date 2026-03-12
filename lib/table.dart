@@ -19,11 +19,15 @@ class TablePage extends StatefulWidget {
 }
 
 class _TablePageState extends State<TablePage> {
+  static final bool _enableCustomerLookup = false; // manual entry mode
   List<dynamic> _tables = [];
   bool _isLoading = true;
   String? _errorMessage;
   String? _branchId;
   String? _token;
+  String? _currentWaiterName;
+  TableCustomerDetailsVisibilityConfig _customerDetailsVisibilityConfig =
+      TableCustomerDetailsVisibilityConfig.defaultValue;
   final Map<String, dynamic> _pendingBillsByTableKey = {};
   final List<dynamic> _sharedPendingBills = [];
   bool _isHandlingTableTap = false;
@@ -79,23 +83,40 @@ class _TablePageState extends State<TablePage> {
     setState(() {
       _token = prefs.getString('token');
       _branchId = prefs.getString('branchId');
+      _currentWaiterName = prefs.getString('user_name')?.trim();
     });
 
     if (_token != null && _branchId != null) {
+      await _loadCustomerDetailsVisibilityConfig();
       _fetchTables();
       _fetchPendingBills();
-      unawaited(
-        TableCustomerDetailsVisibilityService.shouldShowForBranch(
-          branchId: _branchId,
-          token: _token,
-        ),
-      );
     } else {
       setState(() {
         _isLoading = false;
         _errorMessage = 'Session expired or Branch ID not found.';
       });
     }
+  }
+
+  Future<void> _loadCustomerDetailsVisibilityConfig() async {
+    final token = _token?.trim();
+    final branchId = _branchId?.trim();
+    if (token == null ||
+        token.isEmpty ||
+        branchId == null ||
+        branchId.isEmpty) {
+      return;
+    }
+    final config =
+        await TableCustomerDetailsVisibilityService.getConfigForBranch(
+          branchId: branchId,
+          token: token,
+          forceRefresh: true,
+        );
+    if (!mounted) return;
+    setState(() {
+      _customerDetailsVisibilityConfig = config;
+    });
   }
 
   Future<void> _fetchTables() async {
@@ -356,8 +377,12 @@ class _TablePageState extends State<TablePage> {
     );
   }
 
-  Color _getTableColor(dynamic runningBill) {
-    if (runningBill == null) return const Color(0xFFEEEEEE);
+  Color _getTableColor(dynamic runningBill, {bool isReservedDraft = false}) {
+    if (runningBill == null) {
+      return isReservedDraft
+          ? const Color(0xFFFFE0B2)
+          : const Color(0xFFEEEEEE);
+    }
 
     final items = _activeItemsFromBill(runningBill);
     if (items.isEmpty) {
@@ -386,6 +411,18 @@ class _TablePageState extends State<TablePage> {
       default:
         return const Color(0xFFEEEEEE); // Default grey
     }
+  }
+
+  String _draftWaiterLabel(CartProvider cartProvider) {
+    final localOwner = cartProvider.draftOwnerNameFor(CartType.table)?.trim();
+    if (localOwner != null && localOwner.isNotEmpty) {
+      return localOwner;
+    }
+    final current = _currentWaiterName?.trim();
+    if (current != null && current.isNotEmpty) {
+      return current;
+    }
+    return 'You';
   }
 
   Widget _buildCategorySection(String categoryName, int tableCount) {
@@ -419,6 +456,8 @@ class _TablePageState extends State<TablePage> {
     required VoidCallback onTap,
     required VoidCallback onDoubleTap,
     bool showDashedWhenIdle = true,
+    bool isReservedDraft = false,
+    String? reservedWaiterLabel,
   }) {
     final isRunning = runningBill != null;
 
@@ -426,14 +465,20 @@ class _TablePageState extends State<TablePage> {
       onTap: onTap,
       onDoubleTap: onDoubleTap,
       child: CustomPaint(
-        painter: !isRunning && showDashedWhenIdle
+        painter: !isRunning && !isReservedDraft && showDashedWhenIdle
             ? DashedBorderPainter()
             : null,
         child: Container(
           decoration: BoxDecoration(
-            color: _getTableColor(runningBill),
+            color: _getTableColor(
+              runningBill,
+              isReservedDraft: isReservedDraft,
+            ),
             borderRadius: BorderRadius.circular(8),
-            boxShadow: isRunning
+            border: isReservedDraft
+                ? Border.all(color: const Color(0xFFEF6C00), width: 1.4)
+                : null,
+            boxShadow: isRunning || isReservedDraft
                 ? [
                     BoxShadow(
                       color: Colors.black.withValues(alpha: 0.05),
@@ -448,12 +493,26 @@ class _TablePageState extends State<TablePage> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 if (isRunning) _buildRunningTimeWidget(runningBill),
+                if (isReservedDraft) ...[
+                  const Text(
+                    'RESERVED',
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFFE65100),
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                ],
                 Text(
                   tableLabel,
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 18,
-                    fontWeight: isRunning ? FontWeight.bold : FontWeight.w500,
+                    fontWeight: (isRunning || isReservedDraft)
+                        ? FontWeight.bold
+                        : FontWeight.w500,
                   ),
                 ),
                 if (isRunning) ...[
@@ -482,6 +541,23 @@ class _TablePageState extends State<TablePage> {
                     ),
                   ),
                 ],
+                if (isReservedDraft && reservedWaiterLabel != null) ...[
+                  const SizedBox(height: 4),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Text(
+                      'By: $reservedWaiterLabel',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFFBF360C),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -499,20 +575,6 @@ class _TablePageState extends State<TablePage> {
 
     final diff = DateTime.now().difference(createdAt);
     if (diff.isNegative) return const SizedBox();
-
-    final items = _activeItemsFromBill(runningBill);
-    if (items.isNotEmpty) {
-      int lowestPriority = 4;
-      for (final item in items) {
-        final priority = _statusPriority(item['status']);
-        if (priority < lowestPriority) {
-          lowestPriority = priority;
-        }
-      }
-      if (lowestPriority >= 3) {
-        return const SizedBox();
-      }
-    }
 
     final minutes = diff.inMinutes.toString().padLeft(2, '0');
     final seconds = (diff.inSeconds % 60).toString().padLeft(2, '0');
@@ -696,6 +758,7 @@ class _TablePageState extends State<TablePage> {
     bool shrinkWrap = false,
     required String sectionName,
   }) {
+    final cartProvider = context.watch<CartProvider>();
     return GridView.builder(
       shrinkWrap: shrinkWrap,
       physics: shrinkWrap
@@ -711,15 +774,27 @@ class _TablePageState extends State<TablePage> {
       itemCount: tableCount,
       itemBuilder: (context, index) {
         final tableNumber = index + 1;
+        final tableNumberText = tableNumber.toString();
 
         final runningBill = _findRunningBillForGrid(
-          tableNumber: tableNumber.toString(),
+          tableNumber: tableNumberText,
           sectionName: sectionName,
         );
+        final isReservedDraft =
+            runningBill == null &&
+            cartProvider.hasDraftForTableSelection(
+              table: tableNumberText,
+              section: sectionName,
+            );
+        final reservedWaiterLabel = isReservedDraft
+            ? _draftWaiterLabel(cartProvider)
+            : null;
 
         return _buildTableTile(
           tableLabel: 'Table $tableNumber',
           runningBill: runningBill,
+          isReservedDraft: isReservedDraft,
+          reservedWaiterLabel: reservedWaiterLabel,
           onTap: () => _handleTableTap(
             runningBill,
             tableNumber,
@@ -740,7 +815,11 @@ class _TablePageState extends State<TablePage> {
   Future<Map<String, dynamic>?> _showCustomerDetailsDialog(
     CartProvider cartProvider, {
     bool allowSkip = true,
+    bool showHistory = true,
+    bool enableAutoSubmit = true,
+    bool requireCompleteDetails = false,
   }) async {
+    final enableCustomerLookup = _enableCustomerLookup;
     final nameCtrl = TextEditingController(
       text: cartProvider.customerName ?? '',
     );
@@ -749,8 +828,10 @@ class _TablePageState extends State<TablePage> {
     );
     Timer? debounceTimer;
     bool isDialogActive = true;
+    bool isDialogSubmitting = false;
+    bool didCloseDialog = false;
     String latestLookupPhone = '';
-    bool didAutoLookup = false;
+    int lookupSequence = 0;
     Map<String, dynamic>? customerLookupData;
     bool isLookupInProgress = false;
     String? lookupError;
@@ -761,6 +842,24 @@ class _TablePageState extends State<TablePage> {
       builder: (dialogContext) {
         return StatefulBuilder(
           builder: (dialogContext, setDialogState) {
+            void closeDialogSafely(Map<String, dynamic>? value) {
+              if (didCloseDialog) return;
+              didCloseDialog = true;
+              setDialogState(() {
+                isDialogSubmitting = true;
+              });
+              isDialogActive = false;
+              lookupSequence += 1;
+              debounceTimer?.cancel();
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                final nav = Navigator.of(dialogContext);
+                if (nav.canPop()) {
+                  nav.pop(value);
+                }
+              });
+            }
+
             int offerPageIndex = 0;
             double readMoney(dynamic value) {
               if (value is num) return value.toDouble();
@@ -786,6 +885,62 @@ class _TablePageState extends State<TablePage> {
                 return value.toInt().toString();
               }
               return value.toStringAsFixed(2);
+            }
+
+            String normalizePhone(String value) =>
+                value.replaceAll(RegExp(r'\D'), '');
+            Map<String, dynamic> buildDialogSubmitPayload(
+              String customerName,
+              String customerPhone,
+            ) {
+              return <String, dynamic>{
+                'name': customerName,
+                'phone': customerPhone,
+              };
+            }
+
+            String? validateCustomerDetailsForSubmit() {
+              final normalizedPhone = normalizePhone(phoneCtrl.text);
+              final customerName = nameCtrl.text.trim();
+
+              if (!requireCompleteDetails) {
+                if (phoneCtrl.text.trim().isEmpty && customerName.isEmpty) {
+                  return allowSkip
+                      ? 'Please enter customer name or phone number, or use Skip'
+                      : 'Please enter customer name or phone number';
+                }
+                return null;
+              }
+
+              if (normalizedPhone.length < 10 && customerName.isEmpty) {
+                return 'Please enter customer name and a valid 10-digit phone number';
+              }
+              if (normalizedPhone.length < 10) {
+                return 'Please enter a valid 10-digit customer phone number';
+              }
+              if (customerName.isEmpty) {
+                return 'Please enter customer name';
+              }
+              return null;
+            }
+
+            bool autoSubmitIfReady(Map<String, dynamic>? lookupData) {
+              if (!enableAutoSubmit) return false;
+              if (!isDialogActive || isDialogSubmitting || didCloseDialog) {
+                return false;
+              }
+              final normalizedPhone = normalizePhone(phoneCtrl.text);
+              final lookupName = lookupData?['name']?.toString().trim() ?? '';
+              final customerName = nameCtrl.text.trim();
+              if (normalizedPhone.length < 10 ||
+                  lookupName.isEmpty ||
+                  customerName.isEmpty) {
+                return false;
+              }
+              closeDialogSafely(
+                buildDialogSubmitPayload(customerName, phoneCtrl.text.trim()),
+              );
+              return true;
             }
 
             final offerData = readMap(customerLookupData?['offer']);
@@ -1155,52 +1310,11 @@ class _TablePageState extends State<TablePage> {
                   ),
                 ),
             ];
-
-            if (!didAutoLookup) {
-              didAutoLookup = true;
-              WidgetsBinding.instance.addPostFrameCallback((_) async {
-                if (!isDialogActive || !mounted) return;
-                final rawPhone = phoneCtrl.text.trim();
-                final lookupPhone = rawPhone.length >= 10 ? rawPhone : '';
-                latestLookupPhone = rawPhone;
-                setDialogState(() {
-                  lookupError = null;
-                  isLookupInProgress = true;
-                });
-                try {
-                  final activeTableNumber =
-                      cartProvider.selectedTable?.trim() ?? '';
-                  final activeSection =
-                      cartProvider.selectedSection?.trim() ?? '';
-                  final data = await cartProvider.fetchCustomerData(
-                    lookupPhone,
-                    isTableOrder: true,
-                    tableSection: activeSection,
-                    tableNumber: activeTableNumber,
-                  );
-                  if (!isDialogActive || !mounted) return;
-                  setDialogState(() {
-                    customerLookupData = data;
-                    isLookupInProgress = false;
-                    lookupError = null;
-                  });
-                  final fetchedName = data?['name']?.toString().trim() ?? '';
-                  final isNewCustomerLookup = data?['isNewCustomer'] == true;
-                  if (!isNewCustomerLookup &&
-                      fetchedName.isNotEmpty &&
-                      nameCtrl.text.trim().isEmpty) {
-                    nameCtrl.text = fetchedName;
-                  }
-                } catch (_) {
-                  if (!isDialogActive || !mounted) return;
-                  setDialogState(() {
-                    customerLookupData = null;
-                    isLookupInProgress = false;
-                    lookupError = 'Unable to fetch customer details';
-                  });
-                }
-              });
-            }
+            final normalizedPhoneForHistory = normalizePhone(phoneCtrl.text);
+            final canOpenHistoryFromHeader =
+                showHistory &&
+                !isDialogSubmitting &&
+                normalizedPhoneForHistory.length >= 10;
 
             return Dialog(
               backgroundColor: const Color(0xFF1E1E1E),
@@ -1222,15 +1336,46 @@ class _TablePageState extends State<TablePage> {
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Center(
-                            child: Text(
-                              "Customer Details",
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 20,
-                                fontWeight: FontWeight.bold,
+                          Row(
+                            children: [
+                              SizedBox(
+                                width: 40,
+                                height: 40,
+                                child: IconButton(
+                                  tooltip: showHistory
+                                      ? 'Customer History'
+                                      : 'Customer History disabled',
+                                  padding: EdgeInsets.zero,
+                                  icon: Icon(
+                                    Icons.history_rounded,
+                                    color: canOpenHistoryFromHeader
+                                        ? const Color(0xFF4ADE80)
+                                        : Colors.white30,
+                                  ),
+                                  onPressed: canOpenHistoryFromHeader
+                                      ? () async {
+                                          await showCustomerHistoryDialog(
+                                            dialogContext,
+                                            phoneNumber: phoneCtrl.text,
+                                          );
+                                        }
+                                      : null,
+                                ),
                               ),
-                            ),
+                              const Expanded(
+                                child: Center(
+                                  child: Text(
+                                    "Customer Details",
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 40, height: 40),
+                            ],
                           ),
                           const SizedBox(height: 20),
                           const Text(
@@ -1254,24 +1399,44 @@ class _TablePageState extends State<TablePage> {
                             child: TextField(
                               controller: phoneCtrl,
                               keyboardType: TextInputType.phone,
+                              textInputAction: enableAutoSubmit
+                                  ? TextInputAction.done
+                                  : TextInputAction.next,
                               style: const TextStyle(color: Colors.white),
+                              onSubmitted: (_) {
+                                if (autoSubmitIfReady(customerLookupData)) {
+                                  return;
+                                }
+                                FocusScope.of(dialogContext).nextFocus();
+                              },
                               onChanged: (val) {
+                                if (!isDialogActive || isDialogSubmitting) {
+                                  return;
+                                }
                                 setDialogState(() {});
-                                final rawPhone = val.trim();
-                                final lookupPhone = rawPhone.length >= 10
-                                    ? rawPhone
-                                    : '';
-                                latestLookupPhone = rawPhone;
+                                final normalizedPhone = normalizePhone(val);
+                                latestLookupPhone = normalizedPhone;
+                                lookupSequence += 1;
+                                if (normalizedPhone.length < 10) {
+                                  debounceTimer?.cancel();
+                                  setDialogState(() {
+                                    customerLookupData = null;
+                                    lookupError = null;
+                                    isLookupInProgress = false;
+                                  });
+                                  return;
+                                }
                                 setDialogState(() {
                                   lookupError = null;
                                   isLookupInProgress = true;
                                 });
                                 debounceTimer?.cancel();
+                                final requestId = lookupSequence;
                                 debounceTimer = Timer(
-                                  const Duration(milliseconds: 600),
+                                  const Duration(milliseconds: 350),
                                   () async {
                                     if (!isDialogActive ||
-                                        rawPhone != latestLookupPhone) {
+                                        normalizedPhone != latestLookupPhone) {
                                       return;
                                     }
 
@@ -1283,59 +1448,211 @@ class _TablePageState extends State<TablePage> {
                                           cartProvider.selectedSection
                                               ?.trim() ??
                                           '';
-                                      final data = await cartProvider
-                                          .fetchCustomerData(
-                                            lookupPhone,
-                                            isTableOrder: true,
-                                            tableSection: activeSection,
-                                            tableNumber: activeTableNumber,
-                                          );
-                                      final latestPhone = phoneCtrl.text.trim();
-                                      final isSameLongPhone =
-                                          latestPhone == rawPhone;
-                                      final bothShortPhone =
-                                          latestPhone.length < 10 &&
-                                          rawPhone.length < 10;
-                                      if (!isDialogActive ||
-                                          !mounted ||
-                                          (!isSameLongPhone &&
-                                              !bothShortPhone)) {
-                                        return;
-                                      }
-                                      setDialogState(() {
-                                        customerLookupData = data;
-                                        isLookupInProgress = false;
-                                        lookupError = null;
-                                      });
-                                      final fetchedName =
-                                          data?['name']?.toString().trim() ??
-                                          '';
-                                      final isNewCustomerLookup =
-                                          data?['isNewCustomer'] == true;
-                                      if (!isNewCustomerLookup &&
-                                          fetchedName.isNotEmpty &&
-                                          nameCtrl.text.trim().isEmpty) {
-                                        nameCtrl.text = fetchedName;
+                                      const lookupFlowLabel = 'table';
+                                      Map<String, dynamic>? data;
+                                      if (enableCustomerLookup) {
+                                        final combinedLookupStopwatch =
+                                            Stopwatch()..start();
+                                        data = await cartProvider
+                                            .fetchCustomerData(
+                                              normalizedPhone,
+                                              isTableOrder: true,
+                                              tableSection: activeSection,
+                                              tableNumber: activeTableNumber,
+                                            );
+                                        combinedLookupStopwatch.stop();
+                                        debugPrint(
+                                          '⏱️ [Customer Lookup][$lookupFlowLabel] combined lookup: '
+                                          '${combinedLookupStopwatch.elapsedMilliseconds}ms '
+                                          '(phone=$normalizedPhone)',
+                                        );
+                                        final latestPhone = normalizePhone(
+                                          phoneCtrl.text,
+                                        );
+                                        if (!isDialogActive ||
+                                            !mounted ||
+                                            latestPhone != normalizedPhone ||
+                                            requestId != lookupSequence) {
+                                          return;
+                                        }
+                                        setDialogState(() {
+                                          customerLookupData = data;
+                                          isLookupInProgress = false;
+                                          lookupError = null;
+                                        });
+                                        final fetchedName =
+                                            data?['name']?.toString().trim() ??
+                                            '';
+                                        final isNewCustomerLookup =
+                                            data?['isNewCustomer'] == true;
+                                        if (!isNewCustomerLookup &&
+                                            fetchedName.isNotEmpty &&
+                                            nameCtrl.text.trim().isEmpty) {
+                                          nameCtrl.text = fetchedName;
+                                        }
+                                        if (autoSubmitIfReady(data)) return;
+                                      } else {
+                                        final nameLookupStopwatch = Stopwatch()
+                                          ..start();
+                                        final quickData = await cartProvider
+                                            .fetchCustomerLookupPreview(
+                                              normalizedPhone,
+                                              limit: 1,
+                                              useHeavyFallback: false,
+                                              includeGlobalLookup: false,
+                                            );
+                                        nameLookupStopwatch.stop();
+                                        debugPrint(
+                                          '⏱️ [Customer Lookup][$lookupFlowLabel] name lookup: '
+                                          '${nameLookupStopwatch.elapsedMilliseconds}ms '
+                                          '(phone=$normalizedPhone)',
+                                        );
+                                        final latestPhone = normalizePhone(
+                                          phoneCtrl.text,
+                                        );
+                                        if (!isDialogActive ||
+                                            !mounted ||
+                                            latestPhone != normalizedPhone ||
+                                            requestId != lookupSequence) {
+                                          return;
+                                        }
+
+                                        final quickName =
+                                            quickData?['name']
+                                                ?.toString()
+                                                .trim() ??
+                                            '';
+                                        final quickIsNewCustomer =
+                                            quickData?['isNewCustomer'] == true;
+                                        if (!quickIsNewCustomer &&
+                                            quickName.isNotEmpty &&
+                                            nameCtrl.text.trim().isEmpty) {
+                                          nameCtrl.text = quickName;
+                                        }
+
+                                        setDialogState(() {
+                                          customerLookupData = quickData;
+                                          isLookupInProgress = false;
+                                          lookupError = null;
+                                        });
+                                        if (autoSubmitIfReady(quickData)) {
+                                          return;
+                                        }
+
+                                        final quickBills =
+                                            (quickData?['totalBills'] as num?)
+                                                ?.toInt() ??
+                                            0;
+                                        final quickAmount = readMoney(
+                                          quickData?['totalAmount'],
+                                        );
+                                        if (quickBills <= 0 &&
+                                            quickAmount <= 0) {
+                                          unawaited(() async {
+                                            final summaryLookupStopwatch =
+                                                Stopwatch()..start();
+                                            try {
+                                              final summaryData =
+                                                  await cartProvider
+                                                      .fetchCustomerLookupPreview(
+                                                        normalizedPhone,
+                                                        limit: 1,
+                                                        useHeavyFallback: true,
+                                                        includeGlobalLookup:
+                                                            true,
+                                                      );
+                                              summaryLookupStopwatch.stop();
+                                              debugPrint(
+                                                '⏱️ [Customer Lookup][$lookupFlowLabel] history summary backfill: '
+                                                '${summaryLookupStopwatch.elapsedMilliseconds}ms '
+                                                '(phone=$normalizedPhone)',
+                                              );
+                                              if (summaryData == null) return;
+
+                                              final latestPhone =
+                                                  normalizePhone(
+                                                    phoneCtrl.text,
+                                                  );
+                                              if (!isDialogActive ||
+                                                  !mounted ||
+                                                  latestPhone !=
+                                                      normalizedPhone ||
+                                                  requestId != lookupSequence) {
+                                                return;
+                                              }
+
+                                              final existing =
+                                                  customerLookupData;
+                                              final existingBills =
+                                                  (existing?['totalBills']
+                                                          as num?)
+                                                      ?.toInt() ??
+                                                  0;
+                                              final existingAmount = readMoney(
+                                                existing?['totalAmount'],
+                                              );
+                                              final summaryBills =
+                                                  (summaryData['totalBills']
+                                                          as num?)
+                                                      ?.toInt() ??
+                                                  0;
+                                              final summaryAmount = readMoney(
+                                                summaryData['totalAmount'],
+                                              );
+                                              final existingName =
+                                                  existing?['name']
+                                                      ?.toString()
+                                                      .trim() ??
+                                                  '';
+                                              final summaryName =
+                                                  summaryData['name']
+                                                      ?.toString()
+                                                      .trim() ??
+                                                  '';
+
+                                              final shouldUseSummary =
+                                                  summaryBills >
+                                                      existingBills ||
+                                                  summaryAmount >
+                                                      existingAmount ||
+                                                  (existingName.isEmpty &&
+                                                      summaryName.isNotEmpty);
+                                              if (!shouldUseSummary) return;
+
+                                              setDialogState(() {
+                                                customerLookupData =
+                                                    summaryData;
+                                                lookupError = null;
+                                              });
+                                              autoSubmitIfReady(summaryData);
+                                            } catch (e) {
+                                              summaryLookupStopwatch.stop();
+                                              debugPrint(
+                                                '⚠️ [Customer Lookup][$lookupFlowLabel] history summary backfill failed '
+                                                'after ${summaryLookupStopwatch.elapsedMilliseconds}ms '
+                                                '(phone=$normalizedPhone): $e',
+                                              );
+                                            }
+                                          }());
+                                        }
                                       }
                                     } catch (e) {
                                       debugPrint("Lookup failed: $e");
-                                      final latestPhone = phoneCtrl.text.trim();
-                                      final isSameLongPhone =
-                                          latestPhone == rawPhone;
-                                      final bothShortPhone =
-                                          latestPhone.length < 10 &&
-                                          rawPhone.length < 10;
+                                      final latestPhone = normalizePhone(
+                                        phoneCtrl.text,
+                                      );
                                       if (!isDialogActive ||
                                           !mounted ||
-                                          (!isSameLongPhone &&
-                                              !bothShortPhone)) {
+                                          latestPhone != normalizedPhone ||
+                                          requestId != lookupSequence) {
                                         return;
                                       }
                                       setDialogState(() {
                                         customerLookupData = null;
                                         isLookupInProgress = false;
-                                        lookupError =
-                                            'Unable to fetch customer details';
+                                        lookupError = enableCustomerLookup
+                                            ? 'Unable to fetch customer details'
+                                            : null;
                                       });
                                     }
                                   },
@@ -1352,7 +1669,7 @@ class _TablePageState extends State<TablePage> {
                               ),
                             ),
                           ),
-                          if (isLookupInProgress) ...[
+                          if (enableCustomerLookup && isLookupInProgress) ...[
                             const SizedBox(height: 10),
                             const Center(
                               child: SizedBox(
@@ -1365,7 +1682,7 @@ class _TablePageState extends State<TablePage> {
                               ),
                             ),
                           ],
-                          if (lookupError != null) ...[
+                          if (enableCustomerLookup && lookupError != null) ...[
                             const SizedBox(height: 10),
                             Text(
                               lookupError!,
@@ -1396,7 +1713,14 @@ class _TablePageState extends State<TablePage> {
                             ),
                             child: TextField(
                               controller: nameCtrl,
+                              textInputAction: TextInputAction.done,
                               style: const TextStyle(color: Colors.white),
+                              onSubmitted: (_) {
+                                if (autoSubmitIfReady(customerLookupData)) {
+                                  return;
+                                }
+                                FocusScope.of(dialogContext).unfocus();
+                              },
                               decoration: const InputDecoration(
                                 contentPadding: EdgeInsets.symmetric(
                                   horizontal: 12,
@@ -1408,7 +1732,16 @@ class _TablePageState extends State<TablePage> {
                               ),
                             ),
                           ),
-                          if (customerLookupData != null) ...[
+                          if (normalizePhone(phoneCtrl.text).length >= 10 &&
+                              customerLookupData != null &&
+                              (((customerLookupData!['totalBills'] as num?)
+                                              ?.toInt() ??
+                                          0) >
+                                      0 ||
+                                  readMoney(
+                                        customerLookupData!['totalAmount'],
+                                      ) >
+                                      0)) ...[
                             const SizedBox(height: 14),
                             Container(
                               width: double.infinity,
@@ -1423,22 +1756,63 @@ class _TablePageState extends State<TablePage> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(
-                                    'History: ${customerLookupData!['totalBills'] ?? 0} bills | ₹${readMoney(customerLookupData!['totalAmount']).toStringAsFixed(2)} spent',
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 12,
+                                  Text.rich(
+                                    TextSpan(
+                                      children: [
+                                        const TextSpan(
+                                          text: 'History: ',
+                                          style: TextStyle(
+                                            color: Color(0xFF7DD3FC),
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        TextSpan(
+                                          text:
+                                              '${customerLookupData!['totalBills'] ?? 0} bills',
+                                          style: const TextStyle(
+                                            color: Color(0xFFFDE047),
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        const TextSpan(
+                                          text: ' | ',
+                                          style: TextStyle(
+                                            color: Colors.white54,
+                                          ),
+                                        ),
+                                        TextSpan(
+                                          text:
+                                              '₹${readMoney(customerLookupData!['totalAmount']).toStringAsFixed(2)}',
+                                          style: const TextStyle(
+                                            color: Color(0xFF4ADE80),
+                                            fontWeight: FontWeight.w700,
+                                          ),
+                                        ),
+                                        const TextSpan(
+                                          text: ' spent',
+                                          style: TextStyle(
+                                            color: Colors.white70,
+                                          ),
+                                        ),
+                                      ],
                                     ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    'Order type: ${(customerLookupData!['orderType'] ?? 'table').toString().toUpperCase()}',
-                                    style: const TextStyle(
-                                      color: Colors.white54,
-                                      fontSize: 11,
-                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    softWrap: false,
+                                    style: const TextStyle(fontSize: 16),
                                   ),
                                 ],
+                              ),
+                            ),
+                          ],
+                          if (phoneCtrl.text.trim().isEmpty) ...[
+                            const SizedBox(height: 12),
+                            const Text(
+                              'Enter customer phone number to apply offers',
+                              style: TextStyle(
+                                color: Colors.orangeAccent,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
                           ],
@@ -1506,14 +1880,13 @@ class _TablePageState extends State<TablePage> {
                               children: [
                                 Expanded(
                                   child: OutlinedButton(
-                                    onPressed: () {
-                                      isDialogActive = false;
-                                      debounceTimer?.cancel();
-                                      Navigator.pop(
-                                        dialogContext,
-                                        <String, dynamic>{},
-                                      );
-                                    },
+                                    onPressed: isDialogSubmitting
+                                        ? null
+                                        : () {
+                                            closeDialogSafely(
+                                              <String, dynamic>{},
+                                            );
+                                          },
                                     style: OutlinedButton.styleFrom(
                                       foregroundColor: Colors.white70,
                                       side: const BorderSide(
@@ -1532,31 +1905,31 @@ class _TablePageState extends State<TablePage> {
                                 const SizedBox(width: 12),
                                 Expanded(
                                   child: ElevatedButton(
-                                    onPressed: () {
-                                      if (phoneCtrl.text.trim().isEmpty &&
-                                          nameCtrl.text.trim().isEmpty) {
-                                        ScaffoldMessenger.of(
-                                          context,
-                                        ).showSnackBar(
-                                          const SnackBar(
-                                            content: Text(
-                                              "Please enter customer name or phone number, or use Skip",
-                                            ),
-                                          ),
-                                        );
-                                        return;
-                                      }
+                                    onPressed: isDialogSubmitting
+                                        ? null
+                                        : () {
+                                            final validationMessage =
+                                                validateCustomerDetailsForSubmit();
+                                            if (validationMessage != null) {
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                SnackBar(
+                                                  content: Text(
+                                                    validationMessage,
+                                                  ),
+                                                ),
+                                              );
+                                              return;
+                                            }
 
-                                      isDialogActive = false;
-                                      debounceTimer?.cancel();
-                                      Navigator.pop(
-                                        dialogContext,
-                                        <String, dynamic>{
-                                          'name': nameCtrl.text.trim(),
-                                          'phone': phoneCtrl.text.trim(),
-                                        },
-                                      );
-                                    },
+                                            closeDialogSafely(
+                                              buildDialogSubmitPayload(
+                                                nameCtrl.text.trim(),
+                                                phoneCtrl.text.trim(),
+                                              ),
+                                            );
+                                          },
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: const Color(0xFF0A84FF),
                                       padding: const EdgeInsets.symmetric(
@@ -1582,29 +1955,29 @@ class _TablePageState extends State<TablePage> {
                             SizedBox(
                               width: double.infinity,
                               child: ElevatedButton(
-                                onPressed: () {
-                                  if (phoneCtrl.text.trim().isEmpty &&
-                                      nameCtrl.text.trim().isEmpty) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          "Please enter customer name or phone number",
-                                        ),
-                                      ),
-                                    );
-                                    return;
-                                  }
+                                onPressed: isDialogSubmitting
+                                    ? null
+                                    : () {
+                                        final validationMessage =
+                                            validateCustomerDetailsForSubmit();
+                                        if (validationMessage != null) {
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            SnackBar(
+                                              content: Text(validationMessage),
+                                            ),
+                                          );
+                                          return;
+                                        }
 
-                                  isDialogActive = false;
-                                  debounceTimer?.cancel();
-                                  Navigator.pop(
-                                    dialogContext,
-                                    <String, dynamic>{
-                                      'name': nameCtrl.text.trim(),
-                                      'phone': phoneCtrl.text.trim(),
-                                    },
-                                  );
-                                },
+                                        closeDialogSafely(
+                                          buildDialogSubmitPayload(
+                                            nameCtrl.text.trim(),
+                                            phoneCtrl.text.trim(),
+                                          ),
+                                        );
+                                      },
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: const Color(0xFF0A84FF),
                                   padding: const EdgeInsets.symmetric(
@@ -1624,50 +1997,6 @@ class _TablePageState extends State<TablePage> {
                                 ),
                               ),
                             ),
-                          if (phoneCtrl.text.length >= 10) ...[
-                            const SizedBox(height: 20),
-                            Center(
-                              child: InkWell(
-                                onTap: () {
-                                  if (!dialogContext.mounted) return;
-                                  showDialog(
-                                    context: dialogContext,
-                                    builder: (context) => CustomerHistoryDialog(
-                                      phoneNumber: phoneCtrl.text.trim(),
-                                    ),
-                                  );
-                                },
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 16,
-                                    vertical: 8,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.green.shade700,
-                                    borderRadius: BorderRadius.circular(20),
-                                  ),
-                                  child: const Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(
-                                        Icons.history,
-                                        color: Colors.white,
-                                        size: 18,
-                                      ),
-                                      SizedBox(width: 8),
-                                      Text(
-                                        "Customer History",
-                                        style: TextStyle(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
                         ],
                       ),
                     ),
@@ -1677,11 +2006,9 @@ class _TablePageState extends State<TablePage> {
                     top: 8,
                     child: IconButton(
                       icon: const Icon(Icons.close, color: Colors.white54),
-                      onPressed: () {
-                        isDialogActive = false;
-                        debounceTimer?.cancel();
-                        Navigator.pop(dialogContext, null);
-                      },
+                      onPressed: isDialogSubmitting
+                          ? null
+                          : () => closeDialogSafely(null),
                     ),
                   ),
                 ],
@@ -1693,9 +2020,8 @@ class _TablePageState extends State<TablePage> {
     );
 
     isDialogActive = false;
+    lookupSequence += 1;
     debounceTimer?.cancel();
-    nameCtrl.dispose();
-    phoneCtrl.dispose();
     return result;
   }
 
@@ -1850,52 +2176,64 @@ class _TablePageState extends State<TablePage> {
             .trim()
             .toLowerCase();
 
-        // Reopening a non-running table must always start fresh, even if
-        // it's the same table selected earlier.
-        if (currentTable == targetTable && currentSection == targetSection) {
+        final hasExistingDraftForSameTable = cartProvider
+            .hasDraftForTableSelection(
+              table: targetTable,
+              section: sectionName,
+            );
+
+        if (hasExistingDraftForSameTable) {
+          debugPrint(
+            '🪑 Reopening reserved table draft: $targetTable / $sectionName',
+          );
+          cartProvider.setSelectedTableMetadata(targetTable, sectionName);
+        } else if (currentTable == targetTable &&
+            currentSection == targetSection) {
           cartProvider.clearCart();
           cartProvider.setSelectedTableMetadata(targetTable, sectionName);
+          cartProvider.setCustomerDetails();
         } else {
           cartProvider.setSelectedTable(targetTable, sectionName);
+          cartProvider.setCustomerDetails();
         }
-        // Non-running table should always start with fresh customer info.
-        cartProvider.setCustomerDetails();
 
-        if (!openCart) {
-          final customerDetailsVisibilityConfig =
-              await TableCustomerDetailsVisibilityService.getConfigForBranch(
-                branchId: _branchId,
-                token: _token,
-              );
+        final shouldShowCustomerDialogForTable =
+            _customerDetailsVisibilityConfig.showCustomerDetailsForTableOrders;
+        final allowSkipForTable = _customerDetailsVisibilityConfig
+            .allowSkipCustomerDetailsForTableOrders;
+        final showHistoryForTable =
+            _customerDetailsVisibilityConfig.showCustomerHistoryForTableOrders;
+        final autoSubmitForTable = _customerDetailsVisibilityConfig
+            .autoSubmitCustomerDetailsForTableOrders;
+
+        if (!openCart &&
+            shouldShowCustomerDialogForTable &&
+            !hasExistingDraftForSameTable) {
+          final customerDetails = await _showCustomerDetailsDialog(
+            cartProvider,
+            allowSkip: allowSkipForTable,
+            showHistory: showHistoryForTable,
+            enableAutoSubmit: autoSubmitForTable,
+          );
           if (!mounted) return;
+          if (customerDetails == null) return;
 
-          if (!customerDetailsVisibilityConfig
-              .showCustomerDetailsForTableOrders) {
+          if (customerDetails.isEmpty) {
             cartProvider.setCustomerDetails();
+            cartProvider.setDraftOwnerName(null);
           } else {
-            final customerDetails = await _showCustomerDetailsDialog(
-              cartProvider,
-              allowSkip: customerDetailsVisibilityConfig
-                  .allowSkipCustomerDetailsForTableOrders,
+            cartProvider.setCustomerDetails(
+              name: customerDetails['name']?.toString(),
+              phone: customerDetails['phone']?.toString(),
             );
-            if (!mounted) return;
-            if (customerDetails == null) return;
-
-            if (customerDetails.isEmpty) {
-              cartProvider.setCustomerDetails();
-            } else {
-              cartProvider.setCustomerDetails(
-                name: customerDetails['name']?.toString(),
-                phone: customerDetails['phone']?.toString(),
-              );
-            }
+            cartProvider.setDraftOwnerName(_currentWaiterName);
           }
         }
       }
 
       if (!mounted) return;
-      // Let dialog overlay fully dispose before route push.
-      await Future<void>.delayed(const Duration(milliseconds: 16));
+      // Let dialog/IME overlays fully dispose before route push.
+      await Future<void>.delayed(const Duration(milliseconds: 260));
       if (!mounted) return;
       FocusManager.instance.primaryFocus?.unfocus();
 
@@ -1926,6 +2264,39 @@ class _TablePageState extends State<TablePage> {
     try {
       cartProvider.setCartType(CartType.table, notify: false);
       cartProvider.startSharedTableOrder();
+
+      final shouldShowCustomerDialogForTable =
+          _customerDetailsVisibilityConfig.showCustomerDetailsForTableOrders;
+      final allowSkipForTable = _customerDetailsVisibilityConfig
+          .allowSkipCustomerDetailsForTableOrders;
+      final showHistoryForTable =
+          _customerDetailsVisibilityConfig.showCustomerHistoryForTableOrders;
+      final autoSubmitForTable = _customerDetailsVisibilityConfig
+          .autoSubmitCustomerDetailsForTableOrders;
+      if (shouldShowCustomerDialogForTable) {
+        final customerDetails = await _showCustomerDetailsDialog(
+          cartProvider,
+          allowSkip: allowSkipForTable,
+          showHistory: showHistoryForTable,
+          enableAutoSubmit: autoSubmitForTable,
+        );
+        if (!mounted) return;
+        if (customerDetails == null) return;
+
+        if (customerDetails.isEmpty) {
+          cartProvider.setCustomerDetails();
+          cartProvider.setDraftOwnerName(null);
+        } else {
+          cartProvider.setCustomerDetails(
+            name: customerDetails['name']?.toString(),
+            phone: customerDetails['phone']?.toString(),
+          );
+          cartProvider.setDraftOwnerName(_currentWaiterName);
+        }
+      }
+
+      if (!mounted) return;
+      await Future<void>.delayed(const Duration(milliseconds: 260));
       if (!mounted) return;
       FocusManager.instance.primaryFocus?.unfocus();
 

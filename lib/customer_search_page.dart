@@ -20,9 +20,9 @@ class _CustomerSearchPageState extends State<CustomerSearchPage> {
   String? _error;
 
   Future<void> _searchCustomer() async {
-    final phone = _phoneController.text.trim();
-    if (phone.isEmpty) {
-      setState(() => _error = 'Please enter a phone number');
+    final phone = _phoneController.text.replaceAll(RegExp(r'\D'), '');
+    if (phone.length < 10) {
+      setState(() => _error = 'Please enter at least 10 digits');
       return;
     }
 

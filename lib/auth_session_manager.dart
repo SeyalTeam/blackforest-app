@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:blackforest_app/api_server_prefs.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as raw_http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -45,12 +46,10 @@ class AuthSessionManager {
     _isSessionCheckRunning = true;
     try {
       final timeout = force ? _meTimeout : const Duration(seconds: 5);
-      final response = await raw_http
-          .get(
-            Uri.parse('https://blackforest.vseyal.com/api/users/me'),
-            headers: {'Authorization': 'Bearer $token'},
-          )
-          .timeout(timeout);
+      final response = await _verifyMeWithFailover(
+        token: token,
+        timeout: timeout,
+      );
 
       if (response.statusCode == 401 || response.statusCode == 403) {
         await handleUnauthorized(
@@ -62,6 +61,49 @@ class AuthSessionManager {
     } finally {
       _isSessionCheckRunning = false;
     }
+  }
+
+  Future<raw_http.Response> _verifyMeWithFailover({
+    required String token,
+    required Duration timeout,
+  }) async {
+    final headers = {'Authorization': 'Bearer $token'};
+    final hosts = await getSelectedApiHostsInOrder();
+    final endpoints = hosts
+        .map((host) => Uri.https(host, '/api/users/me'))
+        .toList(growable: false);
+
+    Object? lastError;
+    StackTrace? lastStackTrace;
+
+    for (var i = 0; i < endpoints.length; i++) {
+      final endpoint = endpoints[i];
+      final canRetry = i < endpoints.length - 1;
+      try {
+        final response = await raw_http
+            .get(endpoint, headers: headers)
+            .timeout(timeout);
+        final isRetryable =
+            response.statusCode == 408 ||
+            response.statusCode == 429 ||
+            response.statusCode >= 500;
+        if (isRetryable && canRetry) {
+          continue;
+        }
+        return response;
+      } catch (error, stackTrace) {
+        lastError = error;
+        lastStackTrace = stackTrace;
+        if (!canRetry) {
+          rethrow;
+        }
+      }
+    }
+
+    if (lastError != null && lastStackTrace != null) {
+      Error.throwWithStackTrace(lastError, lastStackTrace);
+    }
+    throw StateError('Unable to verify session.');
   }
 
   Future<void> handleUnauthorized({String? message}) async {

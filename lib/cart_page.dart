@@ -6,6 +6,8 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:blackforest_app/categories_page.dart';
+import 'package:blackforest_app/customer_history_dialog.dart';
+import 'package:blackforest_app/table_customer_details_visibility_service.dart';
 import 'package:blackforest_app/table.dart';
 import 'package:blackforest_app/app_http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,8 +20,6 @@ import 'package:qr/qr.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
-import 'package:blackforest_app/customer_history_dialog.dart';
-import 'package:blackforest_app/table_customer_details_visibility_service.dart';
 
 class CartPage extends StatefulWidget {
   const CartPage({super.key});
@@ -29,6 +29,12 @@ class CartPage extends StatefulWidget {
 }
 
 class _CartPageState extends State<CartPage> {
+  static const bool _enableCustomerLookup = true;
+  static final bool _useSplitCustomerLookup = true;
+  static const bool _fastBillingMode = false;
+  static const bool _ultraFastBillingMode = true;
+  static const bool _fastKotMode = true; // skip blocking table lookup for KOT
+  static const bool _verboseBillingLogs = false;
   String? _branchId;
   String? _branchName;
   String? _branchGst;
@@ -36,13 +42,109 @@ class _CartPageState extends State<CartPage> {
   String? _companyName;
   String? _companyId; // Added to store company ID for billing
   // String? _userRole; // Removed as unused according to lint
-  bool _addCustomerDetails = true; // Default to ON as requested
+  TableCustomerDetailsVisibilityConfig _customerDetailsVisibilityConfig =
+      TableCustomerDetailsVisibilityConfig.defaultValue;
+  bool _hasLoadedCustomerDetailsVisibilityConfig = false;
+  Future<void>? _customerDetailsVisibilityLoadFuture;
   String? _selectedPaymentMethod;
   bool _isBillingInProgress = false; // Prevent duplicate bill taps
+  String _billingProgressLabel = 'Processing...';
+  DateTime? _lastBillingTapAt;
+  static const Duration _billTapDebounce = Duration(milliseconds: 1200);
   List<dynamic>? _kotPrinters; // Store KOT printer configs
   Timer? _refreshTimer;
   final Map<String, String> _categoryToKitchenMap = {}; // ID mapping
   final TextEditingController _sharedTableController = TextEditingController();
+
+  Future<void> _submitBillingFromTap({
+    required String status,
+    bool isReminder = false,
+  }) async {
+    if (_isBillingInProgress) return;
+    final now = DateTime.now();
+    final lastTap = _lastBillingTapAt;
+    if (lastTap != null && now.difference(lastTap) < _billTapDebounce) {
+      return;
+    }
+    _lastBillingTapAt = now;
+    await _submitBilling(status: status, isReminder: isReminder);
+  }
+
+  String? _extractPrinterIp(dynamic rawConfig) {
+    if (rawConfig is! Map) return null;
+    final config = Map<String, dynamic>.from(rawConfig);
+    final nestedPrinter = config['printer'] is Map
+        ? Map<String, dynamic>.from(config['printer'])
+        : null;
+    final candidates = [
+      config['printerIp'],
+      config['ipAddress'],
+      config['ip'],
+      config['host'],
+      nestedPrinter?['printerIp'],
+      nestedPrinter?['ipAddress'],
+      nestedPrinter?['ip'],
+      nestedPrinter?['host'],
+    ];
+    for (final value in candidates) {
+      final ip = value?.toString().trim() ?? '';
+      if (ip.isNotEmpty) return ip;
+    }
+    return null;
+  }
+
+  int _extractPrinterPort(dynamic rawConfig, {int defaultPort = 9100}) {
+    if (rawConfig is! Map) return defaultPort;
+    final config = Map<String, dynamic>.from(rawConfig);
+    final nestedPrinter = config['printer'] is Map
+        ? Map<String, dynamic>.from(config['printer'])
+        : null;
+    final candidates = [
+      config['printerPort'],
+      config['port'],
+      nestedPrinter?['printerPort'],
+      nestedPrinter?['port'],
+    ];
+    for (final value in candidates) {
+      if (value is num) return value.toInt();
+      if (value is String) {
+        final parsed = int.tryParse(value.trim());
+        if (parsed != null) return parsed;
+      }
+    }
+    return defaultPort;
+  }
+
+  MapEntry<String, int>? _resolveFirstKotPrinterTarget() {
+    final configs = _kotPrinters;
+    if (configs == null || configs.isEmpty) return null;
+    for (final raw in configs) {
+      final ip = _extractPrinterIp(raw);
+      if (ip == null || ip.isEmpty) continue;
+      return MapEntry(ip, _extractPrinterPort(raw));
+    }
+    return null;
+  }
+
+  String _posPrintResultLabel(PosPrintResult result) {
+    return '${result.msg} (code: ${result.value})';
+  }
+
+  void _showPrintStatusSnack(
+    ScaffoldMessengerState messenger, {
+    required String message,
+    required bool isSuccess,
+  }) {
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isSuccess ? Colors.green : Colors.redAccent,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -151,7 +253,10 @@ class _CartPageState extends State<CartPage> {
 
             if (branchConfig != null) {
               globalPrinterIp = branchConfig['printerIp']?.toString().trim();
-              _kotPrinters = branchConfig['kotPrinters'] as List?;
+              final rawKotPrinters = branchConfig['kotPrinters'];
+              if (rawKotPrinters is List) {
+                _kotPrinters = List<dynamic>.from(rawKotPrinters);
+              }
 
               // Store Geo settings for future use
               final prefs = await SharedPreferences.getInstance();
@@ -213,6 +318,7 @@ class _CartPageState extends State<CartPage> {
           if (_companyId != null) {
             final prefs = await SharedPreferences.getInstance();
             await prefs.setString('companyId', _companyId!);
+            await prefs.setString('company_id', _companyId!);
           }
         }
 
@@ -223,17 +329,78 @@ class _CartPageState extends State<CartPage> {
             (globalPrinterIp != null && globalPrinterIp.isNotEmpty)
             ? globalPrinterIp
             : branch['printerIp'];
+        final rawBranchPrinterPort = branch['printerPort'];
+        int? branchPrinterPort;
+        if (rawBranchPrinterPort is num) {
+          branchPrinterPort = rawBranchPrinterPort.toInt();
+        } else if (rawBranchPrinterPort is String) {
+          branchPrinterPort = int.tryParse(rawBranchPrinterPort.trim());
+        }
+        final branchPrinterProtocol = branch['printerProtocol']?.toString();
 
         // Load kitchen mappings for KOT routing
         await _fetchKitchensForMapping();
 
         cartProvider.setPrinterDetails(
           printerIpToUse,
-          branch['printerPort'],
-          branch['printerProtocol'],
+          branchPrinterPort,
+          branchPrinterProtocol,
+        );
+
+        await _refreshCustomerDetailsVisibilityConfig(
+          token: token,
+          branchId: branchId,
         );
       }
     } catch (_) {}
+  }
+
+  Future<void> _refreshCustomerDetailsVisibilityConfig({
+    required String token,
+    required String branchId,
+  }) async {
+    final config =
+        await TableCustomerDetailsVisibilityService.getConfigForBranch(
+          branchId: branchId,
+          token: token,
+          forceRefresh: true,
+        );
+    if (!mounted) return;
+    setState(() {
+      _customerDetailsVisibilityConfig = config;
+      _hasLoadedCustomerDetailsVisibilityConfig = true;
+    });
+  }
+
+  Future<void> _ensureCustomerDetailsVisibilityConfigLoaded() async {
+    if (_hasLoadedCustomerDetailsVisibilityConfig) return;
+    final existing = _customerDetailsVisibilityLoadFuture;
+    if (existing != null) {
+      await existing;
+      return;
+    }
+
+    final future = () async {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token')?.trim();
+      final branchId =
+          (_branchId?.trim().isNotEmpty == true
+              ? _branchId?.trim()
+              : prefs.getString('branchId')?.trim()) ??
+          '';
+      if (token == null || token.isEmpty || branchId.isEmpty) {
+        return;
+      }
+      await _refreshCustomerDetailsVisibilityConfig(
+        token: token,
+        branchId: branchId,
+      );
+    }();
+
+    _customerDetailsVisibilityLoadFuture = future.whenComplete(() {
+      _customerDetailsVisibilityLoadFuture = null;
+    });
+    await _customerDetailsVisibilityLoadFuture;
   }
 
   Future<void> _fetchKitchensForMapping() async {
@@ -286,6 +453,525 @@ class _CartPageState extends State<CartPage> {
         _companyName = company['name'] ?? 'Unknown Company';
       }
     } catch (_) {}
+  }
+
+  int? _parseTableNumberToken(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return null;
+    final direct = int.tryParse(trimmed);
+    if (direct != null) return direct;
+    final withoutPrefix = trimmed.replaceFirst(
+      RegExp(r'^table[\s\-_:]*', caseSensitive: false),
+      '',
+    );
+    return int.tryParse(withoutPrefix);
+  }
+
+  Future<String?> _resolveLiveSectionForTableNumber({
+    required int tableNumber,
+    required String branchId,
+    required String token,
+    String? preferredSection,
+  }) async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+          'https://blackforest.vseyal.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
+        ),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode != 200) return null;
+
+      final decoded = jsonDecode(response.body);
+      final docs = (decoded is Map && decoded['docs'] is List)
+          ? List<dynamic>.from(decoded['docs'])
+          : const <dynamic>[];
+      if (docs.isEmpty || docs.first is! Map) return null;
+      final root = Map<String, dynamic>.from(docs.first as Map);
+      final sections = root['sections'] is List
+          ? List<dynamic>.from(root['sections'])
+          : const <dynamic>[];
+      if (sections.isEmpty) return null;
+
+      bool sectionHasTable(Map<String, dynamic> section) {
+        final count =
+            int.tryParse(section['tableCount']?.toString() ?? '0') ?? 0;
+        return tableNumber > 0 && tableNumber <= count;
+      }
+
+      if (preferredSection != null && preferredSection.trim().isNotEmpty) {
+        final preferredNormalized = preferredSection.trim().toLowerCase();
+        for (final raw in sections) {
+          if (raw is! Map) continue;
+          final section = Map<String, dynamic>.from(raw);
+          final name = section['name']?.toString().trim() ?? '';
+          if (name.toLowerCase() == preferredNormalized &&
+              sectionHasTable(section)) {
+            return name;
+          }
+        }
+      }
+
+      for (final raw in sections) {
+        if (raw is! Map) continue;
+        final section = Map<String, dynamic>.from(raw);
+        if (!sectionHasTable(section)) continue;
+        final name = section['name']?.toString().trim() ?? '';
+        if (name.isNotEmpty) return name;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<bool> _isLiveTableOccupied({
+    required String tableNumber,
+    required String sectionName,
+    required String branchId,
+    required String token,
+  }) async {
+    try {
+      final lookupNow = DateTime.now();
+      final lookupDayStart = DateTime(
+        lookupNow.year,
+        lookupNow.month,
+        lookupNow.day,
+      );
+      final todayStartForLookup = lookupDayStart.toUtc().toIso8601String();
+
+      final lookupParams = <String, String>{
+        'where[status][in]': 'pending,ordered,confirmed,prepared,delivered',
+        'where[tableDetails.tableNumber][equals]': tableNumber,
+        'where[tableDetails.section][equals]': sectionName,
+        'where[createdAt][greater_than_equal]': todayStartForLookup,
+        'where[branch][equals]': branchId,
+        'limit': '1',
+        'depth': '0',
+      };
+
+      final response = await http.get(
+        Uri.https('blackforest.vseyal.com', '/api/billings', lookupParams),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode != 200) return false;
+
+      final decoded = jsonDecode(response.body);
+      final docs = (decoded is Map && decoded['docs'] is List)
+          ? List<dynamic>.from(decoded['docs'])
+          : const <dynamic>[];
+      return docs.isNotEmpty;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<Map<String, dynamic>> _resolveSharedInputTarget({
+    required String tableNumberInput,
+    required String branchId,
+    required String token,
+    String? preferredSection,
+  }) async {
+    final parsedTable = _parseTableNumberToken(tableNumberInput);
+    final tableNumber = tableNumberInput.trim();
+    if (parsedTable == null || tableNumber.isEmpty) {
+      return <String, dynamic>{
+        'tableNumber': tableNumber,
+        'section': CartProvider.sharedTablesSectionName,
+        'useShared': true,
+      };
+    }
+
+    final liveSection = await _resolveLiveSectionForTableNumber(
+      tableNumber: parsedTable,
+      branchId: branchId,
+      token: token,
+      preferredSection: preferredSection,
+    );
+    if (liveSection == null || liveSection.isEmpty) {
+      return <String, dynamic>{
+        'tableNumber': tableNumber,
+        'section': CartProvider.sharedTablesSectionName,
+        'useShared': true,
+      };
+    }
+
+    final occupied = await _isLiveTableOccupied(
+      tableNumber: tableNumber,
+      sectionName: liveSection,
+      branchId: branchId,
+      token: token,
+    );
+    if (occupied) {
+      return <String, dynamic>{
+        'tableNumber': tableNumber,
+        'section': CartProvider.sharedTablesSectionName,
+        'useShared': true,
+      };
+    }
+
+    return <String, dynamic>{
+      'tableNumber': tableNumber,
+      'section': liveSection,
+      'useShared': false,
+    };
+  }
+
+  Future<void> _syncCustomerDetailsForFastMode({
+    required String token,
+    required String billId,
+    required String customerName,
+    required String customerPhone,
+    bool applyCustomerOffer = false,
+  }) async {
+    final trimmedBillId = billId.trim();
+    if (trimmedBillId.isEmpty) return;
+    final trimmedName = customerName.trim();
+    final trimmedPhone = customerPhone.trim();
+    if (trimmedName.isEmpty && trimmedPhone.isEmpty) return;
+
+    final url = Uri.parse(
+      'https://blackforest.vseyal.com/api/billings/$trimmedBillId?depth=0',
+    );
+    final payload = <String, dynamic>{
+      'customerDetails': {
+        'name': trimmedName,
+        'phoneNumber': trimmedPhone,
+        'address': '',
+      },
+      'applyCustomerOffer': applyCustomerOffer,
+    };
+
+    try {
+      final response = await http
+          .patch(
+            url,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 20));
+      if (response.statusCode == 200) {
+        debugPrint(
+          '📦 FAST MODE: customer details synced for bill $trimmedBillId',
+        );
+      } else {
+        debugPrint(
+          '📦 FAST MODE: customer details sync failed (${response.statusCode}) for bill $trimmedBillId',
+        );
+      }
+    } catch (error) {
+      debugPrint(
+        '📦 FAST MODE: customer details sync error for bill $trimmedBillId: $error',
+      );
+    }
+  }
+
+  Future<void> _finalizeHybridOfferAndPrint({
+    required String token,
+    required String billId,
+    required String customerName,
+    required String customerPhone,
+    required bool applyCustomerOffer,
+    required bool expectOfferSync,
+    required List<CartItem> items,
+    required Map<String, dynamic> customerDetails,
+    required String paymentMethod,
+    required Map<String, dynamic> initialBillingResponse,
+    required double initialTotalAmount,
+    required double initialGrossAmount,
+    required ScaffoldMessengerState messenger,
+    String? printerIp,
+    int printerPort = 9100,
+    String printerProtocol = 'esc_pos',
+  }) async {
+    final trimmedBillId = billId.trim();
+    if (trimmedBillId.isEmpty) return;
+
+    double readMoney(dynamic value) {
+      if (value is num) {
+        final parsed = value.toDouble();
+        return parsed < 0 ? 0 : parsed;
+      }
+      if (value is String) {
+        final parsed = double.tryParse(value);
+        if (parsed == null) return 0.0;
+        return parsed < 0 ? 0 : parsed;
+      }
+      return 0.0;
+    }
+
+    Map<String, dynamic> normalizeDoc(dynamic raw) {
+      if (raw is Map) {
+        final map = Map<String, dynamic>.from(raw);
+        final doc = map['doc'];
+        if (doc is Map) return Map<String, dynamic>.from(doc);
+        return map;
+      }
+      return <String, dynamic>{};
+    }
+
+    Map<String, dynamic> finalDoc = Map<String, dynamic>.from(
+      initialBillingResponse,
+    );
+    double finalTotal = initialTotalAmount;
+    double finalGross = initialGrossAmount;
+    bool customerOfferApplied = finalDoc['customerOfferApplied'] == true;
+    bool totalPercentageOfferApplied =
+        finalDoc['totalPercentageOfferApplied'] == true;
+    bool customerEntryPercentageOfferApplied =
+        finalDoc['customerEntryPercentageOfferApplied'] == true;
+    double customerOfferDiscount = readMoney(finalDoc['customerOfferDiscount']);
+    double totalPercentageOfferDiscount = readMoney(
+      finalDoc['totalPercentageOfferDiscount'],
+    );
+    double customerEntryPercentageOfferDiscount = readMoney(
+      finalDoc['customerEntryPercentageOfferDiscount'],
+    );
+
+    void applyBillDoc(Map<String, dynamic> doc) {
+      finalDoc = doc;
+      finalTotal = readMoney(doc['totalAmount']);
+      finalGross = readMoney(doc['grossAmount']);
+      customerOfferApplied = doc['customerOfferApplied'] == true;
+      totalPercentageOfferApplied = doc['totalPercentageOfferApplied'] == true;
+      customerEntryPercentageOfferApplied =
+          doc['customerEntryPercentageOfferApplied'] == true;
+      customerOfferDiscount = readMoney(doc['customerOfferDiscount']);
+      totalPercentageOfferDiscount = readMoney(
+        doc['totalPercentageOfferDiscount'],
+      );
+      customerEntryPercentageOfferDiscount = readMoney(
+        doc['customerEntryPercentageOfferDiscount'],
+      );
+    }
+
+    bool hasVisibleOffer() {
+      final totalDiscount = (finalGross - finalTotal).clamp(
+        0.0,
+        double.infinity,
+      );
+      return customerOfferApplied ||
+          totalPercentageOfferApplied ||
+          customerEntryPercentageOfferApplied ||
+          customerOfferDiscount > 0.0001 ||
+          totalPercentageOfferDiscount > 0.0001 ||
+          customerEntryPercentageOfferDiscount > 0.0001 ||
+          totalDiscount > 0.0001;
+    }
+
+    final patchUrl = Uri.parse(
+      'https://blackforest.vseyal.com/api/billings/$trimmedBillId?depth=0',
+    );
+    final patchPayload = <String, dynamic>{
+      'customerDetails': {
+        'name': customerName.trim(),
+        'phoneNumber': customerPhone.trim(),
+        'address': '',
+      },
+      'applyCustomerOffer': applyCustomerOffer,
+    };
+
+    Future<Map<String, dynamic>?> fetchLatestBillDoc({
+      Duration timeout = const Duration(milliseconds: 1500),
+    }) async {
+      try {
+        final response = await http
+            .get(
+              Uri.parse(
+                'https://blackforest.vseyal.com/api/billings/$trimmedBillId?depth=0',
+              ),
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+            )
+            .timeout(timeout);
+        if (response.statusCode != 200) {
+          debugPrint(
+            '⚡ Hybrid finalize fetch failed (${response.statusCode}) for bill $trimmedBillId',
+          );
+          return null;
+        }
+        final raw = jsonDecode(response.body);
+        final doc = normalizeDoc(raw);
+        if (doc.isEmpty) return null;
+        return doc;
+      } catch (error) {
+        debugPrint(
+          '⚡ Hybrid finalize fetch error for bill $trimmedBillId: $error',
+        );
+        return null;
+      }
+    }
+
+    final patchResultFuture = () async {
+      try {
+        final patchResponse = await http
+            .patch(
+              patchUrl,
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer $token',
+              },
+              body: jsonEncode(patchPayload),
+              timeout: const Duration(seconds: 15),
+            )
+            .timeout(const Duration(seconds: 15));
+        if (patchResponse.statusCode != 200) {
+          debugPrint(
+            '⚡ Hybrid finalize PATCH failed (${patchResponse.statusCode}) for bill $trimmedBillId',
+          );
+          return null;
+        }
+        final patchRaw = jsonDecode(patchResponse.body);
+        final patchDoc = normalizeDoc(patchRaw);
+        if (patchDoc.isNotEmpty) {
+          debugPrint(
+            '⚡ Hybrid finalize PATCH done: gross=${readMoney(patchDoc["grossAmount"])} | total=${readMoney(patchDoc["totalAmount"])}',
+          );
+        }
+        return patchDoc.isEmpty ? null : patchDoc;
+      } catch (error) {
+        debugPrint(
+          '⚡ Hybrid finalize PATCH error for bill $trimmedBillId: $error',
+        );
+        return null;
+      }
+    }();
+    Map<String, dynamic>? completedPatchDoc;
+    bool patchFutureSettled = false;
+    final patchCompletionSignal = patchResultFuture.then<void>((patchDoc) {
+      patchFutureSettled = true;
+      if (patchDoc != null) {
+        completedPatchDoc = patchDoc;
+      }
+    });
+
+    final normalizedPhone = customerPhone.replaceAll(RegExp(r'\D'), '');
+    final shouldWaitForOfferSync = expectOfferSync;
+    final settleDelay = shouldWaitForOfferSync && normalizedPhone.length >= 10
+        ? const Duration(milliseconds: 1800)
+        : const Duration(milliseconds: 400);
+    await Future<void>.delayed(settleDelay);
+
+    void tryConsumePatchResult() {
+      final patchDoc = completedPatchDoc;
+      if (patchDoc == null) return;
+      completedPatchDoc = null;
+      applyBillDoc(patchDoc);
+    }
+
+    tryConsumePatchResult();
+
+    final fetchWaits = shouldWaitForOfferSync && normalizedPhone.length >= 10
+        ? <Duration>[
+            Duration.zero,
+            const Duration(milliseconds: 1200),
+            const Duration(milliseconds: 1600),
+            const Duration(milliseconds: 2200),
+            const Duration(milliseconds: 2800),
+            const Duration(milliseconds: 3200),
+          ]
+        : <Duration>[Duration.zero];
+
+    for (var i = 0; i < fetchWaits.length; i++) {
+      if (i > 0) {
+        if (patchFutureSettled) {
+          await Future<void>.delayed(fetchWaits[i]);
+        } else {
+          await Future.any<void>([
+            patchCompletionSignal,
+            Future<void>.delayed(fetchWaits[i]),
+          ]);
+        }
+      }
+      tryConsumePatchResult();
+      if (!shouldWaitForOfferSync || hasVisibleOffer()) {
+        break;
+      }
+      final fetchedDoc = await fetchLatestBillDoc();
+      if (fetchedDoc != null) {
+        applyBillDoc(fetchedDoc);
+        debugPrint(
+          '⚡ Hybrid finalize fetch #${i + 1}: gross=$finalGross | total=$finalTotal',
+        );
+      }
+      if (!shouldWaitForOfferSync || hasVisibleOffer()) {
+        break;
+      }
+    }
+
+    if (!shouldWaitForOfferSync) {
+      debugPrint('⚡ Hybrid finalize: skipping offer wait (offer not expected)');
+    } else if (!hasVisibleOffer()) {
+      debugPrint(
+        '⚠️ Hybrid finalize: offer still not visible after fetch window for bill $trimmedBillId',
+      );
+    }
+
+    final offerStillSyncing = shouldWaitForOfferSync && !hasVisibleOffer();
+    final totalSavedAmount = (finalGross - finalTotal)
+        .clamp(0.0, double.infinity)
+        .toDouble();
+    final summaryMessage = offerStillSyncing
+        ? 'Billing submitted. Offer syncing...'
+        : totalSavedAmount > 0.0001
+        ? 'Billing submitted. Payable: ₹${finalTotal.toStringAsFixed(2)} (Saved ₹${totalSavedAmount.toStringAsFixed(2)})'
+        : 'Billing submitted. Payable: ₹${finalTotal.toStringAsFixed(2)}';
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(SnackBar(content: Text(summaryMessage)));
+
+    final resolvedPrinterIp = (printerIp ?? '').trim();
+    if (resolvedPrinterIp.isEmpty) {
+      debugPrint(
+        '⚡ Hybrid finalize: bill updated without receipt print (no printer configured).',
+      );
+      return;
+    }
+
+    if (offerStillSyncing) {
+      debugPrint(
+        '⚠️ Hybrid finalize: delaying receipt print because final offer total is not ready for bill $trimmedBillId',
+      );
+      _showPrintStatusSnack(
+        messenger,
+        message: 'Bill saved. Offer still syncing before receipt print.',
+        isSuccess: false,
+      );
+      return;
+    }
+
+    await _printReceipt(
+      items: items,
+      totalAmount: finalTotal,
+      grossAmount: finalGross,
+      printerIp: resolvedPrinterIp,
+      printerPort: printerPort,
+      printerProtocol: printerProtocol,
+      billingResponse: finalDoc,
+      customerDetails: customerDetails,
+      paymentMethod: paymentMethod,
+      messenger: messenger,
+    );
+  }
+
+  Future<void> _ensureBillingIdentifiers({
+    required CartProvider cartProvider,
+    required SharedPreferences prefs,
+  }) async {
+    _branchId ??= cartProvider.branchId ?? prefs.getString('branchId');
+    _companyId ??=
+        prefs.getString('companyId') ?? prefs.getString('company_id');
+
+    if (_branchId != null) {
+      await prefs.setString('branchId', _branchId!);
+      cartProvider.setBranchId(_branchId);
+    }
+    if (_companyId != null) {
+      await prefs.setString('companyId', _companyId!);
+      await prefs.setString('company_id', _companyId!);
+    }
   }
 
   Future<String?> _fetchDeviceIp() async {
@@ -494,10 +1180,19 @@ class _CartPageState extends State<CartPage> {
   }) async {
     if (_isBillingInProgress) return; // lock
     FocusManager.instance.primaryFocus?.unfocus();
-    setState(() => _isBillingInProgress = true);
+    _billingProgressLabel = status == 'pending'
+        ? 'Sending KOT...'
+        : 'Submitting bill...';
+    _isBillingInProgress = true;
+    if (mounted) {
+      setState(() {});
+    }
 
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
     final stopwatch = Stopwatch()..start();
+    int userInputMs = 0;
+    int? billApiStartMs;
+    int? billApiDurationMs;
     debugPrint('⏱️ [START] _submitBilling (${status.toUpperCase()})');
     if (cartProvider.cartItems.isEmpty && cartProvider.recalledItems.isEmpty) {
       if (!mounted) return;
@@ -526,67 +1221,71 @@ class _CartPageState extends State<CartPage> {
       return;
     }
 
-    Map<String, dynamic>? customerDetails;
-    final hasTableForCustomerFlow =
-        cartProvider.selectedTable?.trim().isNotEmpty == true;
-    final hasSectionForCustomerFlow =
-        cartProvider.selectedSection?.trim().isNotEmpty == true;
-    final isTableOrderForCustomerFlow =
-        cartProvider.currentType == CartType.table &&
-        (hasTableForCustomerFlow ||
-            hasSectionForCustomerFlow ||
-            cartProvider.isSharedTableOrder);
-    bool showCustomerDetailsForTableOrders = true;
-    bool allowSkipCustomerDetailsForTableOrders = true;
-    bool showCustomerDetailsForBillingOrders = true;
-    bool allowSkipCustomerDetailsForBillingOrders = true;
-    if (status != 'pending') {
-      final customerDetailsVisibilityConfig =
-          await TableCustomerDetailsVisibilityService.getConfigForBranch(
-            branchId: _branchId,
-          );
-      showCustomerDetailsForTableOrders =
-          customerDetailsVisibilityConfig.showCustomerDetailsForTableOrders;
-      allowSkipCustomerDetailsForTableOrders = customerDetailsVisibilityConfig
-          .allowSkipCustomerDetailsForTableOrders;
-      showCustomerDetailsForBillingOrders =
-          customerDetailsVisibilityConfig.showCustomerDetailsForBillingOrders;
-      allowSkipCustomerDetailsForBillingOrders = customerDetailsVisibilityConfig
-          .allowSkipCustomerDetailsForBillingOrders;
-      if (!mounted) return;
-    }
+    await _ensureCustomerDetailsVisibilityConfigLoaded();
 
-    final showCustomerDetailsForActiveFlow = isTableOrderForCustomerFlow
-        ? showCustomerDetailsForTableOrders
-        : showCustomerDetailsForBillingOrders;
-    final allowSkipForActiveFlow = isTableOrderForCustomerFlow
-        ? allowSkipCustomerDetailsForTableOrders
-        : allowSkipCustomerDetailsForBillingOrders;
-
+    final existingCustomerName = (cartProvider.customerName ?? '').trim();
+    final existingCustomerPhone = (cartProvider.customerPhone ?? '').trim();
+    final isTableOrderFlow = cartProvider.currentType == CartType.table;
+    final isPendingOrderAction = status == 'pending' && isTableOrderFlow;
+    final showCustomerDetailsByCms = isTableOrderFlow
+        ? _customerDetailsVisibilityConfig.showCustomerDetailsForTableOrders
+        : _customerDetailsVisibilityConfig.showCustomerDetailsForBillingOrders;
+    final allowSkipCustomerDetailsByCms = isTableOrderFlow
+        ? _customerDetailsVisibilityConfig
+              .allowSkipCustomerDetailsForTableOrders
+        : _customerDetailsVisibilityConfig
+              .allowSkipCustomerDetailsForBillingOrders;
+    final showCustomerHistoryByCms = isTableOrderFlow
+        ? _customerDetailsVisibilityConfig.showCustomerHistoryForTableOrders
+        : _customerDetailsVisibilityConfig.showCustomerHistoryForBillingOrders;
+    final autoSubmitCustomerDetailsByCms = isTableOrderFlow
+        ? _customerDetailsVisibilityConfig
+              .autoSubmitCustomerDetailsForTableOrders
+        : _customerDetailsVisibilityConfig
+              .autoSubmitCustomerDetailsForBillingOrders;
+    final hasExistingCustomerDetails =
+        existingCustomerName.isNotEmpty || existingCustomerPhone.isNotEmpty;
+    final skipDialogForExistingCustomer = hasExistingCustomerDetails;
     final shouldShowCustomerDetailsDialog =
-        _addCustomerDetails &&
-        status != 'pending' &&
-        showCustomerDetailsForActiveFlow;
+        showCustomerDetailsByCms &&
+        (status != 'pending' || isPendingOrderAction) &&
+        !skipDialogForExistingCustomer;
+    final skipActionLabel = isPendingOrderAction
+        ? 'Skip & Order'
+        : 'Skip & Bill';
+    final submitActionLabel = isPendingOrderAction
+        ? 'Submit & Order'
+        : 'Submit & Bill';
+    debugPrint(
+      '🧩 Customer popup config: flow=${isTableOrderFlow ? 'table' : 'billing'} currentType=${cartProvider.currentType.name} table=${cartProvider.selectedTable ?? '-'} section=${cartProvider.selectedSection ?? '-'} show=$showCustomerDetailsByCms skip=$allowSkipCustomerDetailsByCms history=$showCustomerHistoryByCms autoSubmit=$autoSubmitCustomerDetailsByCms hasCustomer=$hasExistingCustomerDetails skipDialogForExistingCustomer=$skipDialogForExistingCustomer',
+    );
+
+    Map<String, dynamic>? customerDetails;
 
     if (shouldShowCustomerDetailsDialog) {
+      final nameCtrl = TextEditingController(
+        text: cartProvider.customerName ?? '',
+      );
+      final phoneCtrl = TextEditingController(
+        text: cartProvider.customerPhone ?? '',
+      );
+      Timer? quickLookupDebounceTimer;
+      Map<String, dynamic>? customerLookupData;
+      bool isLookupInProgress = false;
+      String? lookupError;
+      bool applyCustomerOffer = false;
+      bool isDialogSubmitting = false;
+      bool didAutoLookup = false;
+      bool isDialogActive = true;
+      bool didCloseDialog = false;
+      int lookupSequence = 0;
+      final enableCustomerLookup = _enableCustomerLookup;
+      int offerPageIndex = 0;
+
       customerDetails = await showDialog<Map<String, dynamic>>(
         context: context,
         barrierDismissible: false,
         builder: (context) {
-          final nameCtrl = TextEditingController(
-            text: cartProvider.customerName ?? '',
-          );
-          final phoneCtrl = TextEditingController(
-            text: cartProvider.customerPhone ?? '',
-          );
-          Timer? debounceTimer;
-          Map<String, dynamic>? customerLookupData;
-          bool isLookupInProgress = false;
-          String? lookupError;
-          bool applyCustomerOffer = false;
-          bool didAutoLookup = false;
-          int offerPageIndex = 0;
-
           double readMoney(dynamic value) {
             if (value is num) {
               final parsed = value.toDouble();
@@ -707,10 +1406,150 @@ class _CartPageState extends State<CartPage> {
           Future<void> lookupCustomer(
             String rawPhone,
             void Function(void Function()) setDialogState,
+            int requestId,
           ) async {
-            final phone = rawPhone.trim();
-            final lookupPhone = phone.length >= 10 ? phone : '';
+            String normalizePhone(String value) =>
+                value.replaceAll(RegExp(r'\D'), '');
+            final phone = normalizePhone(rawPhone);
+            if (phone.length < 10) {
+              if (!isDialogActive) return;
+              setDialogState(() {
+                customerLookupData = null;
+                isLookupInProgress = false;
+                lookupError = null;
+                applyCustomerOffer = false;
+              });
+              return;
+            }
 
+            Map<String, dynamic> buildAutoSubmitPayload(
+              Map<String, dynamic>? lookupData,
+            ) {
+              final customerName = nameCtrl.text.trim();
+              final customerPhone = phoneCtrl.text.trim();
+              final hasProductOfferMatch = readProductOfferMatches(
+                lookupData,
+              ).any((match) => match['eligible'] == true);
+              final hasProductPriceOfferMatch = readProductPriceOfferMatches(
+                lookupData,
+              ).any((match) => match['eligible'] == true);
+              final randomOfferData = readRandomCustomerOfferData(lookupData);
+              final hasRandomOfferMatch =
+                  randomOfferData?['enabled'] == true &&
+                  randomOfferData?['isEligible'] == true;
+              final hasTotalPercentageOfferEnabled =
+                  readTotalPercentageOfferData(lookupData)?['enabled'] == true;
+
+              final offerData = readOfferData(lookupData);
+              final hasEligibleItemLevelOffer =
+                  hasProductOfferMatch ||
+                  hasProductPriceOfferMatch ||
+                  hasRandomOfferMatch;
+              final canApplyCustomerOffer =
+                  customerPhone.isNotEmpty &&
+                  offerData?['enabled'] == true &&
+                  (offerData?['isOfferEligible'] == true ||
+                      offerData?['historyBasedEligible'] == true) &&
+                  !hasEligibleItemLevelOffer;
+              final autoApplyCustomerOffer =
+                  canApplyCustomerOffer && applyCustomerOffer;
+
+              return <String, dynamic>{
+                'name': customerName,
+                'phone': customerPhone,
+                'applyCustomerOffer': autoApplyCustomerOffer,
+                'hasProductOfferMatch': hasProductOfferMatch,
+                'hasProductPriceOfferMatch': hasProductPriceOfferMatch,
+                'hasTotalPercentageOfferEnabled':
+                    hasTotalPercentageOfferEnabled,
+                'hasCustomerEntryPercentageOfferEnabled':
+                    readCustomerEntryPercentageOfferData(
+                      lookupData,
+                    )?['enabled'] ==
+                    true,
+                'hasRandomOfferMatch': hasRandomOfferMatch,
+              };
+            }
+
+            bool hasOfferPreviewPayload(Map<String, dynamic>? lookupData) {
+              if (lookupData == null) return false;
+              return lookupData['offer'] is Map ||
+                  lookupData['productOfferPreview'] is Map ||
+                  lookupData['productPriceOfferPreview'] is Map ||
+                  lookupData['totalPercentageOfferPreview'] is Map ||
+                  lookupData['customerEntryPercentageOfferPreview'] is Map ||
+                  lookupData['randomCustomerOfferPreview'] is Map;
+            }
+
+            Map<String, dynamic> mergeOfferPreviewData({
+              required Map<String, dynamic>? baseData,
+              required Map<String, dynamic>? offerData,
+            }) {
+              final merged = Map<String, dynamic>.from(baseData ?? const {});
+              if (offerData == null) return merged;
+              const previewKeys = <String>[
+                'offer',
+                'productOfferPreview',
+                'productPriceOfferPreview',
+                'totalPercentageOfferPreview',
+                'customerEntryPercentageOfferPreview',
+                'randomCustomerOfferPreview',
+              ];
+              for (final key in previewKeys) {
+                final value = offerData[key];
+                if (value != null) {
+                  merged[key] = value;
+                }
+              }
+              final mergedName = merged['name']?.toString().trim() ?? '';
+              final offerName = offerData['name']?.toString().trim() ?? '';
+              if (mergedName.isEmpty && offerName.isNotEmpty) {
+                merged['name'] = offerName;
+              }
+              final mergedPhone =
+                  merged['phoneNumber']?.toString().trim() ?? '';
+              final offerPhone =
+                  offerData['phoneNumber']?.toString().trim() ?? '';
+              if (mergedPhone.isEmpty && offerPhone.isNotEmpty) {
+                merged['phoneNumber'] = offerPhone;
+              }
+              return merged;
+            }
+
+            void autoSubmitIfReady(Map<String, dynamic>? lookupData) {
+              if (!autoSubmitCustomerDetailsByCms) return;
+              if (status != 'completed') return;
+              if (!isDialogActive || isDialogSubmitting || didCloseDialog) {
+                return;
+              }
+              final normalizedPhone = normalizePhone(phoneCtrl.text);
+              final lookupName = lookupData?['name']?.toString().trim() ?? '';
+              final customerName = nameCtrl.text.trim();
+              if (normalizedPhone.length < 10 ||
+                  lookupName.isEmpty ||
+                  customerName.isEmpty) {
+                return;
+              }
+
+              final payload = buildAutoSubmitPayload(lookupData);
+              didCloseDialog = true;
+              setDialogState(() {
+                isDialogSubmitting = true;
+              });
+              isDialogActive = false;
+              lookupSequence += 1;
+              quickLookupDebounceTimer?.cancel();
+
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                final nav = Navigator.of(context);
+                if (nav.canPop()) {
+                  nav.pop(payload);
+                }
+              });
+            }
+
+            if (!isDialogActive) return;
             setDialogState(() {
               lookupError = null;
               isLookupInProgress = true;
@@ -723,17 +1562,203 @@ class _CartPageState extends State<CartPage> {
               final lookupIsTableOrder =
                   cartProvider.currentType == CartType.table &&
                   (activeTableNumber.isNotEmpty || activeSection.isNotEmpty);
-              final data = await cartProvider.fetchCustomerData(
-                lookupPhone,
-                isTableOrder: lookupIsTableOrder,
-                tableSection: activeSection,
-                tableNumber: activeTableNumber,
-              );
-              final latestPhone = phoneCtrl.text.trim();
-              final isSameLongPhone = latestPhone == phone;
-              final bothShortPhone =
-                  latestPhone.length < 10 && phone.length < 10;
-              if (!isSameLongPhone && !bothShortPhone) return;
+              final lookupFlowLabel = lookupIsTableOrder ? 'table' : 'billing';
+              final useSplitLookup =
+                  enableCustomerLookup && _useSplitCustomerLookup;
+              Map<String, dynamic>? data;
+              if (enableCustomerLookup && !useSplitLookup) {
+                final combinedLookupStopwatch = Stopwatch()..start();
+                data = await cartProvider.fetchCustomerData(
+                  phone,
+                  isTableOrder: lookupIsTableOrder,
+                  tableSection: activeSection,
+                  tableNumber: activeTableNumber,
+                );
+                combinedLookupStopwatch.stop();
+                debugPrint(
+                  '⏱️ [Customer Lookup][$lookupFlowLabel] combined lookup: '
+                  '${combinedLookupStopwatch.elapsedMilliseconds}ms (phone=$phone)',
+                );
+              } else {
+                // Fast mode: resolve customer name first with lightweight lookup.
+                final nameLookupStopwatch = Stopwatch()..start();
+                final quickData = await cartProvider.fetchCustomerLookupPreview(
+                  phone,
+                  limit: 1,
+                  useHeavyFallback: false,
+                  includeGlobalLookup: false,
+                );
+                nameLookupStopwatch.stop();
+                debugPrint(
+                  '⏱️ [Customer Lookup][$lookupFlowLabel] name lookup: '
+                  '${nameLookupStopwatch.elapsedMilliseconds}ms (phone=$phone)',
+                );
+                final latestPhoneForQuick = normalizePhone(phoneCtrl.text);
+                if (!isDialogActive ||
+                    latestPhoneForQuick != phone ||
+                    requestId != lookupSequence) {
+                  return;
+                }
+
+                final quickName = quickData?['name']?.toString().trim() ?? '';
+                if (quickName.isNotEmpty && nameCtrl.text.trim().isEmpty) {
+                  nameCtrl.text = quickName;
+                }
+
+                final offerData = readOfferData(quickData);
+                final eligible =
+                    enableCustomerLookup &&
+                    offerData?['enabled'] == true &&
+                    (offerData?['isOfferEligible'] == true ||
+                        offerData?['historyBasedEligible'] == true);
+                setDialogState(() {
+                  customerLookupData = quickData;
+                  isLookupInProgress = false;
+                  lookupError = null;
+                  applyCustomerOffer = eligible;
+                });
+                autoSubmitIfReady(quickData);
+
+                if (!lookupIsTableOrder && !hasOfferPreviewPayload(quickData)) {
+                  unawaited(() async {
+                    final offerPreviewStopwatch = Stopwatch()..start();
+                    try {
+                      final offerPreviewData = await cartProvider
+                          .fetchCustomerData(
+                            phone,
+                            isTableOrder: lookupIsTableOrder,
+                            tableSection: activeSection,
+                            tableNumber: activeTableNumber,
+                            includeBillHistory: false,
+                          );
+                      offerPreviewStopwatch.stop();
+                      debugPrint(
+                        '⏱️ [Customer Lookup][$lookupFlowLabel] offer preview backfill: '
+                        '${offerPreviewStopwatch.elapsedMilliseconds}ms (phone=$phone)',
+                      );
+                      final latestPhoneForOffer = normalizePhone(
+                        phoneCtrl.text,
+                      );
+                      if (!isDialogActive ||
+                          latestPhoneForOffer != phone ||
+                          requestId != lookupSequence) {
+                        return;
+                      }
+                      final mergedPreviewData = mergeOfferPreviewData(
+                        baseData: customerLookupData,
+                        offerData: offerPreviewData,
+                      );
+                      final mergedOfferData = readOfferData(mergedPreviewData);
+                      final mergedEligible =
+                          enableCustomerLookup &&
+                          mergedOfferData?['enabled'] == true &&
+                          (mergedOfferData?['isOfferEligible'] == true ||
+                              mergedOfferData?['historyBasedEligible'] == true);
+                      setDialogState(() {
+                        customerLookupData = mergedPreviewData;
+                        applyCustomerOffer = mergedEligible;
+                        lookupError = null;
+                      });
+                      autoSubmitIfReady(mergedPreviewData);
+                    } catch (e) {
+                      offerPreviewStopwatch.stop();
+                      debugPrint(
+                        '⚠️ [Customer Lookup][$lookupFlowLabel] offer preview backfill failed '
+                        'after ${offerPreviewStopwatch.elapsedMilliseconds}ms '
+                        '(phone=$phone): $e',
+                      );
+                    }
+                  }());
+                }
+
+                final quickBills =
+                    (quickData?['totalBills'] as num?)?.toInt() ?? 0;
+                final quickAmount = readMoney(quickData?['totalAmount']);
+                if (quickBills <= 0 && quickAmount <= 0) {
+                  unawaited(() async {
+                    final summaryLookupStopwatch = Stopwatch()..start();
+                    try {
+                      final summaryData = await cartProvider
+                          .fetchCustomerLookupPreview(
+                            phone,
+                            limit: 1,
+                            useHeavyFallback: true,
+                            includeGlobalLookup: true,
+                          );
+                      summaryLookupStopwatch.stop();
+                      debugPrint(
+                        '⏱️ [Customer Lookup][$lookupFlowLabel] history summary backfill: '
+                        '${summaryLookupStopwatch.elapsedMilliseconds}ms (phone=$phone)',
+                      );
+                      if (summaryData == null) return;
+
+                      final latestPhoneForSummary = normalizePhone(
+                        phoneCtrl.text,
+                      );
+                      if (!isDialogActive ||
+                          latestPhoneForSummary != phone ||
+                          requestId != lookupSequence) {
+                        return;
+                      }
+
+                      final existing = customerLookupData;
+                      final existingBills =
+                          (existing?['totalBills'] as num?)?.toInt() ?? 0;
+                      final existingAmount = readMoney(
+                        existing?['totalAmount'],
+                      );
+                      final summaryBills =
+                          (summaryData['totalBills'] as num?)?.toInt() ?? 0;
+                      final summaryAmount = readMoney(
+                        summaryData['totalAmount'],
+                      );
+                      final existingName =
+                          existing?['name']?.toString().trim() ?? '';
+                      final summaryName =
+                          summaryData['name']?.toString().trim() ?? '';
+
+                      final shouldUseSummary =
+                          summaryBills > existingBills ||
+                          summaryAmount > existingAmount ||
+                          (existingName.isEmpty && summaryName.isNotEmpty);
+                      if (!shouldUseSummary) return;
+
+                      final mergedSummaryData = mergeOfferPreviewData(
+                        baseData: summaryData,
+                        offerData: existing,
+                      );
+                      final summaryOfferData = readOfferData(mergedSummaryData);
+                      final summaryEligible =
+                          enableCustomerLookup &&
+                          summaryOfferData?['enabled'] == true &&
+                          (summaryOfferData?['isOfferEligible'] == true ||
+                              summaryOfferData?['historyBasedEligible'] ==
+                                  true);
+
+                      setDialogState(() {
+                        customerLookupData = mergedSummaryData;
+                        applyCustomerOffer = summaryEligible;
+                        lookupError = null;
+                      });
+                      autoSubmitIfReady(mergedSummaryData);
+                    } catch (e) {
+                      summaryLookupStopwatch.stop();
+                      debugPrint(
+                        '⚠️ [Customer Lookup][$lookupFlowLabel] history summary backfill failed '
+                        'after ${summaryLookupStopwatch.elapsedMilliseconds}ms '
+                        '(phone=$phone): $e',
+                      );
+                    }
+                  }());
+                }
+                return;
+              }
+              final latestPhone = normalizePhone(phoneCtrl.text);
+              if (!isDialogActive ||
+                  latestPhone != phone ||
+                  requestId != lookupSequence) {
+                return;
+              }
 
               setDialogState(() {
                 customerLookupData = data;
@@ -752,21 +1777,26 @@ class _CartPageState extends State<CartPage> {
 
                 final offerData = readOfferData(data);
                 final eligible =
+                    enableCustomerLookup &&
                     offerData?['enabled'] == true &&
                     (offerData?['isOfferEligible'] == true ||
                         offerData?['historyBasedEligible'] == true);
                 applyCustomerOffer = eligible;
               });
+              autoSubmitIfReady(data);
             } catch (_) {
-              final latestPhone = phoneCtrl.text.trim();
-              final isSameLongPhone = latestPhone == phone;
-              final bothShortPhone =
-                  latestPhone.length < 10 && phone.length < 10;
-              if (!isSameLongPhone && !bothShortPhone) return;
+              final latestPhone = normalizePhone(phoneCtrl.text);
+              if (!isDialogActive ||
+                  latestPhone != phone ||
+                  requestId != lookupSequence) {
+                return;
+              }
               setDialogState(() {
                 customerLookupData = null;
                 isLookupInProgress = false;
-                lookupError = 'Unable to fetch customer details';
+                lookupError = enableCustomerLookup
+                    ? 'Unable to fetch customer details'
+                    : null;
                 applyCustomerOffer = false;
               });
             }
@@ -774,14 +1804,41 @@ class _CartPageState extends State<CartPage> {
 
           return StatefulBuilder(
             builder: (context, setDialogState) {
-              if (!didAutoLookup) {
-                didAutoLookup = true;
+              void closeDialogSafely(Map<String, dynamic>? value) {
+                if (didCloseDialog) return;
+                didCloseDialog = true;
+                setDialogState(() {
+                  isDialogSubmitting = true;
+                });
+                isDialogActive = false;
+                lookupSequence += 1;
+                quickLookupDebounceTimer?.cancel();
                 WidgetsBinding.instance.addPostFrameCallback((_) {
-                  lookupCustomer(phoneCtrl.text, setDialogState);
+                  if (!mounted) return;
+                  final nav = Navigator.of(context);
+                  if (nav.canPop()) {
+                    nav.pop(value);
+                  }
                 });
               }
 
+              if (!didAutoLookup) {
+                didAutoLookup = true;
+                if (enableCustomerLookup) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (!isDialogActive) return;
+                    lookupSequence += 1;
+                    lookupCustomer(
+                      phoneCtrl.text,
+                      setDialogState,
+                      lookupSequence,
+                    );
+                  });
+                }
+              }
+
               final offerData = readOfferData(customerLookupData);
+              final hasOfferPhoneInput = phoneCtrl.text.trim().isNotEmpty;
               final productOfferData = readProductOfferData(customerLookupData);
               final productOfferMatches = readProductOfferMatches(
                 customerLookupData,
@@ -856,7 +1913,9 @@ class _CartPageState extends State<CartPage> {
                   hasEligibleProductPriceOffer ||
                   hasEligibleRandomOffer;
               final canApplyCustomerOffer =
-                  offerEligible && !hasEligibleItemLevelOffer;
+                  hasOfferPhoneInput &&
+                  offerEligible &&
+                  !hasEligibleItemLevelOffer;
               final effectiveApplyCustomerOffer =
                   canApplyCustomerOffer && applyCustomerOffer;
               final highestPriorityAppliedPreviewName = hasEligibleProductOffer
@@ -870,13 +1929,6 @@ class _CartPageState extends State<CartPage> {
                   : customerEntryPercentagePreviewEligible
                   ? 'Customer Entry Percentage Offer'
                   : null;
-              final hasOfferPreview =
-                  offerEnabled ||
-                  productOfferEnabled ||
-                  productPriceOfferEnabled ||
-                  customerEntryPercentageOfferEnabled ||
-                  totalPercentageOfferEnabled ||
-                  randomCustomerOfferEligible;
               final offerAmount = readMoney(offerData?['offerAmount']);
               final rewardPoints = readMoney(offerData?['rewardPoints']);
               final pointsNeeded = readMoney(
@@ -1972,6 +3024,75 @@ class _CartPageState extends State<CartPage> {
               if (offerPageIndex >= offerCards.length) {
                 offerPageIndex = 0;
               }
+              final normalizedPhoneForHistory = phoneCtrl.text.replaceAll(
+                RegExp(r'\D'),
+                '',
+              );
+              final canOpenHistoryFromHeader =
+                  showCustomerHistoryByCms &&
+                  !isDialogSubmitting &&
+                  normalizedPhoneForHistory.length >= 10;
+              Map<String, dynamic> buildDialogSubmitPayload(
+                String customerName,
+                String customerPhone,
+              ) {
+                return <String, dynamic>{
+                  'name': customerName,
+                  'phone': customerPhone,
+                  'applyCustomerOffer': effectiveApplyCustomerOffer,
+                  'hasProductOfferMatch': hasEligibleProductOffer,
+                  'hasProductPriceOfferMatch': hasEligibleProductPriceOffer,
+                  'hasTotalPercentageOfferEnabled': totalPercentageOfferEnabled,
+                  'hasCustomerEntryPercentageOfferEnabled':
+                      customerEntryPercentageOfferEnabled,
+                  'hasRandomOfferMatch': hasEligibleRandomOffer,
+                };
+              }
+
+              void submitDialogFromCurrentInput({
+                required bool requirePhoneAndNameForDoneShortcut,
+              }) {
+                if (isDialogSubmitting) return;
+                final customerName = nameCtrl.text.trim();
+                final customerPhone = phoneCtrl.text.trim();
+                final normalizedPhone = customerPhone.replaceAll(
+                  RegExp(r'\D'),
+                  '',
+                );
+
+                if (requirePhoneAndNameForDoneShortcut) {
+                  final canShortcutSubmit =
+                      normalizedPhone.length >= 10 && customerName.isNotEmpty;
+                  if (!canShortcutSubmit) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'Enter 10-digit phone and customer name, then press Done',
+                        ),
+                      ),
+                    );
+                    return;
+                  }
+                }
+
+                if (customerName.isEmpty && customerPhone.isEmpty) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        allowSkipCustomerDetailsByCms
+                            ? "Please enter customer name or phone number, or use $skipActionLabel"
+                            : "Please enter customer name or phone number",
+                      ),
+                    ),
+                  );
+                  return;
+                }
+                closeDialogSafely(
+                  buildDialogSubmitPayload(customerName, customerPhone),
+                );
+              }
 
               return Dialog(
                 backgroundColor: const Color(0xFF1E1E1E),
@@ -1991,15 +3112,46 @@ class _CartPageState extends State<CartPage> {
                             mainAxisSize: MainAxisSize.min,
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Center(
-                                child: Text(
-                                  "Customer Details",
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.bold,
+                              Row(
+                                children: [
+                                  SizedBox(
+                                    width: 40,
+                                    height: 40,
+                                    child: IconButton(
+                                      tooltip: showCustomerHistoryByCms
+                                          ? 'Customer History'
+                                          : 'Customer History disabled',
+                                      padding: EdgeInsets.zero,
+                                      icon: Icon(
+                                        Icons.history_rounded,
+                                        color: canOpenHistoryFromHeader
+                                            ? const Color(0xFF4ADE80)
+                                            : Colors.white30,
+                                      ),
+                                      onPressed: canOpenHistoryFromHeader
+                                          ? () async {
+                                              await showCustomerHistoryDialog(
+                                                context,
+                                                phoneNumber: phoneCtrl.text,
+                                              );
+                                            }
+                                          : null,
+                                    ),
                                   ),
-                                ),
+                                  const Expanded(
+                                    child: Center(
+                                      child: Text(
+                                        "Customer Details",
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 20,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 40, height: 40),
+                                ],
                               ),
                               const SizedBox(height: 20),
                               Text(
@@ -2022,14 +3174,58 @@ class _CartPageState extends State<CartPage> {
                                 ),
                                 child: TextField(
                                   controller: phoneCtrl,
+                                  enabled: !isDialogSubmitting,
+                                  autofocus: true,
                                   keyboardType: TextInputType.phone,
+                                  textInputAction: TextInputAction.done,
+                                  inputFormatters: [
+                                    FilteringTextInputFormatter.digitsOnly,
+                                    LengthLimitingTextInputFormatter(10),
+                                  ],
                                   style: const TextStyle(color: Colors.white),
+                                  onSubmitted: (_) {
+                                    if (autoSubmitCustomerDetailsByCms) {
+                                      submitDialogFromCurrentInput(
+                                        requirePhoneAndNameForDoneShortcut:
+                                            true,
+                                      );
+                                    } else {
+                                      FocusScope.of(context).nextFocus();
+                                    }
+                                  },
                                   onChanged: (val) {
+                                    if (isDialogSubmitting) return;
+                                    if (!isDialogActive) return;
                                     setDialogState(() {});
-                                    debounceTimer?.cancel();
-                                    debounceTimer = Timer(
-                                      const Duration(milliseconds: 500),
-                                      () => lookupCustomer(val, setDialogState),
+                                    quickLookupDebounceTimer?.cancel();
+                                    lookupSequence += 1;
+                                    final normalizedPhone = val.replaceAll(
+                                      RegExp(r'\D'),
+                                      '',
+                                    );
+                                    if (normalizedPhone.length < 10) {
+                                      setDialogState(() {
+                                        customerLookupData = null;
+                                        lookupError = null;
+                                        isLookupInProgress = false;
+                                        applyCustomerOffer = false;
+                                      });
+                                      return;
+                                    }
+                                    final requestId = lookupSequence;
+                                    if (enableCustomerLookup) {
+                                      setDialogState(() {
+                                        lookupError = null;
+                                        isLookupInProgress = true;
+                                      });
+                                    }
+                                    quickLookupDebounceTimer = Timer(
+                                      const Duration(milliseconds: 300),
+                                      () => lookupCustomer(
+                                        val,
+                                        setDialogState,
+                                        requestId,
+                                      ),
                                     );
                                   },
                                   decoration: const InputDecoration(
@@ -2043,7 +3239,8 @@ class _CartPageState extends State<CartPage> {
                                   ),
                                 ),
                               ),
-                              if (isLookupInProgress) ...[
+                              if (enableCustomerLookup &&
+                                  isLookupInProgress) ...[
                                 const SizedBox(height: 10),
                                 const Center(
                                   child: SizedBox(
@@ -2056,7 +3253,8 @@ class _CartPageState extends State<CartPage> {
                                   ),
                                 ),
                               ],
-                              if (lookupError != null) ...[
+                              if (enableCustomerLookup &&
+                                  lookupError != null) ...[
                                 const SizedBox(height: 10),
                                 Text(
                                   lookupError!,
@@ -2087,7 +3285,14 @@ class _CartPageState extends State<CartPage> {
                                 ),
                                 child: TextField(
                                   controller: nameCtrl,
+                                  enabled: !isDialogSubmitting,
+                                  textInputAction: TextInputAction.done,
                                   style: const TextStyle(color: Colors.white),
+                                  onSubmitted: (_) {
+                                    submitDialogFromCurrentInput(
+                                      requirePhoneAndNameForDoneShortcut: false,
+                                    );
+                                  },
                                   decoration: const InputDecoration(
                                     contentPadding: EdgeInsets.symmetric(
                                       horizontal: 12,
@@ -2099,7 +3304,19 @@ class _CartPageState extends State<CartPage> {
                                   ),
                                 ),
                               ),
-                              if (customerLookupData != null) ...[
+                              if (phoneCtrl.text
+                                          .replaceAll(RegExp(r'\D'), '')
+                                          .length >=
+                                      10 &&
+                                  customerLookupData != null &&
+                                  (((customerLookupData!['totalBills'] as num?)
+                                                  ?.toInt() ??
+                                              0) >
+                                          0 ||
+                                      readMoney(
+                                            customerLookupData!['totalAmount'],
+                                          ) >
+                                          0)) ...[
                                 const SizedBox(height: 14),
                                 Container(
                                   width: double.infinity,
@@ -2135,88 +3352,136 @@ class _CartPageState extends State<CartPage> {
                                         ),
                                       ),
                                       const SizedBox(height: 6),
-                                      Text(
-                                        'History: ${customerLookupData!['totalBills'] ?? 0} bills | ₹${readMoney(customerLookupData!['totalAmount']).toStringAsFixed(2)} spent',
-                                        style: const TextStyle(
-                                          color: Colors.white70,
-                                          fontSize: 12,
+                                      Text.rich(
+                                        TextSpan(
+                                          children: [
+                                            const TextSpan(
+                                              text: 'History: ',
+                                              style: TextStyle(
+                                                color: Color(0xFF7DD3FC),
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                            TextSpan(
+                                              text:
+                                                  '${customerLookupData!['totalBills'] ?? 0} bills',
+                                              style: const TextStyle(
+                                                color: Color(0xFFFDE047),
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                            const TextSpan(
+                                              text: ' | ',
+                                              style: TextStyle(
+                                                color: Colors.white54,
+                                              ),
+                                            ),
+                                            TextSpan(
+                                              text:
+                                                  '₹${readMoney(customerLookupData!['totalAmount']).toStringAsFixed(2)}',
+                                              style: const TextStyle(
+                                                color: Color(0xFF4ADE80),
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                            const TextSpan(
+                                              text: ' spent',
+                                              style: TextStyle(
+                                                color: Colors.white70,
+                                              ),
+                                            ),
+                                          ],
                                         ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        softWrap: false,
+                                        style: const TextStyle(fontSize: 16),
                                       ),
                                     ],
                                   ),
                                 ),
                               ],
-                              if (hasOfferPreview && offerCards.isNotEmpty) ...[
+                              if (!isTableOrderFlow &&
+                                  phoneCtrl.text.trim().isEmpty) ...[
                                 const SizedBox(height: 12),
                                 const Text(
-                                  'Up to 2 offers per bill: Customer Entry Percentage + one backend-selected offer path.',
+                                  'Enter customer phone number to apply offers',
                                   style: TextStyle(
-                                    color: Colors.white54,
-                                    fontSize: 11,
+                                    color: Colors.orangeAccent,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
                                   ),
-                                ),
-                                const SizedBox(height: 8),
-                                SizedBox(
-                                  height: 150,
-                                  child: PageView.builder(
-                                    reverse: false,
-                                    itemCount: offerCards.length,
-                                    onPageChanged: (index) {
-                                      setDialogState(() {
-                                        offerPageIndex = index;
-                                      });
-                                    },
-                                    itemBuilder: (context, index) {
-                                      return Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 2,
-                                        ),
-                                        child: SizedBox.expand(
-                                          child: offerCards[index],
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: List.generate(offerCards.length, (
-                                    index,
-                                  ) {
-                                    final isActive = index == offerPageIndex;
-                                    return AnimatedContainer(
-                                      duration: const Duration(
-                                        milliseconds: 180,
-                                      ),
-                                      margin: const EdgeInsets.symmetric(
-                                        horizontal: 3,
-                                      ),
-                                      width: isActive ? 9 : 6,
-                                      height: isActive ? 9 : 6,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color: isActive
-                                            ? const Color(0xFF0A84FF)
-                                            : Colors.white24,
-                                      ),
-                                    );
-                                  }),
                                 ),
                               ],
-                              const SizedBox(height: 28),
-                              if (allowSkipForActiveFlow)
+                              if (!isTableOrderFlow &&
+                                  normalizedPhoneForHistory.length >= 10 &&
+                                  offerCards.isNotEmpty) ...[
+                                const SizedBox(height: 12),
+                                offerCards[offerPageIndex],
+                                if (offerCards.length > 1) ...[
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      IconButton(
+                                        onPressed: isDialogSubmitting
+                                            ? null
+                                            : () {
+                                                setDialogState(() {
+                                                  offerPageIndex =
+                                                      (offerPageIndex - 1) %
+                                                      offerCards.length;
+                                                  if (offerPageIndex < 0) {
+                                                    offerPageIndex =
+                                                        offerCards.length - 1;
+                                                  }
+                                                });
+                                              },
+                                        icon: const Icon(
+                                          Icons.chevron_left_rounded,
+                                          color: Colors.white70,
+                                        ),
+                                      ),
+                                      Text(
+                                        '${offerPageIndex + 1}/${offerCards.length}',
+                                        style: const TextStyle(
+                                          color: Colors.white70,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                      IconButton(
+                                        onPressed: isDialogSubmitting
+                                            ? null
+                                            : () {
+                                                setDialogState(() {
+                                                  offerPageIndex =
+                                                      (offerPageIndex + 1) %
+                                                      offerCards.length;
+                                                });
+                                              },
+                                        icon: const Icon(
+                                          Icons.chevron_right_rounded,
+                                          color: Colors.white70,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ],
+                              const SizedBox(height: 20),
+                              if (allowSkipCustomerDetailsByCms)
                                 Row(
                                   children: [
                                     Expanded(
                                       child: OutlinedButton(
-                                        onPressed: () {
-                                          debounceTimer?.cancel();
-                                          Navigator.pop(
-                                            context,
-                                            <String, dynamic>{},
-                                          );
-                                        },
+                                        onPressed: isDialogSubmitting
+                                            ? null
+                                            : () {
+                                                closeDialogSafely(
+                                                  <String, dynamic>{},
+                                                );
+                                              },
                                         style: OutlinedButton.styleFrom(
                                           foregroundColor: Colors.white70,
                                           side: BorderSide(
@@ -2231,50 +3496,18 @@ class _CartPageState extends State<CartPage> {
                                             ),
                                           ),
                                         ),
-                                        child: const Text("Skip"),
+                                        child: Text(skipActionLabel),
                                       ),
                                     ),
                                     const SizedBox(width: 12),
                                     Expanded(
                                       child: ElevatedButton(
-                                        onPressed: () {
-                                          final customerName = nameCtrl.text
-                                              .trim();
-                                          final customerPhone = phoneCtrl.text
-                                              .trim();
-                                          if (customerName.isEmpty &&
-                                              customerPhone.isEmpty) {
-                                            if (!mounted) return;
-                                            ScaffoldMessenger.of(
-                                              context,
-                                            ).showSnackBar(
-                                              const SnackBar(
-                                                content: Text(
-                                                  "Please enter customer name or phone number, or use Skip",
-                                                ),
+                                        onPressed: isDialogSubmitting
+                                            ? null
+                                            : () => submitDialogFromCurrentInput(
+                                                requirePhoneAndNameForDoneShortcut:
+                                                    false,
                                               ),
-                                            );
-                                            return;
-                                          }
-                                          debounceTimer?.cancel();
-                                          Navigator.pop(
-                                            context,
-                                            <String, dynamic>{
-                                              'name': customerName,
-                                              'phone': customerPhone,
-                                              'applyCustomerOffer':
-                                                  effectiveApplyCustomerOffer,
-                                              'hasProductOfferMatch':
-                                                  hasEligibleProductOffer,
-                                              'hasProductPriceOfferMatch':
-                                                  hasEligibleProductPriceOffer,
-                                              'hasTotalPercentageOfferEnabled':
-                                                  totalPercentageOfferEnabled,
-                                              'hasRandomOfferMatch':
-                                                  hasEligibleRandomOffer,
-                                            },
-                                          );
-                                        },
                                         style: ElevatedButton.styleFrom(
                                           backgroundColor: const Color(
                                             0xFF0A84FF,
@@ -2288,9 +3521,11 @@ class _CartPageState extends State<CartPage> {
                                             ),
                                           ),
                                         ),
-                                        child: const Text(
-                                          "Submit",
-                                          style: TextStyle(
+                                        child: Text(
+                                          isDialogSubmitting
+                                              ? "Submitting..."
+                                              : submitActionLabel,
+                                          style: const TextStyle(
                                             color: Colors.white,
                                             fontSize: 16,
                                             fontWeight: FontWeight.bold,
@@ -2304,40 +3539,12 @@ class _CartPageState extends State<CartPage> {
                                 SizedBox(
                                   width: double.infinity,
                                   child: ElevatedButton(
-                                    onPressed: () {
-                                      final customerName = nameCtrl.text.trim();
-                                      final customerPhone = phoneCtrl.text
-                                          .trim();
-                                      if (customerName.isEmpty &&
-                                          customerPhone.isEmpty) {
-                                        if (!mounted) return;
-                                        ScaffoldMessenger.of(
-                                          context,
-                                        ).showSnackBar(
-                                          const SnackBar(
-                                            content: Text(
-                                              "Please enter customer name or phone number",
-                                            ),
+                                    onPressed: isDialogSubmitting
+                                        ? null
+                                        : () => submitDialogFromCurrentInput(
+                                            requirePhoneAndNameForDoneShortcut:
+                                                false,
                                           ),
-                                        );
-                                        return;
-                                      }
-                                      debounceTimer?.cancel();
-                                      Navigator.pop(context, <String, dynamic>{
-                                        'name': customerName,
-                                        'phone': customerPhone,
-                                        'applyCustomerOffer':
-                                            effectiveApplyCustomerOffer,
-                                        'hasProductOfferMatch':
-                                            hasEligibleProductOffer,
-                                        'hasProductPriceOfferMatch':
-                                            hasEligibleProductPriceOffer,
-                                        'hasTotalPercentageOfferEnabled':
-                                            totalPercentageOfferEnabled,
-                                        'hasRandomOfferMatch':
-                                            hasEligibleRandomOffer,
-                                      });
-                                    },
                                     style: ElevatedButton.styleFrom(
                                       backgroundColor: const Color(0xFF0A84FF),
                                       padding: const EdgeInsets.symmetric(
@@ -2347,9 +3554,11 @@ class _CartPageState extends State<CartPage> {
                                         borderRadius: BorderRadius.circular(10),
                                       ),
                                     ),
-                                    child: const Text(
-                                      "Submit",
-                                      style: TextStyle(
+                                    child: Text(
+                                      isDialogSubmitting
+                                          ? "Submitting..."
+                                          : submitActionLabel,
+                                      style: const TextStyle(
                                         color: Colors.white,
                                         fontSize: 16,
                                         fontWeight: FontWeight.bold,
@@ -2357,51 +3566,6 @@ class _CartPageState extends State<CartPage> {
                                     ),
                                   ),
                                 ),
-                              if (phoneCtrl.text.length >= 10) ...[
-                                const SizedBox(height: 20),
-                                Center(
-                                  child: InkWell(
-                                    onTap: () {
-                                      showDialog(
-                                        context: context,
-                                        builder: (context) =>
-                                            CustomerHistoryDialog(
-                                              phoneNumber: phoneCtrl.text
-                                                  .trim(),
-                                            ),
-                                      );
-                                    },
-                                    child: Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 16,
-                                        vertical: 8,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Colors.green.shade700,
-                                        borderRadius: BorderRadius.circular(20),
-                                      ),
-                                      child: const Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            Icons.history,
-                                            color: Colors.white,
-                                            size: 18,
-                                          ),
-                                          const SizedBox(width: 8),
-                                          Text(
-                                            "Customer History",
-                                            style: TextStyle(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
                             ],
                           ),
                         ),
@@ -2411,10 +3575,9 @@ class _CartPageState extends State<CartPage> {
                         top: 8,
                         child: IconButton(
                           icon: const Icon(Icons.close, color: Colors.white54),
-                          onPressed: () {
-                            debounceTimer?.cancel();
-                            Navigator.pop(context, null);
-                          },
+                          onPressed: isDialogSubmitting
+                              ? null
+                              : () => closeDialogSafely(null),
                         ),
                       ),
                     ],
@@ -2425,33 +3588,45 @@ class _CartPageState extends State<CartPage> {
           );
         },
       );
+      isDialogActive = false;
+      lookupSequence += 1;
+      quickLookupDebounceTimer?.cancel();
 
       if (customerDetails == null) {
         setState(() => _isBillingInProgress = false);
         return;
       }
     } else {
-      if (status != 'pending' && !showCustomerDetailsForActiveFlow) {
-        cartProvider.setCustomerDetails();
-        customerDetails = {'name': '', 'phone': ''};
-      } else {
-        // For KOT/RE-KOT (pending), use existing details or empty map
-        customerDetails = {
-          'name': cartProvider.customerName ?? '',
-          'phone': cartProvider.customerPhone ?? '',
-        };
-      }
+      // Dialog disabled by CMS for this order type; use saved details.
+      customerDetails = {
+        'name': existingCustomerName,
+        'phone': existingCustomerPhone,
+      };
     }
+
+    if (shouldShowCustomerDetailsDialog) {
+      userInputMs = stopwatch.elapsedMilliseconds;
+    }
+    // Reset stage timer so pre-api/api/post reflect processing time only.
+    stopwatch
+      ..reset()
+      ..start();
 
     final shouldApplyCustomerOffer =
         status == 'completed' &&
         (customerDetails['applyCustomerOffer'] == true);
+    final fastKotModeForThisBill = _fastKotMode && status == 'pending';
+    final fastModeForThisBill = _fastBillingMode && status == 'completed';
+    final ultraFastModeForThisBill =
+        _ultraFastBillingMode && status == 'completed';
     final hasProductOfferMatch =
         customerDetails['hasProductOfferMatch'] == true;
     final hasProductPriceOfferMatch =
         customerDetails['hasProductPriceOfferMatch'] == true;
     final hasTotalPercentageOfferEnabled =
         customerDetails['hasTotalPercentageOfferEnabled'] == true;
+    final hasCustomerEntryPercentageOfferEnabled =
+        customerDetails['hasCustomerEntryPercentageOfferEnabled'] == true;
     final hasRandomOfferMatch = customerDetails['hasRandomOfferMatch'] == true;
     String billingCustomerName =
         (customerDetails['name'] ?? cartProvider.customerName ?? '')
@@ -2461,7 +3636,22 @@ class _CartPageState extends State<CartPage> {
         (customerDetails['phone'] ?? cartProvider.customerPhone ?? '')
             .toString()
             .trim();
+    final normalizedBillingCustomerPhone = billingCustomerPhone.replaceAll(
+      RegExp(r'\D'),
+      '',
+    );
+    final shouldSendCustomerUpfrontForBilling =
+        status == 'completed' &&
+        cartProvider.currentType != CartType.table &&
+        normalizedBillingCustomerPhone.length >= 10;
+    final shouldForceSkipCustomerOffer =
+        (fastModeForThisBill || ultraFastModeForThisBill) &&
+        !shouldSendCustomerUpfrontForBilling;
+    final effectiveApplyCustomerOffer = shouldForceSkipCustomerOffer
+        ? false
+        : shouldApplyCustomerOffer;
     final requiresPhoneForOffer =
+        !shouldForceSkipCustomerOffer &&
         status == 'completed' &&
         (shouldApplyCustomerOffer ||
             hasProductOfferMatch ||
@@ -2471,6 +3661,7 @@ class _CartPageState extends State<CartPage> {
 
     String? tableNumberForSubmit = cartProvider.selectedTable;
     String? sectionForSubmit = cartProvider.selectedSection;
+    bool shouldResolveSharedTarget = false;
 
     if (status == 'pending' &&
         cartProvider.currentType == CartType.table &&
@@ -2491,14 +3682,7 @@ class _CartPageState extends State<CartPage> {
       }
 
       tableNumberForSubmit = resolvedTable;
-      sectionForSubmit = CartProvider.sharedTablesSectionName;
-      if (cartProvider.selectedTable != tableNumberForSubmit ||
-          cartProvider.selectedSection != sectionForSubmit) {
-        cartProvider.setSelectedTableMetadata(
-          tableNumberForSubmit,
-          sectionForSubmit,
-        );
-      }
+      shouldResolveSharedTarget = true;
     }
 
     try {
@@ -2509,13 +3693,49 @@ class _CartPageState extends State<CartPage> {
         return;
       }
 
-      // Ensure branch and company IDs are populated instantly
-      _branchId ??= cartProvider.branchId ?? prefs.getString('branchId');
-      _companyId ??= prefs.getString('companyId');
+      await _ensureBillingIdentifiers(cartProvider: cartProvider, prefs: prefs);
+      if (_branchId == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Unable to resolve branch. Please retry.'),
+          ),
+        );
+        setState(() => _isBillingInProgress = false);
+        return;
+      }
 
-      if (_branchId == null || _companyId == null) {
-        debugPrint('📦 Immediate ID resolution failed, trying deep fetch...');
-        await _fetchUserData();
+      if (shouldResolveSharedTarget &&
+          tableNumberForSubmit?.trim().isNotEmpty == true) {
+        final target = await _resolveSharedInputTarget(
+          tableNumberInput: tableNumberForSubmit!,
+          branchId: _branchId!,
+          token: token,
+          preferredSection: cartProvider.selectedSection,
+        );
+        tableNumberForSubmit = target['tableNumber']?.toString().trim();
+        sectionForSubmit = target['section']?.toString().trim();
+        final hasResolvedTable =
+            tableNumberForSubmit != null && tableNumberForSubmit.isNotEmpty;
+        final hasResolvedSection =
+            sectionForSubmit != null && sectionForSubmit.isNotEmpty;
+        if (!hasResolvedTable || !hasResolvedSection) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Unable to resolve table. Please try again.'),
+            ),
+          );
+          setState(() => _isBillingInProgress = false);
+          return;
+        }
+        if (cartProvider.selectedTable != tableNumberForSubmit ||
+            cartProvider.selectedSection != sectionForSubmit) {
+          cartProvider.setSelectedTableMetadata(
+            tableNumberForSubmit,
+            sectionForSubmit,
+          );
+        }
       }
 
       debugPrint('📦 ID Resolution: ${stopwatch.elapsedMilliseconds}ms');
@@ -2605,7 +3825,11 @@ class _CartPageState extends State<CartPage> {
 
         final noteValue = rawItem['specialNote'] ?? rawItem['notes'];
         if (noteValue != null && noteValue.toString().trim().isNotEmpty) {
-          payload['specialNote'] = noteValue.toString();
+          final trimmedNote = noteValue.toString().trim();
+          payload['specialNote'] = trimmedNote;
+          payload['notes'] = trimmedNote;
+          payload['note'] = trimmedNote;
+          payload['instructions'] = trimmedNote;
         }
 
         final unit = rawItem['unit']?.toString();
@@ -2641,6 +3865,50 @@ class _CartPageState extends State<CartPage> {
         return payload;
       }
 
+      Map<String, dynamic>? toUltraFastCartItemPayload(CartItem item) {
+        if (item.isOfferFreeItem || item.isRandomCustomerOfferItem) {
+          return null;
+        }
+        if (item.id.trim().isEmpty) {
+          return null;
+        }
+
+        final safeQty = item.quantity > 0 ? item.quantity : 1.0;
+        final safeUnitPrice = item.price < 0 ? 0.0 : item.price;
+        final safeSubtotal =
+            item.lineSubtotal != null && item.lineSubtotal! >= 0
+            ? item.lineSubtotal!
+            : (safeQty * safeUnitPrice);
+
+        final payload = <String, dynamic>{
+          if (item.billingItemId?.trim().isNotEmpty == true)
+            'id': item.billingItemId!.trim(),
+          'product': item.id,
+          'name': item.name,
+          'quantity': safeQty,
+          'unitPrice': safeUnitPrice,
+          'subtotal': safeSubtotal,
+        };
+
+        final statusValue = item.status?.trim();
+        if (statusValue != null && statusValue.isNotEmpty) {
+          payload['status'] = statusValue;
+        }
+        final noteValue = item.specialNote?.trim();
+        if (noteValue != null && noteValue.isNotEmpty) {
+          payload['specialNote'] = noteValue;
+          payload['notes'] = noteValue;
+          payload['note'] = noteValue;
+          payload['instructions'] = noteValue;
+        }
+        final unitValue = item.unit?.trim();
+        if (unitValue != null && unitValue.isNotEmpty) {
+          payload['unit'] = unitValue;
+        }
+
+        return payload;
+      }
+
       bool hasActiveLookupItems(dynamic rawItems) {
         if (rawItems is! List || rawItems.isEmpty) return false;
         for (final rawItem in rawItems) {
@@ -2672,22 +3940,21 @@ class _CartPageState extends State<CartPage> {
       final isTableOrderForSubmit =
           cartProvider.currentType == CartType.table &&
           (hasTableNumberForSubmit || hasSectionForSubmit);
-
       String? billId = cartProvider.recalledBillId;
+      final shouldSkipBlockingTableLookup =
+          _fastKotMode &&
+          status == 'pending' &&
+          isTableOrderForSubmit &&
+          billId == null;
       final List<Map<String, dynamic>> existingServerItemsPayload = [];
       // 2. Parallel ID & Table Lookup
       final List<Future<void>> preFlightTasks = [];
 
-      if (_branchId == null || _companyId == null) {
-        preFlightTasks.add(_fetchUserData());
-      }
-
-      bool lookupPerformed = false;
       if (isTableOrderForSubmit &&
           billId == null &&
           hasTableNumberForSubmit &&
-          hasSectionForSubmit) {
-        lookupPerformed = true;
+          hasSectionForSubmit &&
+          !shouldSkipBlockingTableLookup) {
         preFlightTasks.add(() async {
           final lStart = stopwatch.elapsedMilliseconds;
           final lookupNow = DateTime.now();
@@ -2702,9 +3969,9 @@ class _CartPageState extends State<CartPage> {
             'where[tableDetails.tableNumber][equals]': tableNumberForSubmit!,
             'where[tableDetails.section][equals]': sectionForSubmit!,
             'where[createdAt][greater_than_equal]': todayStartForLookup,
-            'limit': '5',
+            'limit': '1',
             'sort': '-updatedAt',
-            'depth': '2',
+            'depth': '0',
           };
           if (_branchId != null)
             lookupParams['where[branch][equals]'] = _branchId!;
@@ -2735,6 +4002,10 @@ class _CartPageState extends State<CartPage> {
             '⏱️ Table Lookup took: ${stopwatch.elapsedMilliseconds - lStart}ms',
           );
         }());
+      } else if (shouldSkipBlockingTableLookup) {
+        debugPrint(
+          '⚡ Fast KOT mode: skipping blocking table lookup, sending KOT immediately',
+        );
       }
 
       if (preFlightTasks.isNotEmpty) {
@@ -2754,6 +4025,44 @@ class _CartPageState extends State<CartPage> {
 
       customerDetails['name'] = billingCustomerName;
       customerDetails['phone'] = billingCustomerPhone;
+      cartProvider.setCustomerDetails(
+        name: billingCustomerName,
+        phone: billingCustomerPhone,
+      );
+      final deferCustomerSyncForUltraFast =
+          ultraFastModeForThisBill &&
+          !shouldSendCustomerUpfrontForBilling &&
+          (billingCustomerName.isNotEmpty || billingCustomerPhone.isNotEmpty);
+      final requestCustomerName =
+          (deferCustomerSyncForUltraFast ||
+              (fastModeForThisBill && !shouldSendCustomerUpfrontForBilling))
+          ? ''
+          : billingCustomerName;
+      final requestCustomerPhone =
+          ((fastModeForThisBill && !shouldSendCustomerUpfrontForBilling) ||
+              deferCustomerSyncForUltraFast)
+          ? ''
+          : billingCustomerPhone;
+
+      final itemNotes = cartProvider.cartItems
+          .where(
+            (item) => item.specialNote != null && item.specialNote!.isNotEmpty,
+          )
+          .map((item) => '${item.name}: ${item.specialNote}')
+          .join(', ');
+
+      String billingNotes = (ultraFastModeForThisBill || fastKotModeForThisBill)
+          ? ''
+          : itemNotes;
+      if (fastModeForThisBill &&
+          !shouldSendCustomerUpfrontForBilling &&
+          (billingCustomerName.isNotEmpty || billingCustomerPhone.isNotEmpty)) {
+        final fastCustomerMeta =
+            'customer(name:${billingCustomerName.isEmpty ? '-' : billingCustomerName},phone:${billingCustomerPhone.isEmpty ? '-' : billingCustomerPhone})';
+        billingNotes = billingNotes.isEmpty
+            ? fastCustomerMeta
+            : '$billingNotes | $fastCustomerMeta';
+      }
 
       final payloadItems = <Map<String, dynamic>>[];
       if (existingServerItemsPayload.isNotEmpty) {
@@ -2762,8 +4071,12 @@ class _CartPageState extends State<CartPage> {
       final itemsToAppend = existingServerItemsPayload.isNotEmpty
           ? cartProvider.cartItems
           : mergedItems;
+      final useLeanItemPayload =
+          ultraFastModeForThisBill || fastKotModeForThisBill;
       for (final item in itemsToAppend) {
-        final mapped = toPurchasedCartItemPayload(item);
+        final mapped = useLeanItemPayload
+            ? toUltraFastCartItemPayload(item)
+            : toPurchasedCartItemPayload(item);
         if (mapped != null) {
           payloadItems.add(mapped);
         }
@@ -2773,25 +4086,22 @@ class _CartPageState extends State<CartPage> {
         'items': payloadItems,
         'totalAmount': cartProvider.total,
         'branch': _branchId,
-        'company': _companyId,
         'recalledBillId': billId, // PASS RESOLVED BILL ID
         'customerDetails': {
-          'name': billingCustomerName,
-          'phoneNumber': billingCustomerPhone,
+          'name': requestCustomerName,
+          'phoneNumber': requestCustomerPhone,
           'address': '', // Placeholder as shown in schema
         },
         'paymentMethod': _selectedPaymentMethod,
         'isReminder': isReminder,
-        'notes': cartProvider.cartItems
-            .where(
-              (item) =>
-                  item.specialNote != null && item.specialNote!.isNotEmpty,
-            )
-            .map((item) => '${item.name}: ${item.specialNote}')
-            .join(', '),
-        'applyCustomerOffer': shouldApplyCustomerOffer,
+        if (billingNotes.isNotEmpty || !ultraFastModeForThisBill)
+          'notes': billingNotes,
+        'applyCustomerOffer': effectiveApplyCustomerOffer,
         'status': status,
       };
+      if (_companyId != null && _companyId!.isNotEmpty) {
+        billingData['company'] = _companyId;
+      }
       if (isTableOrderForSubmit) {
         billingData['tableDetails'] = {
           'section': sectionForSubmit,
@@ -2799,38 +4109,90 @@ class _CartPageState extends State<CartPage> {
         };
       }
 
+      if (ultraFastModeForThisBill) {
+        final payloadBytes = utf8.encode(jsonEncode(billingData)).length;
+        debugPrint(
+          '⚡ Ultra Fast Billing mode ON: $payloadItems.length items | $payloadBytes bytes payload',
+        );
+        if (deferCustomerSyncForUltraFast) {
+          debugPrint(
+            '⚡ Ultra Fast Billing mode: deferring customer save to post-bill sync',
+          );
+        } else if (shouldSendCustomerUpfrontForBilling) {
+          debugPrint(
+            '⚡ Ultra Fast Billing mode: sending customer in initial bill request',
+          );
+        }
+      }
+      if (fastKotModeForThisBill) {
+        final payloadBytes = utf8.encode(jsonEncode(billingData)).length;
+        debugPrint(
+          '⚡ Fast KOT payload mode ON: $payloadItems.length items | $payloadBytes bytes payload',
+        );
+      }
+
       final url = billId != null
           ? Uri.parse(
-              'https://blackforest.vseyal.com/api/billings/$billId?depth=2',
+              'https://blackforest.vseyal.com/api/billings/$billId?depth=0',
             )
-          : Uri.parse('https://blackforest.vseyal.com/api/billings?depth=2');
+          : Uri.parse('https://blackforest.vseyal.com/api/billings?depth=0');
 
-      final response = billId != null
-          ? await http.patch(
-              url,
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer $token',
-              },
-              body: jsonEncode(billingData),
-            )
-          : await http.post(
-              url,
-              headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer $token',
-              },
-              body: jsonEncode(billingData),
-            );
+      billApiStartMs = stopwatch.elapsedMilliseconds;
+      debugPrint(
+        '📦 BILL API START: ${url.host}${url.path} at ${billApiStartMs}ms',
+      );
+      const billingWriteTimeout = Duration(seconds: 45);
+      Future<http.Response> sendBillingRequestWithTimeout(
+        Duration timeout,
+      ) async {
+        if (billId != null) {
+          return http.patch(
+            url,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode(billingData),
+            timeout: timeout,
+          );
+        }
+        return http.post(
+          url,
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer $token',
+          },
+          body: jsonEncode(billingData),
+          timeout: timeout,
+        );
+      }
+
+      http.Response response;
+      try {
+        response = await sendBillingRequestWithTimeout(billingWriteTimeout);
+      } on TimeoutException catch (error) {
+        if (billId == null) rethrow;
+        debugPrint(
+          '📦 BILL API TIMEOUT on PATCH after ${billingWriteTimeout.inSeconds}s. Retrying once with 60s timeout. Error: $error',
+        );
+        response = await sendBillingRequestWithTimeout(
+          const Duration(seconds: 60),
+        );
+      }
+      billApiDurationMs = stopwatch.elapsedMilliseconds - billApiStartMs;
 
       debugPrint('📦 METHOD: ${billId != null ? "PATCH" : "POST"}');
-      debugPrint('📦 PAYLOAD JSON: ${jsonEncode(billingData)}');
+      if (_verboseBillingLogs) {
+        debugPrint('📦 PAYLOAD JSON: ${jsonEncode(billingData)}');
+      }
 
       final billingResponse = jsonDecode(response.body);
       debugPrint(
-        '📦 BILL RESPONSE RECEIVED (API Call: ${stopwatch.elapsedMilliseconds}ms)',
+        '📦 BILL RESPONSE RECEIVED (API Call: ${stopwatch.elapsedMilliseconds - billApiStartMs}ms)',
       );
-      debugPrint('📦 BILL RESPONSE: $billingResponse');
+      if (_verboseBillingLogs) {
+        debugPrint('📦 BILL RESPONSE: $billingResponse');
+      }
 
       double? readServerMoney(dynamic value) {
         if (value is num) {
@@ -2949,7 +4311,9 @@ class _CartPageState extends State<CartPage> {
 
       List<CartItem> finalServerItems = mergedItems;
       final responseItems = finalBillDoc['items'];
-      if (responseItems is List) {
+      final shouldHydrateServerItems =
+          status == 'pending' || !ultraFastModeForThisBill;
+      if (shouldHydrateServerItems && responseItems is List) {
         finalServerItems = responseItems.map((raw) {
           final item = raw is Map
               ? Map<String, dynamic>.from(raw)
@@ -3078,6 +4442,35 @@ class _CartPageState extends State<CartPage> {
         '📦 FINAL BILL (server): total=$billedTotal | creditApplied=$serverOfferApplied | creditDiscount=$serverOfferDiscount | entryPercentageApplied=$serverCustomerEntryPercentageOfferApplied | entryPercentageDiscount=$serverCustomerEntryPercentageOfferDiscount | percentageApplied=$serverTotalPercentageOfferApplied | percentageDiscount=$serverTotalPercentageOfferDiscount',
       );
 
+      final shouldApplyCustomerOfferInDeferredFinalize =
+          status == 'completed' &&
+          !isTableOrderForSubmit &&
+          !shouldSendCustomerUpfrontForBilling &&
+          normalizedBillingCustomerPhone.length >= 10 &&
+          (shouldApplyCustomerOffer ||
+              effectiveApplyCustomerOffer ||
+              hasProductOfferMatch ||
+              hasProductPriceOfferMatch ||
+              hasTotalPercentageOfferEnabled ||
+              hasCustomerEntryPercentageOfferEnabled ||
+              hasRandomOfferMatch ||
+              fastModeForThisBill ||
+              ultraFastModeForThisBill);
+      final expectsOfferSyncForDeferred =
+          shouldApplyCustomerOfferInDeferredFinalize;
+      final deferredFinalizeBillId = (savedBillId ?? billId ?? '').trim();
+      final shouldRunDeferredOfferFinalize =
+          status == 'completed' &&
+          !isTableOrderForSubmit &&
+          (fastModeForThisBill || deferCustomerSyncForUltraFast) &&
+          deferredFinalizeBillId.isNotEmpty &&
+          expectsOfferSyncForDeferred;
+      if (shouldRunDeferredOfferFinalize) {
+        debugPrint(
+          '⚡ Deferred offer finalize armed: bill=$deferredFinalizeBillId phone=$normalizedBillingCustomerPhone',
+        );
+      }
+
       if (response.statusCode == 201 || response.statusCode == 200) {
         // Play success sound (non-blocking)
         try {
@@ -3091,6 +4484,7 @@ class _CartPageState extends State<CartPage> {
         }
 
         if (!mounted) return;
+        final printMessenger = ScaffoldMessenger.of(context);
 
         if (status == 'pending') {
           // Identify newly added/updated items from the server response
@@ -3148,19 +4542,72 @@ class _CartPageState extends State<CartPage> {
             items: kotItems,
             billingResponse: billingResponse,
             customerDetails: customerDetails,
+            messenger: printMessenger,
           );
         } else {
-          _printReceipt(
-            items: finalServerItems,
-            totalAmount: billedTotal,
-            grossAmount: billedGrossAmount,
-            printerIp: cartProvider.printerIp!,
-            printerPort: cartProvider.printerPort,
-            printerProtocol: cartProvider.printerProtocol ?? 'esc_pos',
-            billingResponse: finalBillDoc,
-            customerDetails: customerDetails,
-            paymentMethod: _selectedPaymentMethod!,
-          );
+          var receiptPrinterIp = (cartProvider.printerIp ?? '').trim();
+          var receiptPrinterPort = cartProvider.printerPort;
+          var receiptPrinterProtocol =
+              cartProvider.printerProtocol ?? 'esc_pos';
+
+          if (receiptPrinterIp.isEmpty) {
+            final fallbackPrinter = _resolveFirstKotPrinterTarget();
+            if (fallbackPrinter != null) {
+              receiptPrinterIp = fallbackPrinter.key;
+              receiptPrinterPort = fallbackPrinter.value;
+              receiptPrinterProtocol = 'esc_pos';
+              debugPrint(
+                '⚡ Receipt printer fallback: using KOT printer $receiptPrinterIp:$receiptPrinterPort',
+              );
+            }
+          }
+
+          if (shouldRunDeferredOfferFinalize) {
+            debugPrint(
+              '⚡ Deferred offer finalize: syncing customer+offer for bill $deferredFinalizeBillId',
+            );
+            unawaited(
+              _finalizeHybridOfferAndPrint(
+                token: token,
+                billId: deferredFinalizeBillId,
+                customerName: billingCustomerName,
+                customerPhone: billingCustomerPhone,
+                applyCustomerOffer: shouldApplyCustomerOfferInDeferredFinalize,
+                expectOfferSync: expectsOfferSyncForDeferred,
+                items: finalServerItems,
+                customerDetails: customerDetails,
+                paymentMethod: _selectedPaymentMethod!,
+                initialBillingResponse: finalBillDoc,
+                initialTotalAmount: billedTotal,
+                initialGrossAmount: billedGrossAmount,
+                messenger: printMessenger,
+                printerIp: receiptPrinterIp,
+                printerPort: receiptPrinterPort,
+                printerProtocol: receiptPrinterProtocol,
+              ),
+            );
+          } else if (receiptPrinterIp.isEmpty) {
+            debugPrint('⚠️ No receipt printer configured. Skipping print.');
+            _showPrintStatusSnack(
+              printMessenger,
+              message:
+                  'Bill saved, but receipt not printed (printer not configured).',
+              isSuccess: false,
+            );
+          } else {
+            _printReceipt(
+              items: finalServerItems,
+              totalAmount: billedTotal,
+              grossAmount: billedGrossAmount,
+              printerIp: receiptPrinterIp,
+              printerPort: receiptPrinterPort,
+              printerProtocol: receiptPrinterProtocol,
+              billingResponse: finalBillDoc,
+              customerDetails: customerDetails,
+              paymentMethod: _selectedPaymentMethod!,
+              messenger: printMessenger,
+            );
+          }
         }
 
         if (status == 'pending' && cartProvider.currentType == CartType.table) {
@@ -3175,11 +4622,31 @@ class _CartPageState extends State<CartPage> {
         } else {
           cartProvider.clearCart();
         }
+
+        final customerSyncBillId = (savedBillId ?? billId ?? '').trim();
+        final shouldSyncCustomerAfterBill =
+            !shouldRunDeferredOfferFinalize &&
+            (fastModeForThisBill || deferCustomerSyncForUltraFast) &&
+            customerSyncBillId.isNotEmpty &&
+            (billingCustomerName.isNotEmpty || billingCustomerPhone.isNotEmpty);
+        if (shouldSyncCustomerAfterBill) {
+          unawaited(
+            _syncCustomerDetailsForFastMode(
+              token: token,
+              billId: customerSyncBillId,
+              customerName: billingCustomerName,
+              customerPhone: billingCustomerPhone,
+              applyCustomerOffer: shouldApplyCustomerOfferInDeferredFinalize,
+            ),
+          );
+        }
         final totalSavedAmount = (billedGrossAmount - billedTotal)
             .clamp(0.0, double.infinity)
             .toDouble();
         final successMessage = status == 'pending'
             ? 'KOT SENT SUCCESSFULLY'
+            : shouldRunDeferredOfferFinalize
+            ? 'Billing submitted. Finalizing offer...'
             : totalSavedAmount > 0.0001
             ? 'Billing submitted. Payable: ₹${billedTotal.toStringAsFixed(2)} (Saved ₹${totalSavedAmount.toStringAsFixed(2)})'
             : 'Billing submitted. Payable: ₹${billedTotal.toStringAsFixed(2)}';
@@ -3195,9 +4662,13 @@ class _CartPageState extends State<CartPage> {
             (route) => false,
           );
         } else {
-          Navigator.pushReplacement(
+          Navigator.pushAndRemoveUntil(
             context,
-            MaterialPageRoute(builder: (context) => const CategoriesPage()),
+            MaterialPageRoute(
+              builder: (context) =>
+                  const CategoriesPage(sourcePage: PageType.billing),
+            ),
+            (route) => false,
           );
         }
       } else {
@@ -3207,348 +4678,43 @@ class _CartPageState extends State<CartPage> {
         );
       }
     } catch (e) {
+      final processingMs = stopwatch.elapsedMilliseconds;
+      final totalMs = userInputMs + processingMs;
+      final apiStart = billApiStartMs;
+      final apiMs = apiStart == null ? null : (processingMs - apiStart);
+      if (apiMs == null) {
+        debugPrint(
+          '📦 BILL ERROR after ${processingMs}ms processing (total ${totalMs}ms): $e',
+        );
+      } else {
+        debugPrint(
+          '📦 BILL ERROR (API Call: ${apiMs}ms) after ${processingMs}ms processing (total ${totalMs}ms): $e',
+        );
+      }
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Error: $e')));
     } finally {
       stopwatch.stop();
-      debugPrint(
-        '⏱️ [FINISH] _submitBilling Total Time: ${stopwatch.elapsedMilliseconds}ms',
-      );
+      final processingMs = stopwatch.elapsedMilliseconds;
+      final totalMs = userInputMs + processingMs;
+      final apiStart = billApiStartMs;
+      if (apiStart == null) {
+        debugPrint(
+          '⏱️ [FINISH] _submitBilling Total: ${totalMs}ms (input: ${userInputMs}ms, processing: ${processingMs}ms)',
+        );
+      } else {
+        final preApiMs = apiStart;
+        final apiMs = billApiDurationMs ?? max(0, processingMs - apiStart);
+        final postMs = max(0, processingMs - preApiMs - apiMs);
+        debugPrint(
+          '⏱️ [FINISH] _submitBilling Total: ${totalMs}ms (input: ${userInputMs}ms, pre-api: ${preApiMs}ms, api: ${apiMs}ms, post: ${postMs}ms)',
+        );
+      }
       if (mounted) {
         setState(() => _isBillingInProgress = false);
       }
-    }
-  }
-
-  String _formatOfferQty(double value) {
-    if (value % 1 == 0) return value.toInt().toString();
-    return value.toStringAsFixed(2);
-  }
-
-  Future<bool> _confirmKotOfferPreview(CartProvider cartProvider) async {
-    final phone = (cartProvider.customerPhone ?? '').trim();
-    final lookupPhone = phone.length >= 10 ? phone : '';
-
-    final tableNumber = (cartProvider.selectedTable ?? '').trim();
-    final section = (cartProvider.selectedSection ?? '').trim();
-
-    try {
-      final data = await cartProvider.fetchCustomerData(
-        lookupPhone,
-        isTableOrder: true,
-        tableSection: section,
-        tableNumber: tableNumber,
-      );
-      if (data == null) return true;
-
-      double readMoney(dynamic value) {
-        if (value is num) return value.toDouble();
-        if (value is String) return double.tryParse(value) ?? 0.0;
-        return 0.0;
-      }
-
-      Map<String, dynamic>? readMap(dynamic raw) {
-        if (raw is Map) return Map<String, dynamic>.from(raw);
-        return null;
-      }
-
-      List<Map<String, dynamic>> readMapList(dynamic raw) {
-        if (raw is! List) return const <Map<String, dynamic>>[];
-        return raw
-            .whereType<Map>()
-            .map((entry) => Map<String, dynamic>.from(entry))
-            .toList();
-      }
-
-      final productOfferMatches = readMapList(
-        readMap(data['productOfferPreview'])?['matches'],
-      ).where((entry) => entry['eligible'] == true).toList();
-      final productPriceOfferMatches = readMapList(
-        readMap(data['productPriceOfferPreview'])?['matches'],
-      ).where((entry) => entry['eligible'] == true).toList();
-      final randomOfferData = readMap(data['randomCustomerOfferPreview']);
-      final randomOfferMatches = readMapList(
-        randomOfferData?['matches'],
-      ).where((entry) => entry['eligible'] == true).toList();
-      final totalPercentageOfferData = readMap(
-        data['totalPercentageOfferPreview'],
-      );
-      final customerEntryPercentageOfferData = readMap(
-        data['customerEntryPercentageOfferPreview'],
-      );
-      final totalPercentageOfferEnabled =
-          totalPercentageOfferData?['enabled'] == true;
-      final totalPercentageOfferPreviewEligible =
-          totalPercentageOfferData?['previewEligible'] == true;
-      final customerEntryPercentageOfferEnabled =
-          customerEntryPercentageOfferData?['enabled'] == true;
-      final customerEntryPercentageOfferPreviewEligible =
-          customerEntryPercentageOfferData?['previewEligible'] == true;
-      final creditOfferEnabled = readMap(data['offer'])?['enabled'] == true;
-
-      final kotPreviewItems = List<CartItem>.from(cartProvider.cartItems);
-      final offerPreviewItems = <Map<String, dynamic>>[];
-      final previewLines = <String>[];
-
-      if (productOfferMatches.isNotEmpty) {
-        for (final match in productOfferMatches) {
-          final freeName =
-              match['freeProductName']?.toString().trim().isNotEmpty == true
-              ? match['freeProductName'].toString().trim()
-              : 'Free Item';
-          final freeQty = readMoney(match['predictedFreeQuantity']);
-          if (freeQty > 0) {
-            offerPreviewItems.add({
-              'name': freeName,
-              'qty': freeQty,
-              'price': 0.0,
-              'badge': 'FREE OFFER ITEM',
-            });
-          }
-        }
-      } else if (productPriceOfferMatches.isNotEmpty) {
-        for (final match in productPriceOfferMatches) {
-          final productName =
-              match['productName']?.toString().trim().isNotEmpty == true
-              ? match['productName'].toString().trim()
-              : 'Product';
-          final discountPerUnit = readMoney(match['discountPerUnit']);
-          final discountedUnits = readMoney(match['predictedAppliedUnits']);
-          if (discountPerUnit > 0 && discountedUnits > 0) {
-            previewLines.add(
-              '$productName ₹${discountPerUnit.toStringAsFixed(2)} off x${_formatOfferQty(discountedUnits)}',
-            );
-          }
-        }
-      } else if (randomOfferMatches.isNotEmpty) {
-        final selectedRaw = randomOfferData?['selectedMatch'];
-        final selectedMatch = selectedRaw is Map
-            ? Map<String, dynamic>.from(selectedRaw)
-            : randomOfferMatches.first;
-        final productName =
-            selectedMatch['productName']?.toString().trim().isNotEmpty == true
-            ? selectedMatch['productName'].toString().trim()
-            : 'Random Item';
-        offerPreviewItems.add({
-          'name': productName,
-          'qty': 1.0,
-          'price': 0.0,
-          'badge': 'RANDOM FREE ITEM',
-        });
-      } else if (creditOfferEnabled) {
-        previewLines.add('Customer Credit Offer may apply on final billing.');
-      } else if (totalPercentageOfferEnabled &&
-          totalPercentageOfferPreviewEligible) {
-        previewLines.add('Total Percentage Offer may apply on final billing.');
-      }
-
-      if (customerEntryPercentageOfferEnabled &&
-          customerEntryPercentageOfferPreviewEligible) {
-        final offer6Percent = readMoney(
-          customerEntryPercentageOfferData?['discountPercent'],
-        );
-        previewLines.add(
-          'Customer Entry Percentage Offer: ${offer6Percent.toStringAsFixed(2)}% auto-applied by backend.',
-        );
-      }
-
-      final isRecalledBill = cartProvider.recalledBillId != null;
-
-      if (offerPreviewItems.isEmpty &&
-          (previewLines.isEmpty || isRecalledBill)) {
-        return true;
-      }
-
-      if (!mounted) return true;
-
-      final customerName = (data['name']?.toString().trim().isNotEmpty == true)
-          ? data['name'].toString().trim()
-          : (cartProvider.customerName ?? '').trim();
-      final tableDisplay = tableNumber.isNotEmpty ? tableNumber : '-';
-
-      return (await showDialog<bool>(
-            context: context,
-            barrierDismissible: false,
-            builder: (context) => AlertDialog(
-              backgroundColor: const Color(0xFF1E1E1E),
-              title: const Text(
-                'Offer Preview Before KOT',
-                style: TextStyle(color: Colors.white),
-              ),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Table: $tableDisplay${customerName.isNotEmpty ? ' | Customer: $customerName' : ''}',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 12,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    if (kotPreviewItems.isNotEmpty) ...[
-                      const Text(
-                        'Current KOT items:',
-                        style: TextStyle(color: Colors.white, fontSize: 13),
-                      ),
-                      const SizedBox(height: 6),
-                      ...kotPreviewItems.map(
-                        (item) => Container(
-                          margin: const EdgeInsets.only(bottom: 6),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.black.withValues(alpha: 0.18),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.white12),
-                          ),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  item.name,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                              Text(
-                                'x${_formatOfferQty(item.quantity)}',
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                    if (offerPreviewItems.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      const Text(
-                        'Offer items to be auto-added:',
-                        style: TextStyle(color: Colors.white, fontSize: 13),
-                      ),
-                      const SizedBox(height: 6),
-                      ...offerPreviewItems.map(
-                        (entry) => Container(
-                          margin: const EdgeInsets.only(bottom: 6),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 8,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF102229),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: const Color(
-                                0xFF2EBF3B,
-                              ).withValues(alpha: 0.55),
-                            ),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      entry['name']?.toString() ?? 'Offer Item',
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                                  Text(
-                                    'x${_formatOfferQty(readMoney(entry['qty']))}',
-                                    style: const TextStyle(
-                                      color: Colors.white70,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                'Price: ₹${readMoney(entry['price']).toStringAsFixed(2)}',
-                                style: const TextStyle(
-                                  color: Colors.white70,
-                                  fontSize: 12,
-                                ),
-                              ),
-                              Text(
-                                entry['badge']?.toString() ?? 'OFFER ITEM',
-                                style: const TextStyle(
-                                  color: Color(0xFF2EBF3B),
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                    if (previewLines.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      ...previewLines.map(
-                        (line) => Padding(
-                          padding: const EdgeInsets.only(bottom: 4),
-                          child: Text(
-                            line,
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Final offer application is confirmed by backend after save.',
-                      style: TextStyle(color: Colors.white54, fontSize: 11),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child: const Text(
-                    'Back',
-                    style: TextStyle(color: Colors.white70),
-                  ),
-                ),
-                ElevatedButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF0A84FF),
-                  ),
-                  child: const Text(
-                    'Send KOT',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                ),
-              ],
-            ),
-          )) ??
-          false;
-    } catch (e) {
-      debugPrint('Offer preview lookup failed before KOT: $e');
-      return true;
     }
   }
 
@@ -3562,15 +4728,15 @@ class _CartPageState extends State<CartPage> {
     required Map<String, dynamic> billingResponse,
     required Map<String, dynamic> customerDetails,
     required String paymentMethod,
+    required ScaffoldMessengerState messenger,
   }) async {
     if (printerProtocol != 'esc_pos') {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Unsupported printer protocol: $printerProtocol'),
-          ),
-        );
-      }
+      _showPrintStatusSnack(
+        messenger,
+        message:
+            'Bill saved, but receipt not printed (unsupported printer setup).',
+        isSuccess: false,
+      );
       return;
     }
 
@@ -3687,13 +4853,36 @@ class _CartPageState extends State<CartPage> {
       const PaperSize paper = PaperSize.mm80;
       final profile = await CapabilityProfile.load();
       final printer = NetworkPrinter(paper, profile);
-
-      final PosPrintResult res = await printer.connect(
-        printerIp,
-        port: printerPort,
+      final prefs = await SharedPreferences.getInstance();
+      final prefsPort = int.tryParse(
+        (prefs.getString('printerPort') ?? '').trim(),
       );
+      final candidatePorts = <int>[
+        printerPort,
+        if (prefsPort != null) prefsPort,
+        9100,
+        9101,
+      ].toSet().toList(growable: false);
+
+      PosPrintResult res = PosPrintResult.timeout;
+      int connectedPort = candidatePorts.first;
+      for (final port in candidatePorts) {
+        connectedPort = port;
+        debugPrint('🖨️ Receipt connect attempt: $printerIp:$port');
+        res = await printer
+            .connect(printerIp, port: port)
+            .timeout(
+              const Duration(seconds: 4),
+              onTimeout: () => PosPrintResult.timeout,
+            );
+        debugPrint(
+          '🖨️ Receipt connect result: $printerIp:$port -> ${_posPrintResultLabel(res)}',
+        );
+        if (res == PosPrintResult.success) break;
+      }
 
       if (res == PosPrintResult.success) {
+        debugPrint('🖨️ Receipt printing on $printerIp:$connectedPort');
         String invoiceNumber =
             billingResponse['invoiceNumber'] ??
             billingResponse['doc']?['invoiceNumber'] ??
@@ -3859,6 +5048,13 @@ class _CartPageState extends State<CartPage> {
         final billDiscount = (grossAmount - totalAmount)
             .clamp(0.0, double.infinity)
             .toDouble();
+        final explainedBillDiscount =
+            customerOfferDiscountFromServer +
+            totalPercentageOfferDiscountFromServer +
+            customerEntryPercentageOfferDiscountFromServer;
+        final remainingBillDiscount = (billDiscount - explainedBillDiscount)
+            .clamp(0.0, double.infinity)
+            .toDouble();
         if (billDiscount > 0.0001) {
           printer.row([
             PosColumn(
@@ -3867,13 +5063,16 @@ class _CartPageState extends State<CartPage> {
               styles: const PosStyles(align: PosAlign.right),
             ),
           ]);
-          printer.row([
-            PosColumn(
-              text: 'DISCOUNT RS ${billDiscount.toStringAsFixed(2)}',
-              width: 12,
-              styles: const PosStyles(align: PosAlign.right),
-            ),
-          ]);
+          if (remainingBillDiscount > 0.009) {
+            printer.row([
+              PosColumn(
+                text:
+                    'OTHER DISCOUNT RS ${remainingBillDiscount.toStringAsFixed(2)}',
+                width: 12,
+                styles: const PosStyles(align: PosAlign.right),
+              ),
+            ]);
+          }
           if (customerOfferDiscountFromServer > 0.0001) {
             printer.row([
               PosColumn(
@@ -4129,20 +5328,29 @@ class _CartPageState extends State<CartPage> {
         printer.cut();
         printer.disconnect();
 
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Receipt printed successfully')),
-          );
-        }
+        _showPrintStatusSnack(
+          messenger,
+          message: 'Bill printed successfully',
+          isSuccess: true,
+        );
       } else {
-        throw Exception(res.toString());
+        debugPrint(
+          '⚠️ Receipt connect failed for $printerIp on ports ${candidatePorts.join(", ")}. Last result: ${_posPrintResultLabel(res)}',
+        );
+        _showPrintStatusSnack(
+          messenger,
+          message: 'Bill saved, but receipt not printed. Check printer.',
+          isSuccess: false,
+        );
+        return;
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Print failed: $e')));
-      }
+      debugPrint('🖨️ Receipt print error: $e');
+      _showPrintStatusSnack(
+        messenger,
+        message: 'Bill saved, but receipt not printed. Check printer.',
+        isSuccess: false,
+      );
     }
   }
 
@@ -4154,52 +5362,92 @@ class _CartPageState extends State<CartPage> {
     required List<CartItem> items,
     required dynamic billingResponse,
     required Map<String, dynamic> customerDetails,
+    required ScaffoldMessengerState messenger,
   }) async {
     if (_kotPrinters == null || _kotPrinters!.isEmpty) {
       debugPrint('ℹ️ No KOT printers configured for this branch.');
+      _showPrintStatusSnack(
+        messenger,
+        message: 'KOT saved, but not printed (no KOT printer configured).',
+        isSuccess: false,
+      );
       return;
     }
 
     final groupedKots = <String, List<CartItem>>{}; // Printer IP -> Items
-
-    // 1. Build Kitchen -> PrinterIP map for faster lookup
+    final printerPortsByIp = <String, int>{};
     final kitchenToPrinterMap = <String, String>{};
-    for (var printerConfig in _kotPrinters!) {
-      final ip = printerConfig['printerIp']?.toString().trim();
-      final kitchens = printerConfig['kitchens'] as List?;
-      if (ip != null && kitchens != null) {
-        for (var k in kitchens) {
-          final kId = (k is Map)
-              ? (k['id'] ?? k['_id'] ?? k[r'$oid'])?.toString()
-              : k.toString();
-          if (kId != null) {
-            kitchenToPrinterMap[kId] = ip;
-          }
-        }
+
+    // 1. Build printer maps from configuration
+    for (final printerConfig in _kotPrinters!) {
+      final ip = _extractPrinterIp(printerConfig);
+      if (ip == null || ip.isEmpty) continue;
+      printerPortsByIp[ip] = _extractPrinterPort(printerConfig);
+
+      if (printerConfig is! Map) continue;
+      final configMap = Map<String, dynamic>.from(printerConfig);
+      final kitchens = configMap['kitchens'] as List?;
+      if (kitchens == null) continue;
+
+      for (final kitchen in kitchens) {
+        final kitchenId = (kitchen is Map)
+            ? (kitchen['id'] ?? kitchen['_id'] ?? kitchen[r'$oid'])?.toString()
+            : kitchen?.toString();
+        if (kitchenId == null || kitchenId.isEmpty) continue;
+        kitchenToPrinterMap[kitchenId] = ip;
       }
     }
 
+    if (printerPortsByIp.isEmpty) {
+      debugPrint('⚠️ KOT printers configured but no valid printer IP found.');
+      _showPrintStatusSnack(
+        messenger,
+        message: 'KOT saved, but not printed (printer IP not configured).',
+        isSuccess: false,
+      );
+      return;
+    }
+
     // 2. Route items to printers based on Category -> Kitchen -> Printer
-    for (var item in items) {
+    final unmatchedItems = <CartItem>[];
+    for (final item in items) {
       final catId = item.categoryId;
-      if (catId != null) {
-        final kitchenId = _categoryToKitchenMap[catId];
-        if (kitchenId != null) {
-          final ip = kitchenToPrinterMap[kitchenId];
-          if (ip != null) {
-            groupedKots.putIfAbsent(ip, () => []).add(item);
-          } else {
-            debugPrint('⚠️ No printer found for kitchen: $kitchenId');
-          }
-        } else {
-          debugPrint('⚠️ No kitchen found for category: $catId');
-          // Fallback: If no specific kitchen map, try to send to ALL KOT printers?
-          // Or maybe check if there is a "default" kitchen?
-          // For now, we log it.
-        }
-      } else {
+      if (catId == null || catId.isEmpty) {
         debugPrint('⚠️ Item ${item.name} has no category ID');
+        unmatchedItems.add(item);
+        continue;
       }
+
+      final kitchenId = _categoryToKitchenMap[catId];
+      if (kitchenId == null || kitchenId.isEmpty) {
+        debugPrint('⚠️ No kitchen found for category: $catId');
+        unmatchedItems.add(item);
+        continue;
+      }
+
+      final ip = kitchenToPrinterMap[kitchenId];
+      if (ip == null || ip.isEmpty) {
+        debugPrint('⚠️ No printer found for kitchen: $kitchenId');
+        unmatchedItems.add(item);
+        continue;
+      }
+      groupedKots.putIfAbsent(ip, () => []).add(item);
+    }
+
+    final fallbackPrinterIp = printerPortsByIp.keys.first;
+    if (groupedKots.isEmpty) {
+      // No kitchen mapping available: route everything to first configured KOT printer.
+      groupedKots[fallbackPrinterIp] = List<CartItem>.from(items);
+      debugPrint(
+        '⚡ KOT fallback route: no category mapping, sent all ${items.length} item(s) to $fallbackPrinterIp',
+      );
+    } else if (unmatchedItems.isNotEmpty) {
+      groupedKots
+          .putIfAbsent(fallbackPrinterIp, () => [])
+          .addAll(unmatchedItems);
+      debugPrint(
+        '⚡ KOT fallback route: sent ${unmatchedItems.length} unmapped item(s) to $fallbackPrinterIp',
+      );
     }
 
     // 3. Launch all print jobs in parallel
@@ -4215,6 +5463,7 @@ class _CartPageState extends State<CartPage> {
         _printKOTReceipt(
           entry.value,
           entry.key,
+          printerPortsByIp[entry.key] ?? 9100,
           billingResponse,
           customerDetails,
         ).timeout(
@@ -4231,22 +5480,25 @@ class _CartPageState extends State<CartPage> {
         failedIps.add(entryKeys[i]);
       }
     }
+    debugPrint(
+      '🖨️ KOT print results: ${results.map(_posPrintResultLabel).join(", ")}',
+    );
 
     if (failedIps.isNotEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('KOT Print Failed for: ${failedIps.join(", ")}'),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
+      final successCount = results
+          .where((r) => r == PosPrintResult.success)
+          .length;
+      debugPrint('⚠️ KOT print failed for: ${failedIps.join(", ")}');
+      final message = successCount == 0
+          ? 'KOT saved, but not printed. Check KOT printer.'
+          : 'KOT partially printed ($successCount/${results.length}). Failed: ${failedIps.join(", ")}';
+      _showPrintStatusSnack(messenger, message: message, isSuccess: false);
     } else {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('KOTs printed successfully'),
-          backgroundColor: Colors.green,
-        ),
+      debugPrint('✅ KOT print succeeded for all targets');
+      _showPrintStatusSnack(
+        messenger,
+        message: 'KOT printed successfully',
+        isSuccess: true,
       );
     }
   }
@@ -4254,12 +5506,11 @@ class _CartPageState extends State<CartPage> {
   Future<PosPrintResult> _printKOTReceipt(
     List<CartItem> items,
     String printerIp,
+    int printerPort,
     dynamic billingResponse,
     Map<String, dynamic> customerDetails,
   ) async {
     final prefs = await SharedPreferences.getInstance();
-    final printerPort =
-        int.tryParse(prefs.getString('printerPort') ?? '9100') ?? 9100;
     String? waiterName = prefs.getString('user_name');
 
     try {
@@ -4285,12 +5536,35 @@ class _CartPageState extends State<CartPage> {
       final profile = await CapabilityProfile.load();
       final printer = NetworkPrinter(paper, profile);
 
-      final PosPrintResult res = await printer.connect(
-        printerIp,
-        port: printerPort,
+      final prefsPort = int.tryParse(
+        (prefs.getString('printerPort') ?? '').trim(),
       );
+      final candidatePorts = <int>[
+        printerPort,
+        if (prefsPort != null) prefsPort,
+        9100,
+        9101,
+      ].toSet().toList(growable: false);
+
+      PosPrintResult res = PosPrintResult.timeout;
+      int connectedPort = candidatePorts.first;
+      for (final port in candidatePorts) {
+        connectedPort = port;
+        debugPrint('🖨️ KOT connect attempt: $printerIp:$port');
+        res = await printer
+            .connect(printerIp, port: port)
+            .timeout(
+              const Duration(seconds: 4),
+              onTimeout: () => PosPrintResult.timeout,
+            );
+        debugPrint(
+          '🖨️ KOT connect result: $printerIp:$port -> ${_posPrintResultLabel(res)}',
+        );
+        if (res == PosPrintResult.success) break;
+      }
 
       if (res == PosPrintResult.success) {
+        debugPrint('🖨️ KOT printing on $printerIp:$connectedPort');
         String invoiceNumber =
             billingResponse['invoiceNumber'] ??
             billingResponse['doc']?['invoiceNumber'] ??
@@ -4369,17 +5643,12 @@ class _CartPageState extends State<CartPage> {
         printer.row([
           PosColumn(
             text: 'ITEM',
-            width: 7,
+            width: 10,
             styles: const PosStyles(bold: true),
           ),
           PosColumn(
             text: 'QTY',
             width: 2,
-            styles: const PosStyles(bold: true, align: PosAlign.center),
-          ),
-          PosColumn(
-            text: 'NOTE',
-            width: 3,
             styles: const PosStyles(bold: true, align: PosAlign.right),
           ),
         ]);
@@ -4388,6 +5657,7 @@ class _CartPageState extends State<CartPage> {
         // ITEMS
         for (int i = 0; i < items.length; i++) {
           final item = items[i];
+          final itemNote = (item.specialNote ?? '').trim();
           final qtyStr = item.quantity % 1 == 0
               ? item.quantity.toStringAsFixed(0)
               : item.quantity.toStringAsFixed(2);
@@ -4396,7 +5666,7 @@ class _CartPageState extends State<CartPage> {
             PosColumn(
               text:
                   '${i + 1}. ${item.name.toUpperCase()}${item.isOfferFreeItem ? " (FREE)" : ""}',
-              width: 7,
+              width: 10,
               styles: const PosStyles(
                 bold: true,
                 fontType: PosFontType.fontA,
@@ -4407,14 +5677,17 @@ class _CartPageState extends State<CartPage> {
             PosColumn(
               text: qtyStr,
               width: 2,
-              styles: const PosStyles(bold: true, align: PosAlign.center),
-            ),
-            PosColumn(
-              text: item.specialNote ?? '-',
-              width: 3,
               styles: const PosStyles(bold: true, align: PosAlign.right),
             ),
           ]);
+
+          if (itemNote.isNotEmpty) {
+            printer.text(
+              '   Note - $itemNote',
+              styles: const PosStyles(align: PosAlign.left),
+            );
+          }
+
           printer.feed(1);
         }
 
@@ -4441,6 +5714,9 @@ class _CartPageState extends State<CartPage> {
         printer.disconnect();
         return PosPrintResult.success;
       }
+      debugPrint(
+        '⚠️ KOT connect failed for $printerIp on ports ${candidatePorts.join(", ")}. Last result: ${_posPrintResultLabel(res)}',
+      );
       return res;
     } catch (e) {
       debugPrint("Error printing KOT to $printerIp: $e");
@@ -4488,7 +5764,7 @@ class _CartPageState extends State<CartPage> {
     );
   }
 
-  Widget _buildPaymentChips() {
+  Widget _buildPaymentChips({bool lightMode = false}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -4501,8 +5777,17 @@ class _CartPageState extends State<CartPage> {
                 ? null
                 : 'cash',
           ),
-          accent: _accent,
-          chipBg: _chipBg,
+          activeColor: const Color(0xFF1BA672),
+          chipBg: lightMode ? Colors.white : _chipBg,
+          activeBackgroundColor: lightMode
+              ? const Color(0xFFEAF7F1)
+              : const Color(0xFF1BA672).withValues(alpha: 0.18),
+          inactiveBorderColor: lightMode
+              ? const Color(0xFFDADDE5)
+              : Colors.transparent,
+          inactiveForegroundColor: lightMode
+              ? const Color(0xFF5F6775)
+              : Colors.white70,
           width: 95, // increase width
         ),
         _PaymentChip(
@@ -4514,8 +5799,17 @@ class _CartPageState extends State<CartPage> {
                 ? null
                 : 'upi',
           ),
-          accent: _accent,
-          chipBg: _chipBg,
+          activeColor: const Color(0xFF0A84FF),
+          chipBg: lightMode ? Colors.white : _chipBg,
+          activeBackgroundColor: lightMode
+              ? const Color(0xFFEAF3FF)
+              : const Color(0xFF0A84FF).withValues(alpha: 0.18),
+          inactiveBorderColor: lightMode
+              ? const Color(0xFFDADDE5)
+              : Colors.transparent,
+          inactiveForegroundColor: lightMode
+              ? const Color(0xFF5F6775)
+              : Colors.white70,
           width: 95,
         ),
         _PaymentChip(
@@ -4527,9 +5821,566 @@ class _CartPageState extends State<CartPage> {
                 ? null
                 : 'card',
           ),
-          accent: _accent,
-          chipBg: _chipBg,
+          activeColor: const Color(0xFFFF9F0A),
+          chipBg: lightMode ? Colors.white : _chipBg,
+          activeBackgroundColor: lightMode
+              ? const Color(0xFFFFF4E5)
+              : const Color(0xFFFF9F0A).withValues(alpha: 0.18),
+          inactiveBorderColor: lightMode
+              ? const Color(0xFFDADDE5)
+              : Colors.transparent,
+          inactiveForegroundColor: lightMode
+              ? const Color(0xFF5F6775)
+              : Colors.white70,
           width: 95,
+        ),
+      ],
+    );
+  }
+
+  Future<void> _openTableAddItems() async {
+    final cartProvider = Provider.of<CartProvider>(context, listen: false);
+    final useHomeCategoriesUi =
+        cartProvider.isSharedTableOrder &&
+        cartProvider.preferHomeCategoriesUiForCurrentDraft;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CategoriesPage(
+          sourcePage: useHomeCategoriesUi ? PageType.home : PageType.table,
+          initialHomeTopCategories: useHomeCategoriesUi
+              ? cartProvider.homeTopCategoriesSeedForCurrentDraft
+              : const <Map<String, dynamic>>[],
+        ),
+      ),
+    );
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  double _calculateKotSavings(Iterable<CartItem> items) {
+    double originalTotal = 0.0;
+    double payableTotal = 0.0;
+    for (final item in items) {
+      if (item.quantity <= 0) continue;
+      originalTotal += item.price * item.quantity;
+      payableTotal += item.lineTotal;
+    }
+    final saved = originalTotal - payableTotal;
+    return saved > 0.001 ? saved : 0.0;
+  }
+
+  Widget _buildKotEmptyState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 96,
+              height: 96,
+              decoration: BoxDecoration(
+                color: const Color(0xFFEAF7F1),
+                borderRadius: BorderRadius.circular(28),
+              ),
+              child: const Icon(
+                Icons.restaurant_menu_rounded,
+                color: Color(0xFF1BA672),
+                size: 46,
+              ),
+            ),
+            const SizedBox(height: 18),
+            const Text(
+              'No items in this KOT yet',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Color(0xFF1F2430),
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Add products from categories and send the KOT from here.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Color(0xFF6E7583),
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            const SizedBox(height: 22),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _openTableAddItems,
+                icon: const Icon(
+                  Icons.add_rounded,
+                  color: Colors.white,
+                  size: 20,
+                ),
+                label: const Text(
+                  'Add More Items',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  backgroundColor: const Color(0xFF16A34A),
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildKotOrderBar({
+    required List<CartItem> cartItems,
+    required double totalQty,
+    required VoidCallback? onTap,
+  }) {
+    const barColor = Color(0xFFEF4F5F);
+
+    return Opacity(
+      opacity: onTap == null ? 0.6 : 1,
+      child: Material(
+        color: barColor,
+        borderRadius: BorderRadius.circular(18),
+        elevation: 2,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(18),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+            alignment: Alignment.center,
+            child: const Text(
+              'ORDER',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 21,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.4,
+                height: 1,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildKotModeBody({
+    required CartProvider cartProvider,
+    required List<CartItem> items,
+    required bool showSharedTableInput,
+  }) {
+    final hasAnyItems =
+        items.isNotEmpty || cartProvider.recalledItems.isNotEmpty;
+    final activeCartItems = cartProvider.cartItems
+        .where((item) => item.quantity > 0)
+        .toList(growable: false);
+    final showBillButton =
+        cartProvider.recalledBillId != null && cartProvider.cartItems.isEmpty;
+    final showKotButton =
+        cartProvider.recalledBillId == null ||
+        cartProvider.cartItems.isNotEmpty;
+    final totalQuantity = cartProvider.cartItems.fold<double>(
+      0,
+      (sum, item) => sum + item.quantity,
+    );
+    final savedAmount = _calculateKotSavings(cartProvider.cartItems);
+    final tableName = cartProvider.selectedTable?.trim() ?? '';
+    final sectionName = cartProvider.selectedSection?.trim() ?? '';
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    final footerHeight = showSharedTableInput
+        ? 166.0
+        : (showBillButton ? 206.0 : 104.0);
+
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: DecoratedBox(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFFF8F2EC), Color(0xFFF4EFE8)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+            ),
+          ),
+        ),
+        if (!hasAnyItems)
+          Padding(
+            padding: EdgeInsets.only(bottom: footerHeight + bottomInset),
+            child: _buildKotEmptyState(),
+          )
+        else
+          ListView(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              12,
+              16,
+              footerHeight + bottomInset + 12,
+            ),
+            children: [
+              if (savedAmount > 0.0)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 14,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFDDF4E8),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: const Color(0xFFB8E7CC)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.auto_awesome_rounded,
+                        color: Color(0xFF1BA672),
+                        size: 18,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          '₹${savedAmount.toStringAsFixed(0)} saved on this order',
+                          style: const TextStyle(
+                            color: Color(0xFF187C57),
+                            fontSize: 15,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              if (tableName.isNotEmpty || sectionName.isNotEmpty) ...[
+                SizedBox(height: savedAmount > 0.0 ? 12 : 0),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    if (tableName.isNotEmpty)
+                      _KotMetaChip(
+                        icon: Icons.table_restaurant_rounded,
+                        label: 'Table $tableName',
+                      ),
+                    if (sectionName.isNotEmpty)
+                      _KotMetaChip(
+                        icon: Icons.place_outlined,
+                        label: sectionName,
+                      ),
+                    if (totalQuantity > 0)
+                      _KotMetaChip(
+                        icon: Icons.shopping_bag_outlined,
+                        label:
+                            '${_formatCartQuantityValue(totalQuantity)} item${totalQuantity == 1 ? '' : 's'}',
+                      ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(28),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFFB8A998).withValues(alpha: 0.16),
+                      blurRadius: 22,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  children: [
+                    if (items.isNotEmpty) ...[
+                      const _KotSectionTitle(label: 'Current Order'),
+                      const SizedBox(height: 10),
+                      ...items.asMap().entries.map((entry) {
+                        final index = entry.key;
+                        final item = entry.value;
+                        return _KotEditableItemRow(
+                          key: ValueKey(
+                            'kot_${item.billingItemId ?? item.id}_${index}_${item.quantity}_${item.specialNote}',
+                          ),
+                          item: item,
+                          showNoteIcon: true,
+                          onRemove: () => cartProvider.removeItem(item.id),
+                          onQuantityChange: (q) =>
+                              cartProvider.updateQuantity(item.id, q),
+                          onNoteChange: (note) =>
+                              cartProvider.updateNote(item.id, note),
+                        );
+                      }),
+                    ],
+                    if (cartProvider.recalledItems.isNotEmpty) ...[
+                      if (items.isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        const Divider(height: 24, color: Color(0xFFE9E2D8)),
+                      ],
+                      const _KotSectionTitle(label: 'Previous Orders'),
+                      const SizedBox(height: 10),
+                      ...cartProvider.recalledItems.asMap().entries.map((
+                        entry,
+                      ) {
+                        final index = entry.key;
+                        final item = entry.value;
+                        final isOfferFreeItem = item.isOfferFreeItem;
+                        final isRandomOfferItem =
+                            item.isRandomCustomerOfferItem;
+                        final isReadOnlyOfferItem =
+                            isOfferFreeItem || isRandomOfferItem;
+                        final status = item.status?.toLowerCase() ?? 'ordered';
+
+                        String? nextStatus;
+                        Color statusColor = const Color(0xFFE0A100);
+                        String displayStatus = status.toUpperCase();
+
+                        switch (status) {
+                          case 'ordered':
+                            nextStatus = null;
+                            statusColor = const Color(0xFFE0A100);
+                            break;
+                          case 'confirmed':
+                            nextStatus = null;
+                            statusColor = const Color(0xFF0A84FF);
+                            break;
+                          case 'prepared':
+                            nextStatus = 'delivered';
+                            statusColor = const Color(0xFF2EBF3B);
+                            break;
+                          case 'delivered':
+                            nextStatus = null;
+                            statusColor = const Color(0xFFEF4F5F);
+                            break;
+                          default:
+                            nextStatus = null;
+                        }
+
+                        return GestureDetector(
+                          onDoubleTap: isReadOnlyOfferItem || nextStatus == null
+                              ? null
+                              : () => cartProvider.updateRecalledItemStatus(
+                                  context,
+                                  index,
+                                  nextStatus!,
+                                ),
+                          onLongPress: () {
+                            if (isReadOnlyOfferItem) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Offer items are read-only'),
+                                  duration: Duration(seconds: 1),
+                                ),
+                              );
+                              return;
+                            }
+                            if (status == 'ordered' || status == 'confirmed') {
+                              _showCancelDialog(
+                                context,
+                                cartProvider,
+                                index,
+                                item.name,
+                              );
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    '${status.toUpperCase()} items cannot be cancelled',
+                                  ),
+                                  backgroundColor: Colors.red,
+                                  duration: const Duration(seconds: 2),
+                                ),
+                              );
+                            }
+                          },
+                          child: _KotReadOnlyItemRow(
+                            item: item,
+                            statusLabel: displayStatus,
+                            statusColor: statusColor,
+                          ),
+                        );
+                      }),
+                    ],
+                    const SizedBox(height: 8),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 176,
+                          child: ElevatedButton.icon(
+                            onPressed: _openTableAddItems,
+                            icon: const Icon(
+                              Icons.add_rounded,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                            label: const Text(
+                              'Add More Items',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              minimumSize: const Size.fromHeight(42),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                              ),
+                              elevation: 0,
+                              backgroundColor: const Color(0xFF16A34A),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: Container(
+            padding: EdgeInsets.fromLTRB(16, 14, 16, bottomInset + 12),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(28),
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.08),
+                  blurRadius: 24,
+                  offset: const Offset(0, -6),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (showSharedTableInput) ...[
+                  Container(
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8F7F5),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFE2DDD6)),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    child: TextField(
+                      controller: _sharedTableController,
+                      style: const TextStyle(
+                        color: Color(0xFF1F2430),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      textInputAction: TextInputAction.done,
+                      onTapOutside: (_) =>
+                          FocusManager.instance.primaryFocus?.unfocus(),
+                      onEditingComplete: () =>
+                          FocusManager.instance.primaryFocus?.unfocus(),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(
+                          RegExp(r'[a-zA-Z0-9\- ]'),
+                        ),
+                      ],
+                      decoration: const InputDecoration(
+                        border: InputBorder.none,
+                        hintText: 'Enter shared table number',
+                        hintStyle: TextStyle(
+                          color: Color(0xFF9CA3AF),
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+                if (showKotButton) ...[
+                  const SizedBox(height: 12),
+                  _buildKotOrderBar(
+                    cartItems: activeCartItems,
+                    totalQty: totalQuantity,
+                    onTap:
+                        _isBillingInProgress || cartProvider.cartItems.isEmpty
+                        ? null
+                        : () async {
+                            if (!mounted) return;
+                            await _submitBillingFromTap(
+                              status: 'pending',
+                              isReminder: cartProvider.recalledBillId != null,
+                            );
+                          },
+                  ),
+                ],
+                if (showBillButton) ...[
+                  const SizedBox(height: 12),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Total: ₹${cartProvider.total.toStringAsFixed(2)}',
+                      style: const TextStyle(
+                        color: Color(0xFF1F2430),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildPaymentChips(lightMode: true),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: _isBillingInProgress
+                          ? null
+                          : () => _submitBillingFromTap(status: 'completed'),
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(50),
+                        backgroundColor: const Color(0xFF2EBF3B),
+                        disabledBackgroundColor: const Color(0xFF2EBF3B),
+                        disabledForegroundColor: Colors.white,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        elevation: 0,
+                      ),
+                      child: const Text(
+                        'BILL',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
       ],
     );
@@ -4539,10 +6390,15 @@ class _CartPageState extends State<CartPage> {
   Widget build(BuildContext context) {
     final cartProvider = Provider.of<CartProvider>(context);
     return CommonScaffold(
-      title: 'Cart',
+      title: cartProvider.currentType == CartType.table
+          ? ((_branchName?.trim().isNotEmpty ?? false)
+                ? _branchName!.trim()
+                : 'Table Order')
+          : 'Cart',
       pageType: cartProvider.currentType == CartType.billing
           ? PageType.billing
           : PageType.table,
+      showBackButtonInAppBar: cartProvider.currentType == CartType.table,
       onScanCallback: _handleScan,
       body: Container(
         color: _bg,
@@ -4554,6 +6410,17 @@ class _CartPageState extends State<CartPage> {
                 cartProvider.isSharedTableOrder &&
                 (cartProvider.recalledBillId == null ||
                     cartProvider.cartItems.isNotEmpty);
+            if (showSharedTableInput &&
+                _sharedTableController.text.trim().isEmpty &&
+                (cartProvider.selectedTable?.trim().isNotEmpty ?? false)) {
+              final selectedTable = cartProvider.selectedTable!.trim();
+              _sharedTableController.value = TextEditingValue(
+                text: selectedTable,
+                selection: TextSelection.collapsed(
+                  offset: selectedTable.length,
+                ),
+              );
+            }
 
             // Calculate total items as sum of quantities (assuming double, but display as int if whole)
             final totalQuantity = cartProvider.cartItems.fold<double>(
@@ -4563,6 +6430,68 @@ class _CartPageState extends State<CartPage> {
             final totalItemsDisplay = totalQuantity % 1 == 0
                 ? totalQuantity.toInt().toString()
                 : totalQuantity.toStringAsFixed(2);
+
+            if (cartProvider.currentType == CartType.table) {
+              return SafeArea(
+                child: Stack(
+                  children: [
+                    _buildKotModeBody(
+                      cartProvider: cartProvider,
+                      items: items,
+                      showSharedTableInput: showSharedTableInput,
+                    ),
+                    if (_isBillingInProgress)
+                      Positioned.fill(
+                        child: AbsorbPointer(
+                          child: Container(
+                            color: Colors.black.withValues(alpha: 0.35),
+                            alignment: Alignment.center,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 18,
+                                vertical: 14,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(16),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.14),
+                                    blurRadius: 20,
+                                    offset: const Offset(0, 8),
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2.2,
+                                      color: Color(0xFF0A84FF),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Text(
+                                    _billingProgressLabel,
+                                    style: const TextStyle(
+                                      color: Color(0xFF1F2430),
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+            }
 
             return SafeArea(
               child: Stack(
@@ -5002,9 +6931,13 @@ class _CartPageState extends State<CartPage> {
                                   ],
                                 ),
                                 Switch(
-                                  value: _addCustomerDetails,
-                                  onChanged: (v) =>
-                                      setState(() => _addCustomerDetails = v),
+                                  value:
+                                      cartProvider.currentType == CartType.table
+                                      ? _customerDetailsVisibilityConfig
+                                            .showCustomerDetailsForTableOrders
+                                      : _customerDetailsVisibilityConfig
+                                            .showCustomerDetailsForBillingOrders,
+                                  onChanged: null,
                                   activeColor: _accent,
                                   inactiveThumbColor: Colors.grey,
                                 ),
@@ -5069,7 +7002,7 @@ class _CartPageState extends State<CartPage> {
                                     child: ElevatedButton(
                                       onPressed: _isBillingInProgress
                                           ? null
-                                          : () => _submitBilling(
+                                          : () => _submitBillingFromTap(
                                               status: 'completed',
                                             ),
                                       style: ElevatedButton.styleFrom(
@@ -5110,13 +7043,8 @@ class _CartPageState extends State<CartPage> {
                                       onPressed: _isBillingInProgress
                                           ? null
                                           : () async {
-                                              final proceed =
-                                                  await _confirmKotOfferPreview(
-                                                    cartProvider,
-                                                  );
-                                              if (!proceed) return;
                                               if (!mounted) return;
-                                              await _submitBilling(
+                                              await _submitBillingFromTap(
                                                 status: 'pending',
                                                 isReminder:
                                                     cartProvider
@@ -5156,6 +7084,50 @@ class _CartPageState extends State<CartPage> {
                       ),
                     ),
                   ),
+                  if (_isBillingInProgress)
+                    Positioned.fill(
+                      child: AbsorbPointer(
+                        child: Container(
+                          color: Colors.black.withValues(alpha: 0.55),
+                          alignment: Alignment.center,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 14,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1E1E1E),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.18),
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2.2,
+                                    color: Color(0xFF0A84FF),
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Text(
+                                  _billingProgressLabel,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                 ],
               ),
             );
@@ -5660,13 +7632,620 @@ class _QuantityButton extends StatelessWidget {
   }
 }
 
+String _formatCartQuantityValue(double qty) {
+  if (qty % 1 == 0) return qty.toInt().toString();
+  final roundedOneDecimal = double.parse(qty.toStringAsFixed(1));
+  if ((qty - roundedOneDecimal).abs() < 0.001) {
+    return roundedOneDecimal.toStringAsFixed(1);
+  }
+  return qty.toStringAsFixed(2);
+}
+
+double _cartQuantityStep(double qty) {
+  if (qty == 0) return 0.25;
+  int a = (qty * 100).round().abs();
+  int b = 100;
+  while (b != 0) {
+    final temp = b;
+    b = a % b;
+    a = temp;
+  }
+  return a / 100.0;
+}
+
+bool _cartItemIsVeg(CartItem item) {
+  final department = item.department?.trim().toLowerCase() ?? '';
+  if (department.contains('non') && department.contains('veg')) {
+    return false;
+  }
+  if (department.contains('veg')) {
+    return true;
+  }
+  return false;
+}
+
+String _formatKotMoney(double value) {
+  if (value == value.roundToDouble()) {
+    return '₹${value.toInt()}';
+  }
+  return '₹${value.toStringAsFixed(2)}';
+}
+
+String _kotDisplayName(String name) {
+  final cleaned = name.replaceFirst(
+    RegExp(
+      r'\s*\((?:rs\.?|inr|₹)\s*\d+(?:\.\d{1,2})?\)\s*$',
+      caseSensitive: false,
+    ),
+    '',
+  );
+  return cleaned.trim().isEmpty ? name : cleaned.trim();
+}
+
+class _KotMetaChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _KotMetaChip({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE2DBD3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 16, color: const Color(0xFF6E7583)),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFF1F2430),
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _KotSectionTitle extends StatelessWidget {
+  final String label;
+
+  const _KotSectionTitle({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: Color(0xFF1F2430),
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(width: 10),
+        const Expanded(
+          child: Divider(color: Color(0xFFE9E2D8), thickness: 1, height: 1),
+        ),
+      ],
+    );
+  }
+}
+
+class _KotEditableItemRow extends StatelessWidget {
+  final CartItem item;
+  final bool showNoteIcon;
+  final VoidCallback onRemove;
+  final ValueChanged<double> onQuantityChange;
+  final ValueChanged<String> onNoteChange;
+
+  const _KotEditableItemRow({
+    super.key,
+    required this.item,
+    required this.showNoteIcon,
+    required this.onRemove,
+    required this.onQuantityChange,
+    required this.onNoteChange,
+  });
+
+  Future<void> _showNoteDialog(BuildContext context) async {
+    final ctrl = TextEditingController(text: item.specialNote ?? '');
+    final note = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Colors.white,
+        title: const Text(
+          'Special Note',
+          style: TextStyle(
+            color: Color(0xFF1F2430),
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          style: const TextStyle(color: Color(0xFF1F2430)),
+          decoration: const InputDecoration(
+            hintText: 'Enter instructions...',
+            hintStyle: TextStyle(color: Color(0xFF9CA3AF)),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (note != null) {
+      onNoteChange(note);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isFreeOfferItem = item.isOfferFreeItem;
+    final isRandomOfferItem = item.isRandomCustomerOfferItem;
+    final isReadOnlyOfferItem = isFreeOfferItem || isRandomOfferItem;
+    final isPriceOfferItem = item.isPriceOfferApplied;
+    final qty = item.quantity;
+    final step = _cartQuantityStep(qty);
+    final currentLineTotal = item.lineTotal;
+    final originalLineTotal = item.price * qty;
+    final showOldLineTotal =
+        !isReadOnlyOfferItem && originalLineTotal > currentLineTotal + 0.001;
+    final note = item.specialNote?.trim() ?? '';
+    final displayName = _kotDisplayName(item.name);
+
+    String? chipLabel;
+    Color? chipTextColor;
+    Color? chipBgColor;
+    Color? chipBorderColor;
+    if (isRandomOfferItem) {
+      chipLabel = 'RANDOM FREE ITEM';
+      chipTextColor = const Color(0xFFFF9F0A);
+      chipBgColor = const Color(0xFFFFF4E5);
+      chipBorderColor = const Color(0xFFFFD18A);
+    } else if (isFreeOfferItem) {
+      chipLabel = 'FREE ITEM OFFER';
+      chipTextColor = const Color(0xFF1BA672);
+      chipBgColor = const Color(0xFFEAF7F1);
+      chipBorderColor = const Color(0xFFBDE8D3);
+    } else if (isPriceOfferItem) {
+      chipLabel = 'PRICE OFFER';
+      chipTextColor = const Color(0xFF0A84FF);
+      chipBgColor = const Color(0xFFEAF3FF);
+      chipBorderColor = const Color(0xFFBDD7FF);
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: onRemove,
+              child: Padding(
+                padding: const EdgeInsets.all(2),
+                child: _KotDietBadge(isVeg: _cartItemIsVeg(item)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 3),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        displayName,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF1F2430),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          height: 1.2,
+                        ),
+                      ),
+                    ),
+                    if (showNoteIcon && !isReadOnlyOfferItem)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 6),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(8),
+                          onTap: () => _showNoteDialog(context),
+                          child: Padding(
+                            padding: const EdgeInsets.all(2),
+                            child: Icon(
+                              note.isNotEmpty
+                                  ? Icons.note_alt_rounded
+                                  : Icons.note_add_outlined,
+                              size: 18,
+                              color: note.isNotEmpty
+                                  ? const Color(0xFF0A84FF)
+                                  : const Color(0xFF7B8494),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+                if (chipLabel != null) ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: chipBgColor,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: chipBorderColor!),
+                    ),
+                    child: Text(
+                      chipLabel,
+                      style: TextStyle(
+                        color: chipTextColor,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.4,
+                      ),
+                    ),
+                  ),
+                ],
+                if (note.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    note,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF727A88),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              isReadOnlyOfferItem
+                  ? _KotLockedQtyPill(quantity: qty)
+                  : _KotQtyStepper(
+                      quantity: qty,
+                      onDecrease: () => onQuantityChange(
+                        (qty - step).clamp(0.0, double.infinity),
+                      ),
+                      onIncrease: () => onQuantityChange(
+                        (qty + step).clamp(0.0, double.infinity),
+                      ),
+                    ),
+              const SizedBox(height: 6),
+              if (showOldLineTotal)
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _formatKotMoney(originalLineTotal),
+                      style: const TextStyle(
+                        color: Color(0xFF9CA3AF),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        decoration: TextDecoration.lineThrough,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      _formatKotMoney(currentLineTotal),
+                      style: const TextStyle(
+                        color: Color(0xFF1F2430),
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ],
+                )
+              else
+                Text(
+                  _formatKotMoney(currentLineTotal),
+                  style: const TextStyle(
+                    color: Color(0xFF1F2430),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _KotReadOnlyItemRow extends StatelessWidget {
+  final CartItem item;
+  final String statusLabel;
+  final Color statusColor;
+
+  const _KotReadOnlyItemRow({
+    required this.item,
+    required this.statusLabel,
+    required this.statusColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final note = item.specialNote?.trim() ?? '';
+    final displayName = _kotDisplayName(item.name);
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: _KotDietBadge(isVeg: _cartItemIsVeg(item)),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const SizedBox(height: 3),
+                Text(
+                  displayName,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFF1F2430),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    height: 1.2,
+                  ),
+                ),
+                if (note.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    note,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF727A88),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    statusLabel,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              _KotLockedQtyPill(quantity: item.quantity),
+              const SizedBox(height: 6),
+              Text(
+                _formatKotMoney(item.lineTotal),
+                style: const TextStyle(
+                  color: Color(0xFF1F2430),
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _KotDietBadge extends StatelessWidget {
+  final bool isVeg;
+
+  const _KotDietBadge({required this.isVeg});
+
+  @override
+  Widget build(BuildContext context) {
+    final markerColor = isVeg
+        ? const Color(0xFF1E9D55)
+        : const Color(0xFFE53935);
+    return Container(
+      width: 15,
+      height: 15,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: markerColor, width: 0.9),
+      ),
+      child: Center(
+        child: isVeg
+            ? Container(
+                width: 5,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: markerColor,
+                  shape: BoxShape.circle,
+                ),
+              )
+            : Icon(Icons.change_history_rounded, size: 8, color: markerColor),
+      ),
+    );
+  }
+}
+
+class _KotQtyStepper extends StatelessWidget {
+  final double quantity;
+  final VoidCallback onDecrease;
+  final VoidCallback onIncrease;
+
+  const _KotQtyStepper({
+    required this.quantity,
+    required this.onDecrease,
+    required this.onIncrease,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 68,
+      height: 28,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: const Color(0xFFE0DBD3)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          _KotQtyAction(symbol: '−', onTap: onDecrease),
+          Expanded(
+            child: Center(
+              child: Text(
+                _formatCartQuantityValue(quantity),
+                style: const TextStyle(
+                  color: Color(0xFF1F2430),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ),
+          _KotQtyAction(symbol: '+', onTap: onIncrease),
+        ],
+      ),
+    );
+  }
+}
+
+class _KotQtyAction extends StatelessWidget {
+  final String symbol;
+  final VoidCallback onTap;
+
+  const _KotQtyAction({required this.symbol, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: SizedBox(
+        width: 19,
+        height: double.infinity,
+        child: Center(
+          child: Text(
+            symbol,
+            style: const TextStyle(
+              color: Color(0xFF1BA672),
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+              height: 1,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _KotLockedQtyPill extends StatelessWidget {
+  final double quantity;
+
+  const _KotLockedQtyPill({required this.quantity});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 68,
+      height: 28,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF5F4F2),
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: const Color(0xFFE0DBD3)),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            _formatCartQuantityValue(quantity),
+            style: const TextStyle(
+              color: Color(0xFF1F2430),
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _PaymentChip extends StatelessWidget {
   final String label;
   final IconData icon;
   final bool selected;
   final VoidCallback onTap;
-  final Color accent;
+  final Color activeColor;
   final Color chipBg;
+  final Color activeBackgroundColor;
+  final Color inactiveBorderColor;
+  final Color inactiveForegroundColor;
   final double width;
 
   const _PaymentChip({
@@ -5675,8 +8254,11 @@ class _PaymentChip extends StatelessWidget {
     required this.icon,
     required this.selected,
     required this.onTap,
-    required this.accent,
+    required this.activeColor,
     required this.chipBg,
+    required this.activeBackgroundColor,
+    required this.inactiveBorderColor,
+    required this.inactiveForegroundColor,
     required this.width,
   }) : super(key: key);
 
@@ -5689,19 +8271,25 @@ class _PaymentChip extends StatelessWidget {
         width: width, // 🔥 FIXED WIDTH
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: selected ? accent.withOpacity(0.18) : chipBg,
+          color: selected ? activeBackgroundColor : chipBg,
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: selected ? accent : Colors.transparent),
+          border: Border.all(
+            color: selected ? activeColor : inactiveBorderColor,
+          ),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, size: 18, color: selected ? accent : Colors.white70),
+            Icon(
+              icon,
+              size: 18,
+              color: selected ? activeColor : inactiveForegroundColor,
+            ),
             const SizedBox(width: 6),
             Text(
               label,
               style: TextStyle(
-                color: selected ? accent : Colors.white70,
+                color: selected ? activeColor : inactiveForegroundColor,
                 fontSize: 15,
                 fontWeight: FontWeight.w600,
               ),

@@ -4,27 +4,41 @@ import 'dart:io' as io; // For Platform check
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:blackforest_app/app_http.dart' as http;
+import 'package:esc_pos_printer/esc_pos_printer.dart';
+import 'package:esc_pos_utils/esc_pos_utils.dart' hide Barcode;
 import 'package:provider/provider.dart'; // For cart badge
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:mobile_scanner/mobile_scanner.dart'; // Import for scanner
 import 'package:blackforest_app/categories_page.dart'; // Import CategoriesPage
 import 'package:blackforest_app/cart_page.dart'; // Import CartPage
 import 'package:blackforest_app/cart_provider.dart'; // Import CartProvider
+import 'package:blackforest_app/chat_page.dart';
 import 'package:blackforest_app/employee.dart'; // Import EmployeePage
 import 'package:blackforest_app/table.dart'; // Import TablePage
-import 'package:blackforest_app/kot_bills_page.dart'; // Import KotBillsPage
 import 'package:blackforest_app/home_page.dart';
 import 'package:blackforest_app/kitchen_notifications_page.dart'; // Import HomePage
 import 'package:blackforest_app/auth_flags.dart';
 import 'package:blackforest_app/session_prefs.dart';
 
-enum PageType { home, billing, cart, billsheet, table, editbill, employee }
+enum PageType {
+  home,
+  billing,
+  cart,
+  billsheet,
+  table,
+  editbill,
+  employee,
+  chat,
+}
 
 class CommonScaffold extends StatefulWidget {
   final String title;
   final Widget body;
   final Function(String)? onScanCallback;
   final PageType pageType;
+  final bool showAppBar;
+  final bool hideBottomNavigationBar;
+  final bool showBackButtonInAppBar;
 
   const CommonScaffold({
     super.key,
@@ -32,13 +46,19 @@ class CommonScaffold extends StatefulWidget {
     required this.body,
     this.onScanCallback,
     required this.pageType,
+    this.showAppBar = true,
+    this.hideBottomNavigationBar = false,
+    this.showBackButtonInAppBar = false,
   });
 
   @override
-  _CommonScaffoldState createState() => _CommonScaffoldState();
+  State<CommonScaffold> createState() => _CommonScaffoldState();
 }
 
 class _CommonScaffoldState extends State<CommonScaffold> {
+  static const Color _navActiveColor = Color(0xFFEF4F5F);
+  static const Color _navInactiveColor = Color(0xFF8C8C8C);
+  static const Color _chatNavColor = Color(0xFF2AABEE);
   Timer? _inactivityTimer;
   Timer? _kitchenSyncTimer;
   String _username = 'Menu';
@@ -48,6 +68,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   String _role = '';
   Timer? _sessionCheckTimer;
   bool _isLoggingOut = false;
+  bool _isPrinterTestRunning = false;
 
   @override
   void initState() {
@@ -324,6 +345,291 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     );
   }
 
+  String? _toIdString(dynamic value) {
+    if (value == null) return null;
+    if (value is Map) {
+      final map = Map<String, dynamic>.from(value);
+      return (map['id'] ?? map['_id'] ?? map[r'$oid'])?.toString();
+    }
+    return value.toString();
+  }
+
+  int _parsePort(dynamic value, {int fallback = 9100}) {
+    if (value is num) return value.toInt();
+    if (value is String) {
+      final parsed = int.tryParse(value.trim());
+      if (parsed != null) return parsed;
+    }
+    return fallback;
+  }
+
+  String? _extractPrinterIp(dynamic rawConfig) {
+    if (rawConfig is! Map) return null;
+    final config = Map<String, dynamic>.from(rawConfig);
+    final nestedPrinter = config['printer'] is Map
+        ? Map<String, dynamic>.from(config['printer'])
+        : null;
+    final candidates = [
+      config['printerIp'],
+      config['ipAddress'],
+      config['ip'],
+      config['host'],
+      nestedPrinter?['printerIp'],
+      nestedPrinter?['ipAddress'],
+      nestedPrinter?['ip'],
+      nestedPrinter?['host'],
+    ];
+    for (final value in candidates) {
+      final ip = value?.toString().trim() ?? '';
+      if (ip.isNotEmpty) return ip;
+    }
+    return null;
+  }
+
+  int _extractPrinterPort(dynamic rawConfig, {int fallback = 9100}) {
+    if (rawConfig is! Map) return fallback;
+    final config = Map<String, dynamic>.from(rawConfig);
+    final nestedPrinter = config['printer'] is Map
+        ? Map<String, dynamic>.from(config['printer'])
+        : null;
+    final candidates = [
+      config['printerPort'],
+      config['port'],
+      nestedPrinter?['printerPort'],
+      nestedPrinter?['port'],
+    ];
+    for (final value in candidates) {
+      if (value is num) return value.toInt();
+      if (value is String) {
+        final parsed = int.tryParse(value.trim());
+        if (parsed != null) return parsed;
+      }
+    }
+    return fallback;
+  }
+
+  String _posPrintResultLabel(PosPrintResult result) {
+    return '${result.msg} (code: ${result.value})';
+  }
+
+  Future<List<_PrinterTarget>> _resolvePrinterTargetsForTest() async {
+    final prefs = await SharedPreferences.getInstance();
+    final targetsByKey = <String, _PrinterTarget>{};
+
+    void addTarget(String label, dynamic ipRaw, [dynamic portRaw]) {
+      final ip = ipRaw?.toString().trim() ?? '';
+      if (ip.isEmpty) return;
+      final port = _parsePort(portRaw, fallback: 9100);
+      final key = '$ip:$port';
+      targetsByKey.putIfAbsent(
+        key,
+        () => _PrinterTarget(label: label, ip: ip, port: port),
+      );
+    }
+
+    addTarget(
+      'Saved Receipt',
+      prefs.getString('printerIp'),
+      prefs.getString('printerPort'),
+    );
+
+    final token = prefs.getString('token');
+    final branchId = prefs.getString('branchId');
+    if (token == null ||
+        token.isEmpty ||
+        branchId == null ||
+        branchId.isEmpty) {
+      return targetsByKey.values.toList(growable: false);
+    }
+
+    final headers = {
+      'Authorization': 'Bearer $token',
+      'Content-Type': 'application/json',
+    };
+
+    try {
+      final branchRes = await http
+          .get(
+            Uri.parse(
+              'https://blackforest.vseyal.com/api/branches/$branchId?depth=1',
+            ),
+            headers: headers,
+          )
+          .timeout(const Duration(seconds: 5));
+      if (branchRes.statusCode == 200) {
+        final branch = jsonDecode(branchRes.body);
+        addTarget('Branch Receipt', branch['printerIp'], branch['printerPort']);
+      }
+    } catch (e) {
+      debugPrint('Printer test branch fetch failed: $e');
+    }
+
+    try {
+      final globalRes = await http
+          .get(
+            Uri.parse(
+              'https://blackforest.vseyal.com/api/globals/branch-geo-settings',
+            ),
+            headers: headers,
+          )
+          .timeout(const Duration(seconds: 5));
+      if (globalRes.statusCode == 200) {
+        final settings = jsonDecode(globalRes.body);
+        final locations = settings['locations'];
+        if (locations is List) {
+          for (final rawLoc in locations) {
+            if (rawLoc is! Map) continue;
+            final loc = Map<String, dynamic>.from(rawLoc);
+            final locBranchId = _toIdString(loc['branch']);
+            if (locBranchId != branchId) continue;
+
+            addTarget('Global Receipt', loc['printerIp'], loc['printerPort']);
+
+            final kotPrinters = loc['kotPrinters'];
+            if (kotPrinters is List) {
+              for (var i = 0; i < kotPrinters.length; i++) {
+                final printer = kotPrinters[i];
+                addTarget(
+                  'KOT ${i + 1}',
+                  _extractPrinterIp(printer),
+                  _extractPrinterPort(printer),
+                );
+              }
+            }
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Printer test global fetch failed: $e');
+    }
+
+    return targetsByKey.values.toList(growable: false);
+  }
+
+  Future<_PrinterProbeResult> _probePrinterTarget(_PrinterTarget target) async {
+    final profile = await CapabilityProfile.load();
+    final printer = NetworkPrinter(PaperSize.mm80, profile);
+    final candidatePorts = <int>{
+      target.port,
+      9100,
+      9101,
+    }.where((p) => p > 0).toList(growable: false);
+
+    PosPrintResult lastResult = PosPrintResult.timeout;
+    int? connectedPort;
+
+    try {
+      for (final port in candidatePorts) {
+        debugPrint('Printer test connect attempt: ${target.ip}:$port');
+        lastResult = await printer
+            .connect(target.ip, port: port)
+            .timeout(
+              const Duration(seconds: 2),
+              onTimeout: () => PosPrintResult.timeout,
+            );
+        debugPrint(
+          'Printer test connect result: ${target.ip}:$port -> ${_posPrintResultLabel(lastResult)}',
+        );
+        if (lastResult == PosPrintResult.success) {
+          connectedPort = port;
+          break;
+        }
+      }
+    } catch (e) {
+      return _PrinterProbeResult(
+        target: target,
+        success: false,
+        connectedPort: null,
+        result: null,
+        errorMessage: e.toString(),
+      );
+    } finally {
+      // esc_pos_printer keeps socket as late-initialized; avoid disconnect when
+      // connect never succeeded, otherwise it can throw LateInitializationError.
+      if (connectedPort != null) {
+        try {
+          printer.disconnect();
+        } catch (e) {
+          debugPrint('Printer test disconnect error: $e');
+        }
+      }
+    }
+
+    return _PrinterProbeResult(
+      target: target,
+      success: connectedPort != null,
+      connectedPort: connectedPort,
+      result: lastResult,
+      errorMessage: null,
+    );
+  }
+
+  Future<void> _runPrinterTest() async {
+    if (_isPrinterTestRunning) {
+      _showMessage('Printer test already running');
+      return;
+    }
+    _isPrinterTestRunning = true;
+    _showMessage('Testing configured printers...');
+
+    try {
+      final targets = await _resolvePrinterTargetsForTest();
+      if (targets.isEmpty) {
+        _showMessage('No printer configured for this branch');
+        return;
+      }
+
+      final results = <_PrinterProbeResult>[];
+      for (final target in targets) {
+        results.add(await _probePrinterTarget(target));
+      }
+
+      if (!mounted) return;
+      final successCount = results.where((r) => r.success).length;
+      final lines = <String>[];
+
+      for (final result in results) {
+        if (result.success) {
+          final usedPort = result.connectedPort ?? result.target.port;
+          final usedFallbackPort = usedPort != result.target.port;
+          lines.add(
+            'OK  ${result.target.label}: ${result.target.ip}:$usedPort${usedFallbackPort ? ' (fallback)' : ''}',
+          );
+        } else {
+          final reason =
+              result.errorMessage ??
+              (result.result != null
+                  ? _posPrintResultLabel(result.result!)
+                  : 'Unknown error');
+          lines.add(
+            'FAIL ${result.target.label}: ${result.target.ip}:${result.target.port} -> $reason',
+          );
+        }
+      }
+
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Printer Test Result'),
+          content: SingleChildScrollView(
+            child: Text(
+              'Reachable: $successCount/${results.length}\n\n${lines.join('\n')}',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      _isPrinterTestRunning = false;
+    }
+  }
+
   Future<void> _scanBarcode() async {
     _resetTimer();
     if (!io.Platform.isAndroid && !io.Platform.isIOS) {
@@ -361,13 +667,32 @@ class _CommonScaffoldState extends State<CommonScaffold> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: _resetTimer,
-      child: Scaffold(
-        appBar: AppBar(
-          backgroundColor: Colors.white,
-          elevation: 1,
-          leading: Builder(
+    final appBarLeading = widget.showBackButtonInAppBar
+        ? Padding(
+            padding: const EdgeInsets.fromLTRB(10, 10, 4, 10),
+            child: InkWell(
+              onTap: () {
+                _resetTimer();
+                Navigator.of(context).maybePop();
+              },
+              borderRadius: BorderRadius.circular(18),
+              child: Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: const Color(0xFFE2E5EA)),
+                ),
+                child: const Icon(
+                  Icons.arrow_back_ios_new_rounded,
+                  size: 15,
+                  color: Colors.black87,
+                ),
+              ),
+            ),
+          )
+        : Builder(
             builder: (context) => IconButton(
               icon: _photoUrl != null && _photoUrl!.isNotEmpty
                   ? CircleAvatar(
@@ -378,130 +703,134 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                   : const Icon(Icons.menu, color: Colors.black87),
               onPressed: () {
                 _resetTimer();
-                Scaffold.of(context).openDrawer();
-              },
-            ),
-          ),
-          title: Text(
-            widget.title,
-            style: const TextStyle(
-              color: Colors.black87,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          iconTheme: const IconThemeData(color: Colors.black87),
-          actionsIconTheme: const IconThemeData(color: Colors.black87),
-          actions: [
-            Consumer<CartProvider>(
-              builder: (context, cartProvider, child) {
-                final int notifyCount =
-                    cartProvider.kitchenNotifications.length;
-
-                return Stack(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.notifications_none_outlined),
-                      onPressed: () {
-                        _resetTimer();
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                const KitchenNotificationsPage(),
-                          ),
-                        );
-                      },
-                    ),
-                    if (notifyCount > 0)
-                      Positioned(
-                        right: 8,
-                        top: 8,
-                        child: Container(
-                          padding: const EdgeInsets.all(2),
-                          decoration: BoxDecoration(
-                            color: Colors.red,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          constraints: const BoxConstraints(
-                            minWidth: 16,
-                            minHeight: 16,
-                          ),
-                          child: Text(
-                            '$notifyCount',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                            ),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ),
-                  ],
-                );
-              },
-            ),
-            IconButton(
-              icon: const Icon(Icons.receipt_long_outlined),
-              onPressed: () {
-                _resetTimer();
                 Navigator.pushAndRemoveUntil(
                   context,
-                  _createRoute(const KotBillsPage()),
+                  _createRoute(const EmployeePage()),
                   (route) => false,
                 );
               },
             ),
-            Consumer<CartProvider>(
-              builder: (context, cartProvider, child) {
-                final int itemCount = cartProvider.cartItems.length;
+          );
+    return GestureDetector(
+      onTap: _resetTimer,
+      child: Scaffold(
+        appBar: widget.showAppBar
+            ? AppBar(
+                backgroundColor: Colors.white,
+                elevation: 1,
+                leadingWidth: widget.showBackButtonInAppBar ? 46 : null,
+                leading: appBarLeading,
+                title: Text(
+                  widget.title,
+                  style: TextStyle(
+                    color: Colors.black87,
+                    fontWeight: FontWeight.w600,
+                    fontSize: widget.showBackButtonInAppBar ? 16 : null,
+                  ),
+                ),
+                iconTheme: const IconThemeData(color: Colors.black87),
+                actionsIconTheme: const IconThemeData(color: Colors.black87),
+                actions: [
+                  Consumer<CartProvider>(
+                    builder: (context, cartProvider, child) {
+                      final int notifyCount =
+                          cartProvider.kitchenNotifications.length;
 
-                return Stack(
-                  children: [
-                    IconButton(
-                      icon: const Icon(
-                        Icons.shopping_cart_outlined,
-                        color: Colors.black87,
-                      ),
-                      onPressed: () {
-                        _resetTimer();
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => const CartPage(),
+                      return Stack(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.notifications_none_outlined),
+                            onPressed: () {
+                              _resetTimer();
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      const KitchenNotificationsPage(),
+                                ),
+                              );
+                            },
                           ),
-                        );
-                      },
-                    ),
-                    if (itemCount > 0)
-                      Positioned(
-                        right: 8,
-                        top: 8,
-                        child: Container(
-                          padding: const EdgeInsets.all(2),
-                          decoration: BoxDecoration(
-                            color: Colors.red,
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          constraints: const BoxConstraints(
-                            minWidth: 16,
-                            minHeight: 16,
-                          ),
-                          child: Text(
-                            '$itemCount',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
+                          if (notifyCount > 0)
+                            Positioned(
+                              right: 8,
+                              top: 8,
+                              child: Container(
+                                padding: const EdgeInsets.all(2),
+                                decoration: BoxDecoration(
+                                  color: Colors.red,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                constraints: const BoxConstraints(
+                                  minWidth: 16,
+                                  minHeight: 16,
+                                ),
+                                child: Text(
+                                  '$notifyCount',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
                             ),
-                            textAlign: TextAlign.center,
+                        ],
+                      );
+                    },
+                  ),
+                  Consumer<CartProvider>(
+                    builder: (context, cartProvider, child) {
+                      final int itemCount = cartProvider.cartItems.length;
+
+                      return Stack(
+                        children: [
+                          IconButton(
+                            icon: const Icon(
+                              Icons.shopping_cart_outlined,
+                              color: Colors.black87,
+                            ),
+                            onPressed: () {
+                              _resetTimer();
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => const CartPage(),
+                                ),
+                              );
+                            },
                           ),
-                        ),
-                      ),
-                  ],
-                );
-              },
-            ),
-          ],
-        ),
+                          if (itemCount > 0)
+                            Positioned(
+                              right: 8,
+                              top: 8,
+                              child: Container(
+                                padding: const EdgeInsets.all(2),
+                                decoration: BoxDecoration(
+                                  color: Colors.red,
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                constraints: const BoxConstraints(
+                                  minWidth: 16,
+                                  minHeight: 16,
+                                ),
+                                child: Text(
+                                  '$itemCount',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 10,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                ],
+              )
+            : null,
 
         drawer: Drawer(
           child: ListView(
@@ -674,6 +1003,18 @@ class _CommonScaffoldState extends State<CommonScaffold> {
               ),
               ListTile(
                 leading: const Icon(
+                  Icons.print_outlined,
+                  color: Colors.black87,
+                ),
+                title: const Text('Test Printer'),
+                onTap: () {
+                  _resetTimer();
+                  Navigator.pop(context);
+                  _runPrinterTest();
+                },
+              ),
+              ListTile(
+                leading: const Icon(
                   Icons.cleaning_services_outlined,
                   color: Colors.black87,
                 ),
@@ -701,58 +1042,76 @@ class _CommonScaffoldState extends State<CommonScaffold> {
         ),
         body: widget.body,
         backgroundColor: Colors.white,
-        bottomNavigationBar: Container(
-          decoration: const BoxDecoration(
-            border: Border(top: BorderSide(color: Colors.grey, width: 1.0)),
+        bottomNavigationBar: widget.hideBottomNavigationBar
+            ? null
+            : _buildBottomNavigationBar(),
+      ),
+    );
+  }
+
+  bool _isNavItemSelected(PageType type) {
+    switch (type) {
+      case PageType.billing:
+        return widget.pageType == PageType.billing ||
+            widget.pageType == PageType.billsheet ||
+            widget.pageType == PageType.editbill;
+      default:
+        return widget.pageType == type;
+    }
+  }
+
+  Widget _buildBottomNavigationBar() {
+    return Container(
+      decoration: const BoxDecoration(
+        boxShadow: [
+          BoxShadow(
+            color: Color(0x14000000),
+            blurRadius: 16,
+            offset: Offset(0, -4),
           ),
-          child: BottomAppBar(
+        ],
+      ),
+      child: SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+          decoration: const BoxDecoration(
             color: Colors.white,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildNavItem(
-                  icon: Icons.home_outlined,
-                  label: 'Home',
-                  page: const HomePage(),
-                  type: PageType.home,
-                ),
-                _buildNavItem(
-                  icon: Icons.receipt_outlined,
-                  label: 'Billing',
-                  page: const CategoriesPage(),
-                  type: PageType.billing,
-                ),
-                GestureDetector(
-                  onTap: _scanBarcode,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      Icon(
-                        Icons.qr_code_scanner_outlined,
-                        color: Colors.black,
-                        size: 32,
-                      ),
-                      Text(
-                        'Scan',
-                        style: TextStyle(color: Colors.black, fontSize: 10),
-                      ),
-                    ],
-                  ),
-                ),
-                _buildNavItem(
-                  icon: Icons.table_restaurant_outlined,
-                  label: 'Table',
-                  page: const TablePage(),
-                  type: PageType.table,
-                ),
-                _buildNavItem(
-                  icon: Icons.badge_outlined,
-                  label: 'Employee',
-                  page: const EmployeePage(),
-                  type: PageType.employee,
-                ),
-              ],
-            ),
+            border: Border(top: BorderSide(color: Color(0xFFEAEAEA))),
+          ),
+          child: Row(
+            children: [
+              _buildNavItem(
+                icon: Icons.home_rounded,
+                label: 'Home',
+                page: const HomePage(),
+                type: PageType.home,
+              ),
+              _buildNavItem(
+                icon: Icons.receipt_long_rounded,
+                label: 'Billing',
+                page: const CategoriesPage(),
+                type: PageType.billing,
+              ),
+              _buildNavItem(
+                icon: Icons.qr_code_scanner_rounded,
+                label: 'Scan',
+                onTap: _scanBarcode,
+              ),
+              _buildNavItem(
+                icon: Icons.table_restaurant_rounded,
+                label: 'Table',
+                page: const TablePage(),
+                type: PageType.table,
+              ),
+              _buildNavItem(
+                icon: Icons.forum_rounded,
+                label: 'Chat',
+                page: const ChatPage(),
+                type: PageType.chat,
+                activeColor: _chatNavColor,
+              ),
+            ],
           ),
         ),
       ),
@@ -762,42 +1121,100 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   Widget _buildNavItem({
     required IconData icon,
     required String label,
-    required Widget page,
-    required PageType type,
+    Widget? page,
+    PageType? type,
     VoidCallback? onTap,
+    Color? activeColor,
+    Color? inactiveColor,
   }) {
-    return GestureDetector(
-      onTap: () {
-        _resetTimer();
-        if (onTap != null) {
-          onTap();
-        } else {
-          Navigator.pushAndRemoveUntil(
-            context,
-            _createRoute(page),
-            (route) => false,
-          );
-        }
-      },
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            icon,
-            color: widget.pageType == type ? Colors.blue : Colors.black,
-            size: 32,
-          ),
-          Text(
-            label,
-            style: TextStyle(
-              color: widget.pageType == type ? Colors.blue : Colors.black,
-              fontSize: 10,
+    final bool isSelected = type != null && _isNavItemSelected(type);
+    final Color foregroundColor = isSelected
+        ? (activeColor ?? _navActiveColor)
+        : (inactiveColor ?? _navInactiveColor);
+
+    return Expanded(
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(24),
+          onTap: () {
+            _resetTimer();
+            if (onTap != null) {
+              onTap();
+              return;
+            }
+            if (page == null) return;
+            Navigator.pushAndRemoveUntil(
+              context,
+              _createRoute(page),
+              (route) => false,
+            );
+          },
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 3),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TweenAnimationBuilder<Color?>(
+                  duration: const Duration(milliseconds: 180),
+                  tween: ColorTween(end: foregroundColor),
+                  builder: (context, color, child) {
+                    return Icon(icon, color: color, size: 29);
+                  },
+                ),
+                const SizedBox(height: 5),
+                AnimatedDefaultTextStyle(
+                  duration: const Duration(milliseconds: 220),
+                  curve: Curves.easeOutCubic,
+                  style: TextStyle(
+                    color: foregroundColor,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.1,
+                  ),
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }
+}
+
+class _PrinterTarget {
+  final String label;
+  final String ip;
+  final int port;
+
+  const _PrinterTarget({
+    required this.label,
+    required this.ip,
+    required this.port,
+  });
+}
+
+class _PrinterProbeResult {
+  final _PrinterTarget target;
+  final bool success;
+  final int? connectedPort;
+  final PosPrintResult? result;
+  final String? errorMessage;
+
+  const _PrinterProbeResult({
+    required this.target,
+    required this.success,
+    required this.connectedPort,
+    required this.result,
+    required this.errorMessage,
+  });
 }
 
 // ScannerDialog for barcode scanning
@@ -805,7 +1222,7 @@ class ScannerDialog extends StatefulWidget {
   const ScannerDialog({super.key});
 
   @override
-  _ScannerDialogState createState() => _ScannerDialogState();
+  State<ScannerDialog> createState() => _ScannerDialogState();
 }
 
 class _ScannerDialogState extends State<ScannerDialog> {

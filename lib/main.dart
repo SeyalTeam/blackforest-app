@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:blackforest_app/login_page.dart';
-import 'package:blackforest_app/categories_page.dart';
+import 'package:blackforest_app/home_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/app_http.dart' as http;
 import 'dart:convert';
@@ -218,8 +218,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               }
             }
           } catch (_) {}
-          // Valid: Return wrapped CategoriesPage
-          return const IdleTimeoutWrapper(child: CategoriesPage());
+          // Valid: Return wrapped HomePage
+          return const IdleTimeoutWrapper(child: HomePage());
         }
       } catch (_) {}
       // Invalid: Clear prefs and fall to login
@@ -252,7 +252,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             // Fallback to login on error
             return const LoginPage();
           } else {
-            // Resolved widget (LoginPage or CategoriesPage)
+            // Resolved widget (LoginPage or HomePage)
             return snapshot.data!;
           }
         },

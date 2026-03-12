@@ -214,6 +214,14 @@ class CartItem {
       'specialNote': specialNote,
     };
 
+    final trimmedNote = specialNote?.trim();
+    if (trimmedNote != null && trimmedNote.isNotEmpty) {
+      payload['specialNote'] = trimmedNote;
+      payload['notes'] = trimmedNote;
+      payload['note'] = trimmedNote;
+      payload['instructions'] = trimmedNote;
+    }
+
     if (billingItemId != null && billingItemId!.isNotEmpty) {
       payload['id'] = billingItemId;
     }
@@ -322,6 +330,10 @@ class CartProvider extends ChangeNotifier {
     CartType.billing: null,
     CartType.table: null,
   };
+  final Map<CartType, String?> _draftOwnerNameMap = {
+    CartType.billing: null,
+    CartType.table: null,
+  };
   final Map<CartType, String?> _selectedTableMap = {
     CartType.billing: null,
     CartType.table: null,
@@ -329,6 +341,14 @@ class CartProvider extends ChangeNotifier {
   final Map<CartType, String?> _selectedSectionMap = {
     CartType.billing: null,
     CartType.table: null,
+  };
+  final Map<CartType, bool> _preferHomeCategoriesUiMap = {
+    CartType.billing: false,
+    CartType.table: false,
+  };
+  final Map<CartType, List<Map<String, dynamic>>> _homeTopCategoriesSeedMap = {
+    CartType.billing: const <Map<String, dynamic>>[],
+    CartType.table: const <Map<String, dynamic>>[],
   };
 
   // Shared state
@@ -387,10 +407,17 @@ class CartProvider extends ChangeNotifier {
   String? get selectedKitchenName => _selectedKitchenNameMap[_currentType];
   String? get customerName => _customerNameMap[_currentType];
   String? get customerPhone => _customerPhoneMap[_currentType];
+  String? get draftOwnerName => _draftOwnerNameMap[_currentType];
   String? get selectedTable => _selectedTableMap[_currentType];
   String? get selectedSection => _selectedSectionMap[_currentType];
   bool get isSharedTableOrder =>
       _isSharedTablesSection(_selectedSectionMap[_currentType]);
+  bool get preferHomeCategoriesUiForCurrentDraft =>
+      _preferHomeCategoriesUiMap[_currentType] == true;
+  List<Map<String, dynamic>> get homeTopCategoriesSeedForCurrentDraft =>
+      _homeTopCategoriesSeedMap[_currentType]!
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
 
   // Shared getters
   String? get printerIp => _printerIp;
@@ -405,7 +432,13 @@ class CartProvider extends ChangeNotifier {
   void setCartType(CartType type, {bool notify = true}) {
     if (_currentType == type) return;
     _currentType = type;
+    if (type == CartType.billing) {
+      // Billing flow should never carry table metadata.
+      _selectedTableMap[type] = null;
+      _selectedSectionMap[type] = null;
+    }
     if (notify) notifyListeners();
+    _saveCurrentCart();
   }
 
   void setKitchen(String? id, String? name) {
@@ -468,8 +501,11 @@ class CartProvider extends ChangeNotifier {
     _selectedKitchenNameMap[type] = null;
     _customerNameMap[type] = null;
     _customerPhoneMap[type] = null;
+    _draftOwnerNameMap[type] = null;
     _selectedTableMap[type] = null;
     _selectedSectionMap[type] = null;
+    _preferHomeCategoriesUiMap[type] = false;
+    _homeTopCategoriesSeedMap[type] = const <Map<String, dynamic>>[];
   }
 
   void clearCart() {
@@ -485,12 +521,48 @@ class CartProvider extends ChangeNotifier {
         sharedTablesSectionName.toLowerCase();
   }
 
-  void startSharedTableOrder() {
-    _itemsMap[_currentType]!.clear();
-    _recalledItemsMap[_currentType]!.clear();
-    _clearMetadata(_currentType);
-    _selectedSectionMap[_currentType] = sharedTablesSectionName;
+  void startSharedTableOrder({
+    bool preserveActiveItems = false,
+    String? tableNumber,
+  }) {
+    final type = _currentType;
+    final preservedItems = preserveActiveItems
+        ? List<CartItem>.from(_itemsMap[type]!)
+        : const <CartItem>[];
+
+    _itemsMap[type]!.clear();
+    _recalledItemsMap[type]!.clear();
+    _clearMetadata(type);
+
+    if (preserveActiveItems) {
+      _itemsMap[type] = List<CartItem>.from(preservedItems);
+      final trimmedTable = tableNumber?.trim();
+      if (trimmedTable != null && trimmedTable.isNotEmpty) {
+        _selectedTableMap[type] = trimmedTable;
+      }
+    }
+
+    _selectedSectionMap[type] = sharedTablesSectionName;
     notifyListeners();
+    _saveCurrentCart();
+  }
+
+  void setCurrentDraftHomeCategoriesUi({
+    required bool enabled,
+    List<Map<String, dynamic>> homeTopCategories =
+        const <Map<String, dynamic>>[],
+    bool notify = false,
+  }) {
+    final type = _currentType;
+    _preferHomeCategoriesUiMap[type] = enabled;
+    _homeTopCategoriesSeedMap[type] = enabled
+        ? homeTopCategories
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList(growable: false)
+        : const <Map<String, dynamic>>[];
+    if (notify) {
+      notifyListeners();
+    }
     _saveCurrentCart();
   }
 
@@ -529,6 +601,40 @@ class CartProvider extends ChangeNotifier {
     _saveCurrentCart();
   }
 
+  void setDraftOwnerName(String? name) {
+    final trimmedName = name?.trim();
+    _draftOwnerNameMap[_currentType] =
+        (trimmedName == null || trimmedName.isEmpty) ? null : trimmedName;
+    notifyListeners();
+    _saveCurrentCart();
+  }
+
+  String? draftOwnerNameFor(CartType type) => _draftOwnerNameMap[type];
+
+  bool hasDraftForTableSelection({
+    required String table,
+    required String section,
+  }) {
+    final type = CartType.table;
+    final normalizedTable = table.trim();
+    final normalizedSection = section.trim().toLowerCase();
+    final currentTable = _selectedTableMap[type]?.trim();
+    final currentSection = (_selectedSectionMap[type] ?? '')
+        .trim()
+        .toLowerCase();
+
+    if (currentTable != normalizedTable ||
+        currentSection != normalizedSection) {
+      return false;
+    }
+
+    return _recalledBillIdMap[type] != null ||
+        _itemsMap[type]!.isNotEmpty ||
+        _recalledItemsMap[type]!.isNotEmpty ||
+        (_customerNameMap[type]?.trim().isNotEmpty ?? false) ||
+        (_customerPhoneMap[type]?.trim().isNotEmpty ?? false);
+  }
+
   void loadKOTItems(
     List<CartItem> items, {
     String? billId,
@@ -548,6 +654,8 @@ class CartProvider extends ChangeNotifier {
     _customerPhoneMap[_currentType] = cPhone;
     _selectedTableMap[_currentType] = tName;
     _selectedSectionMap[_currentType] = tSection;
+    _preferHomeCategoriesUiMap[_currentType] = false;
+    _homeTopCategoriesSeedMap[_currentType] = const <Map<String, dynamic>>[];
     if (kitchenId != null) {
       _selectedKitchenIdMap[_currentType] = kitchenId;
     }
@@ -612,10 +720,24 @@ class CartProvider extends ChangeNotifier {
 
     saveOrRemove('customerName', _customerNameMap[type]);
     saveOrRemove('customerPhone', _customerPhoneMap[type]);
+    saveOrRemove('draftOwnerName', _draftOwnerNameMap[type]);
     saveOrRemove('selectedTable', _selectedTableMap[type]);
     saveOrRemove('selectedSection', _selectedSectionMap[type]);
     saveOrRemove('selectedKitchenId', _selectedKitchenIdMap[type]);
     saveOrRemove('selectedKitchenName', _selectedKitchenNameMap[type]);
+    await prefs.setBool(
+      _key(type, 'preferHomeCategoriesUi'),
+      _preferHomeCategoriesUiMap[type] == true,
+    );
+    final homeTopCategoriesSeed = _homeTopCategoriesSeedMap[type]!;
+    if (homeTopCategoriesSeed.isNotEmpty) {
+      await prefs.setString(
+        _key(type, 'homeTopCategoriesSeed'),
+        jsonEncode(homeTopCategoriesSeed),
+      );
+    } else {
+      await prefs.remove(_key(type, 'homeTopCategoriesSeed'));
+    }
   }
 
   Future<void> _loadCarts() async {
@@ -642,6 +764,7 @@ class CartProvider extends ChangeNotifier {
       _recalledBillIdMap[type] = prefs.getString(_key(type, 'recalledBillId'));
       _customerNameMap[type] = prefs.getString(_key(type, 'customerName'));
       _customerPhoneMap[type] = prefs.getString(_key(type, 'customerPhone'));
+      _draftOwnerNameMap[type] = prefs.getString(_key(type, 'draftOwnerName'));
       _selectedTableMap[type] = prefs.getString(_key(type, 'selectedTable'));
       _selectedSectionMap[type] = prefs.getString(
         _key(type, 'selectedSection'),
@@ -652,6 +775,28 @@ class CartProvider extends ChangeNotifier {
       _selectedKitchenNameMap[type] = prefs.getString(
         _key(type, 'selectedKitchenName'),
       );
+      _preferHomeCategoriesUiMap[type] =
+          prefs.getBool(_key(type, 'preferHomeCategoriesUi')) ?? false;
+      final homeTopCategoriesSeed = prefs.getString(
+        _key(type, 'homeTopCategoriesSeed'),
+      );
+      if (homeTopCategoriesSeed != null && homeTopCategoriesSeed.isNotEmpty) {
+        try {
+          final decoded = jsonDecode(homeTopCategoriesSeed);
+          if (decoded is List) {
+            _homeTopCategoriesSeedMap[type] = decoded
+                .whereType<Map>()
+                .map((item) => Map<String, dynamic>.from(item))
+                .toList(growable: false);
+          } else {
+            _homeTopCategoriesSeedMap[type] = const <Map<String, dynamic>>[];
+          }
+        } catch (_) {
+          _homeTopCategoriesSeedMap[type] = const <Map<String, dynamic>>[];
+        }
+      } else {
+        _homeTopCategoriesSeedMap[type] = const <Map<String, dynamic>>[];
+      }
     }
     notifyListeners();
   }
@@ -1320,8 +1465,22 @@ class CartProvider extends ChangeNotifier {
     bool includeBillHistory = true,
   }) async {
     try {
-      final normalizedPhone = phoneNumber.trim();
-      final hasPhoneLookup = normalizedPhone.isNotEmpty;
+      final normalizedPhone = phoneNumber.replaceAll(RegExp(r'\D'), '');
+      if (normalizedPhone.length < 10) {
+        return null;
+      }
+
+      final normalizedSection = (tableSection ?? '').trim();
+      final normalizedTableNumber = (tableNumber ?? '').trim();
+      final hasRequestTableDetails =
+          normalizedSection.isNotEmpty || normalizedTableNumber.isNotEmpty;
+      final hasLocalTableDetails =
+          (selectedSection?.trim().isNotEmpty ?? false) ||
+          (selectedTable?.trim().isNotEmpty ?? false);
+      final effectiveIsTableOrder =
+          isTableOrder ??
+          (hasRequestTableDetails ||
+              (_currentType == CartType.table && hasLocalTableDetails));
 
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
@@ -1332,35 +1491,28 @@ class CartProvider extends ChangeNotifier {
         'Content-Type': 'application/json',
       };
 
-      final shouldFetchBills = hasPhoneLookup && includeBillHistory;
-
-      final responses = await Future.wait<dynamic>([
-        shouldFetchBills
-            ? http.get(
-                Uri.parse(
-                  'https://blackforest.vseyal.com/api/billings?where[customerDetails.phoneNumber][equals]=$normalizedPhone&where[status][not_equals]=cancelled&sort=-createdAt&limit=500&depth=4',
-                ),
-                headers: headers,
-              )
-            : Future.value(http.Response('{"docs":[],"totalDocs":0}', 200)),
-        hasPhoneLookup
-            ? http.get(
-                Uri.parse(
-                  'https://blackforest.vseyal.com/api/customers?where[phoneNumber][equals]=$normalizedPhone&limit=1&depth=0',
-                ),
-                headers: headers,
-              )
-            : Future.value(http.Response('{"docs":[],"totalDocs":0}', 200)),
-        _getCustomerOfferSettings(headers),
-      ]);
-
-      final billsResponse = responses[0] as http.Response;
-      final customersResponse = responses[1] as http.Response;
-      final offerSettings = responses[2] as Map<String, dynamic>?;
-
-      if (billsResponse.statusCode != 200) {
-        throw Exception('Failed to fetch metrics: ${billsResponse.statusCode}');
+      final lookupQuery = <String, String>{
+        'phoneNumber': normalizedPhone,
+        'limit': includeBillHistory ? '15' : '1',
+        'includeCancelled': 'false',
+      };
+      final activeBranchId = _branchId?.trim();
+      if (activeBranchId != null && activeBranchId.isNotEmpty) {
+        lookupQuery['branchId'] = activeBranchId;
       }
+      final lookupUri = Uri.parse(
+        'https://blackforest.vseyal.com/api/billing/customer-lookup',
+      ).replace(queryParameters: lookupQuery);
+      final lookupResponse = await http.get(lookupUri, headers: headers);
+      if (lookupResponse.statusCode != 200) {
+        throw Exception(
+          'Failed to fetch customer lookup: ${lookupResponse.statusCode}',
+        );
+      }
+      final lookupDecoded = jsonDecode(lookupResponse.body);
+      final lookupData = lookupDecoded is Map
+          ? Map<String, dynamic>.from(lookupDecoded)
+          : <String, dynamic>{};
 
       double toNonNegativeDouble(dynamic value) {
         if (value is num) {
@@ -1370,17 +1522,172 @@ class CartProvider extends ChangeNotifier {
         return 0;
       }
 
-      final billData = jsonDecode(billsResponse.body);
-      final List<dynamic> bills = billData['docs'] ?? [];
+      Map<String, dynamic>? asMap(dynamic value) {
+        if (value is Map) return Map<String, dynamic>.from(value);
+        return null;
+      }
+
+      List<dynamic> asList(dynamic value) {
+        if (value is List) return List<dynamic>.from(value);
+        return const [];
+      }
+
+      int? readCount(dynamic value) {
+        if (value is num) return value.toInt();
+        if (value is String) return int.tryParse(value);
+        return null;
+      }
+
+      List<dynamic> readBillsFromLookup(Map<String, dynamic> data) {
+        final direct = asList(
+          data['bills'] ?? data['billings'] ?? data['docs'] ?? data['history'],
+        );
+        if (direct.isNotEmpty) return direct;
+
+        final nested = asMap(data['data']) ?? asMap(data['result']);
+        if (nested == null) return const [];
+        return asList(
+          nested['bills'] ??
+              nested['billings'] ??
+              nested['docs'] ??
+              nested['history'],
+        );
+      }
+
+      var bills = readBillsFromLookup(lookupData);
+      var lookupTotalBills =
+          readCount(lookupData['totalBills']) ??
+          readCount(lookupData['totalDocs']) ??
+          readCount(asMap(lookupData['meta'])?['totalDocs']) ??
+          readCount(asMap(lookupData['pagination'])?['total']) ??
+          bills.length;
+      final lookupNestedData =
+          asMap(lookupData['data']) ?? asMap(lookupData['result']);
+      final lookupSummary =
+          asMap(lookupData['summary']) ?? asMap(lookupNestedData?['summary']);
+      var lookupTotalAmount = toNonNegativeDouble(
+        lookupData['totalAmount'] ??
+            lookupData['totalSpent'] ??
+            lookupData['totalSpend'] ??
+            lookupData['spentAmount'] ??
+            lookupData['spent'] ??
+            lookupData['lifetimeSpend'] ??
+            lookupData['customerSpend'] ??
+            lookupNestedData?['totalAmount'] ??
+            lookupNestedData?['totalSpent'] ??
+            lookupNestedData?['totalSpend'] ??
+            lookupNestedData?['spentAmount'] ??
+            lookupNestedData?['spent'] ??
+            lookupNestedData?['lifetimeSpend'] ??
+            lookupNestedData?['customerSpend'] ??
+            lookupSummary?['totalAmount'] ??
+            lookupSummary?['totalSpent'] ??
+            lookupSummary?['totalSpend'] ??
+            lookupSummary?['spentAmount'] ??
+            lookupSummary?['spent'] ??
+            lookupSummary?['lifetimeSpend'] ??
+            lookupSummary?['customerSpend'],
+      );
 
       Map<String, dynamic>? customerDoc;
-      if (customersResponse.statusCode == 200) {
-        final customerData = jsonDecode(customersResponse.body);
-        final docs = customerData['docs'];
-        if (docs is List && docs.isNotEmpty && docs.first is Map) {
-          customerDoc = Map<String, dynamic>.from(docs.first as Map);
+      final customerCandidates = [
+        lookupData['customer'],
+        lookupData['customerDoc'],
+        lookupData['customerDetails'],
+      ];
+      for (final candidate in customerCandidates) {
+        final map = asMap(candidate);
+        if (map != null) {
+          customerDoc = map;
+          break;
         }
       }
+      if (customerDoc == null) {
+        final customerList = asList(
+          lookupData['customers'] ??
+              lookupData['customerDocs'] ??
+              asMap(lookupData['data'])?['customers'] ??
+              asMap(lookupData['data'])?['docs'],
+        );
+        if (customerList.isNotEmpty && customerList.first is Map) {
+          customerDoc = Map<String, dynamic>.from(customerList.first as Map);
+        }
+      }
+      if (lookupTotalAmount <= 0) {
+        lookupTotalAmount = toNonNegativeDouble(
+          customerDoc?['totalAmount'] ??
+              customerDoc?['totalSpent'] ??
+              customerDoc?['totalSpend'] ??
+              customerDoc?['spentAmount'] ??
+              customerDoc?['spent'] ??
+              customerDoc?['lifetimeSpend'] ??
+              customerDoc?['customerSpend'],
+        );
+      }
+
+      // If scoped lookup returns customer but no/partial bill history, use
+      // preview fallback to hydrate history counters for UI + offer preview.
+      if (includeBillHistory) {
+        final hasNoHistorySnapshot = lookupTotalBills <= 0 && bills.isEmpty;
+        final hasPartialHistorySnapshot =
+            lookupTotalBills > bills.length && bills.isNotEmpty;
+        if (hasNoHistorySnapshot || hasPartialHistorySnapshot) {
+          final fallbackPreview = await fetchCustomerLookupPreview(
+            normalizedPhone,
+            limit: includeBillHistory ? 15 : 1,
+            includeCancelled: false,
+            useHeavyFallback: true,
+          );
+          if (fallbackPreview != null) {
+            final fallbackBillsRaw = fallbackPreview['bills'];
+            final fallbackBills = fallbackBillsRaw is List
+                ? List<dynamic>.from(fallbackBillsRaw)
+                : const <dynamic>[];
+            final fallbackTotalBills =
+                readCount(fallbackPreview['totalBills']) ??
+                fallbackBills.length;
+            final fallbackTotalAmount = toNonNegativeDouble(
+              fallbackPreview['totalAmount'],
+            );
+            final currentTotalAmount = bills.fold<double>(0.0, (sum, raw) {
+              if (raw is! Map) return sum;
+              final bill = Map<String, dynamic>.from(raw);
+              return sum + toNonNegativeDouble(bill['totalAmount']);
+            });
+
+            final shouldUseFallback =
+                fallbackTotalBills > lookupTotalBills ||
+                (bills.isEmpty && fallbackBills.isNotEmpty) ||
+                (currentTotalAmount <= 0 && fallbackTotalAmount > 0) ||
+                (fallbackTotalAmount >
+                    (lookupTotalAmount > currentTotalAmount
+                            ? lookupTotalAmount
+                            : currentTotalAmount) +
+                        0.01);
+
+            if (shouldUseFallback) {
+              bills = fallbackBills;
+              lookupTotalBills = fallbackTotalBills;
+              if (fallbackTotalAmount > 0) {
+                lookupTotalAmount = fallbackTotalAmount;
+              }
+              final fallbackName =
+                  fallbackPreview['name']?.toString().trim() ?? '';
+              if (fallbackName.isNotEmpty) {
+                customerDoc = <String, dynamic>{
+                  ...(customerDoc ?? const <String, dynamic>{}),
+                  'name': fallbackName,
+                };
+              }
+            }
+          }
+        }
+      }
+
+      // Always build preview rules from settings in app-side logic for
+      // consistent phone/branch/order-type gating.
+
+      final offerSettings = await _getCustomerOfferSettings(headers);
 
       final isNewCustomer = customerDoc == null;
 
@@ -1400,18 +1707,6 @@ class CartProvider extends ChangeNotifier {
         return null;
       }
 
-      final normalizedSection = (tableSection ?? '').trim();
-      final normalizedTableNumber = (tableNumber ?? '').trim();
-      final hasRequestTableDetails =
-          normalizedSection.isNotEmpty || normalizedTableNumber.isNotEmpty;
-      final hasLocalTableDetails =
-          (selectedSection?.trim().isNotEmpty ?? false) ||
-          (selectedTable?.trim().isNotEmpty ?? false);
-      final effectiveIsTableOrder =
-          isTableOrder ??
-          (hasRequestTableDetails ||
-              (_currentType == CartType.table && hasLocalTableDetails));
-
       bool allowForCurrentOrderType({
         required bool allowOnBillings,
         required bool allowOnTableOrders,
@@ -1419,14 +1714,66 @@ class CartProvider extends ChangeNotifier {
         return effectiveIsTableOrder ? allowOnTableOrders : allowOnBillings;
       }
 
-      double totalAmount = 0;
+      String? relationIdForBranch(dynamic value) {
+        if (value == null) return null;
+        if (value is String) return value.trim().isEmpty ? null : value.trim();
+        if (value is num) return value.toString();
+        if (value is Map) {
+          final map = Map<String, dynamic>.from(value);
+          final id = map['id'] ?? map['_id'] ?? map[r'$oid'];
+          if (id is String) return id.trim().isEmpty ? null : id.trim();
+          if (id is num) return id.toString();
+        }
+        return null;
+      }
+
+      List<String> relationIdsForBranch(dynamic value) {
+        if (value == null) return const <String>[];
+        if (value is List) {
+          final ids = <String>[];
+          for (final entry in value) {
+            final id = relationIdForBranch(entry);
+            if (id != null && id.isNotEmpty) {
+              ids.add(id);
+            }
+          }
+          return ids.toSet().toList();
+        }
+        final single = relationIdForBranch(value);
+        if (single == null || single.isEmpty) return const <String>[];
+        return [single];
+      }
+
+      bool isBranchEligible(String? branchId, List<String>? allowed) {
+        final list = allowed ?? const <String>[];
+        if (list.isEmpty) return true;
+        if (branchId == null || branchId.isEmpty) return false;
+        return list.contains(branchId);
+      }
+
+      bool hasOfferPhone(String? phone) =>
+          phone != null && phone.trim().isNotEmpty;
+
+      final hasOfferPhoneNumber = hasOfferPhone(phoneNumber);
+      final hasOfferBranch =
+          activeBranchId != null && activeBranchId.isNotEmpty;
+      final hasRequiredOfferIdentity = hasOfferPhoneNumber && hasOfferBranch;
+      final customerCreditOfferBranches = relationIdsForBranch(
+        offerSettings?['customerCreditOfferBranches'],
+      );
+      final customerCreditOfferBranchEligible = isBranchEligible(
+        activeBranchId,
+        customerCreditOfferBranches,
+      );
+
+      double loadedBillsTotalAmount = 0;
       double bigBill = 0;
       final Map<String, int> productCounts = {};
       final Map<String, double> productAmounts = {};
 
       for (var bill in bills) {
         final amount = (bill['totalAmount'] as num?)?.toDouble() ?? 0.0;
-        totalAmount += amount;
+        loadedBillsTotalAmount += amount;
         if (amount > bigBill) bigBill = amount;
 
         final items = bill['items'] as List? ?? [];
@@ -1441,6 +1788,10 @@ class CartProvider extends ChangeNotifier {
               (productAmounts[productName] ?? 0) + itemAmount;
         }
       }
+
+      final totalAmount = lookupTotalAmount > 0
+          ? lookupTotalAmount
+          : loadedBillsTotalAmount;
 
       String favouriteProductName = 'N/A';
       int favouriteProductQty = 0;
@@ -1480,6 +1831,8 @@ class CartProvider extends ChangeNotifier {
         offerSettings?['allowCustomerCreditOfferOnTableOrders'],
       );
       final offerEnabled =
+          hasRequiredOfferIdentity &&
+          customerCreditOfferBranchEligible &&
           offerSettings?['enabled'] == true &&
           allowForCurrentOrderType(
             allowOnBillings: allowCustomerCreditOfferOnBillings,
@@ -1503,6 +1856,7 @@ class CartProvider extends ChangeNotifier {
         offerSettings?['allowProductToProductOfferOnTableOrders'],
       );
       final enableProductToProductOffer =
+          hasRequiredOfferIdentity &&
           offerSettings?['enableProductToProductOffer'] == true &&
           allowForCurrentOrderType(
             allowOnBillings: allowProductToProductOfferOnBillings,
@@ -1517,11 +1871,19 @@ class CartProvider extends ChangeNotifier {
         offerSettings?['allowProductPriceOfferOnTableOrders'],
       );
       final enableProductPriceOffer =
+          hasRequiredOfferIdentity &&
           offerSettings?['enableProductPriceOffer'] == true &&
           allowForCurrentOrderType(
             allowOnBillings: allowProductPriceOfferOnBillings,
             allowOnTableOrders: allowProductPriceOfferOnTableOrders,
           );
+      final totalPercentageOfferBranches = relationIdsForBranch(
+        readFirstSettingValue(['totalPercentageOfferBranches']),
+      );
+      final totalPercentageOfferBranchEligible = isBranchEligible(
+        activeBranchId,
+        totalPercentageOfferBranches,
+      );
       final rawProductPriceOffers = offerSettings?['productPriceOffers'];
       final allowTotalPercentageOfferOnBillings = toBoolWithDefault(
         offerSettings?['allowTotalPercentageOfferOnBillings'],
@@ -1530,6 +1892,8 @@ class CartProvider extends ChangeNotifier {
         offerSettings?['allowTotalPercentageOfferOnTableOrders'],
       );
       final enableTotalPercentageOffer =
+          hasRequiredOfferIdentity &&
+          totalPercentageOfferBranchEligible &&
           offerSettings?['enableTotalPercentageOffer'] == true &&
           allowForCurrentOrderType(
             allowOnBillings: allowTotalPercentageOfferOnBillings,
@@ -1598,7 +1962,19 @@ class CartProvider extends ChangeNotifier {
           'allowCustomerEntryOfferOnTableOrders',
         ]),
       );
+      final customerEntryPercentageOfferBranches = relationIdsForBranch(
+        readFirstSettingValue([
+          'customerEntryPercentageOfferBranches',
+          'customerEntryOfferBranches',
+        ]),
+      );
+      final customerEntryPercentageOfferBranchEligible = isBranchEligible(
+        activeBranchId,
+        customerEntryPercentageOfferBranches,
+      );
       final enableCustomerEntryPercentageOffer =
+          hasRequiredOfferIdentity &&
+          customerEntryPercentageOfferBranchEligible &&
           readFirstSettingValue([
                 'enableCustomerEntryPercentageOffer',
                 'customerEntryPercentageOfferEnabled',
@@ -1641,6 +2017,7 @@ class CartProvider extends ChangeNotifier {
         offerSettings?['allowRandomCustomerProductOfferOnTableOrders'],
       );
       final enableRandomCustomerProductOffer =
+          hasRequiredOfferIdentity &&
           offerSettings?['enableRandomCustomerProductOffer'] == true &&
           allowForCurrentOrderType(
             allowOnBillings: allowRandomCustomerProductOfferOnBillings,
@@ -2030,6 +2407,14 @@ class CartProvider extends ChangeNotifier {
           )) {
             continue;
           }
+          final ruleBranches = relationIdsForBranch(rule['branches']);
+          final ruleBranchEligible = isBranchEligible(
+            activeBranchId,
+            ruleBranches,
+          );
+          if (!ruleBranchEligible) {
+            continue;
+          }
           enabledProductOfferRules += 1;
 
           final buyProduct = rule['buyProduct'];
@@ -2189,6 +2574,8 @@ class CartProvider extends ChangeNotifier {
             'customerUsageCount': customerUsageCount,
             'customerUsageRemaining': customerUsageRemaining,
             'offerCustomerUsage': offerCustomerUsage,
+            'branches': ruleBranches,
+            'branchEligible': ruleBranchEligible,
             'allowOnBillings': ruleAllowOnBillings,
             'allowOnTableOrders': ruleAllowOnTableOrders,
           });
@@ -2212,6 +2599,14 @@ class CartProvider extends ChangeNotifier {
             allowOnBillings: ruleAllowOnBillings,
             allowOnTableOrders: ruleAllowOnTableOrders,
           )) {
+            continue;
+          }
+          final ruleBranches = relationIdsForBranch(rule['branches']);
+          final ruleBranchEligible = isBranchEligible(
+            activeBranchId,
+            ruleBranches,
+          );
+          if (!ruleBranchEligible) {
             continue;
           }
           enabledProductPriceOfferRules += 1;
@@ -2400,6 +2795,8 @@ class CartProvider extends ChangeNotifier {
             'customerUsageCount': customerUsageCount,
             'customerUsageRemaining': customerUsageRemaining,
             'offerCustomerUsage': offerCustomerUsage,
+            'branches': ruleBranches,
+            'branchEligible': ruleBranchEligible,
             'eligible':
                 predictedAppliedUnits > 0 &&
                 discountPerUnit > 0 &&
@@ -2428,6 +2825,14 @@ class CartProvider extends ChangeNotifier {
             allowOnBillings: ruleAllowOnBillings,
             allowOnTableOrders: ruleAllowOnTableOrders,
           )) {
+            continue;
+          }
+          final ruleBranches = relationIdsForBranch(rule['branches']);
+          final ruleBranchEligible = isBranchEligible(
+            activeBranchId,
+            ruleBranches,
+          );
+          if (!ruleBranchEligible) {
             continue;
           }
           enabledRandomCustomerOfferRules += 1;
@@ -2531,6 +2936,8 @@ class CartProvider extends ChangeNotifier {
             'randomChancePassed': randomChancePassed,
             'scheduleMatched': scheduleMatched,
             'eligible': eligible,
+            'branches': ruleBranches,
+            'branchEligible': ruleBranchEligible,
             'allowOnBillings': ruleAllowOnBillings,
             'allowOnTableOrders': ruleAllowOnTableOrders,
           });
@@ -2682,7 +3089,7 @@ class CartProvider extends ChangeNotifier {
         'name': customerName,
         'phoneNumber': normalizedPhone,
         'isNewCustomer': isNewCustomer,
-        'totalBills': billData['totalDocs'] ?? bills.length,
+        'totalBills': lookupTotalBills,
         'totalAmount': totalAmount,
         'bigBill': bigBill,
         'favouriteProduct': favouriteProductName,
@@ -2694,6 +3101,11 @@ class CartProvider extends ChangeNotifier {
         'bills': bills,
         'offer': {
           'enabled': offerEnabled,
+          'requiredPhonePresent': hasOfferPhoneNumber,
+          'requiredBranchPresent': hasOfferBranch,
+          'requiredIdentityPresent': hasRequiredOfferIdentity,
+          'branches': customerCreditOfferBranches,
+          'branchEligible': customerCreditOfferBranchEligible,
           'allowOnBillings': allowCustomerCreditOfferOnBillings,
           'allowOnTableOrders': allowCustomerCreditOfferOnTableOrders,
           'rewardPoints': effectiveRewardPoints,
@@ -2721,6 +3133,9 @@ class CartProvider extends ChangeNotifier {
         },
         'productOfferPreview': {
           'enabled': enableProductToProductOffer,
+          'requiredPhonePresent': hasOfferPhoneNumber,
+          'requiredBranchPresent': hasOfferBranch,
+          'requiredIdentityPresent': hasRequiredOfferIdentity,
           'allowOnBillings': allowProductToProductOfferOnBillings,
           'allowOnTableOrders': allowProductToProductOfferOnTableOrders,
           'rulesConfigured': enabledProductOfferRules,
@@ -2728,6 +3143,9 @@ class CartProvider extends ChangeNotifier {
         },
         'productPriceOfferPreview': {
           'enabled': enableProductPriceOffer,
+          'requiredPhonePresent': hasOfferPhoneNumber,
+          'requiredBranchPresent': hasOfferBranch,
+          'requiredIdentityPresent': hasRequiredOfferIdentity,
           'allowOnBillings': allowProductPriceOfferOnBillings,
           'allowOnTableOrders': allowProductPriceOfferOnTableOrders,
           'rulesConfigured': enabledProductPriceOfferRules,
@@ -2735,6 +3153,11 @@ class CartProvider extends ChangeNotifier {
         },
         'totalPercentageOfferPreview': {
           'enabled': enableTotalPercentageOffer,
+          'requiredPhonePresent': hasOfferPhoneNumber,
+          'requiredBranchPresent': hasOfferBranch,
+          'requiredIdentityPresent': hasRequiredOfferIdentity,
+          'branches': totalPercentageOfferBranches,
+          'branchEligible': totalPercentageOfferBranchEligible,
           'allowOnBillings': allowTotalPercentageOfferOnBillings,
           'allowOnTableOrders': allowTotalPercentageOfferOnTableOrders,
           'discountPercent': totalPercentageOfferPercent,
@@ -2771,6 +3194,11 @@ class CartProvider extends ChangeNotifier {
         },
         'customerEntryPercentageOfferPreview': {
           'enabled': enableCustomerEntryPercentageOffer,
+          'requiredPhonePresent': hasOfferPhoneNumber,
+          'requiredBranchPresent': hasOfferBranch,
+          'requiredIdentityPresent': hasRequiredOfferIdentity,
+          'branches': customerEntryPercentageOfferBranches,
+          'branchEligible': customerEntryPercentageOfferBranchEligible,
           'allowOnBillings': allowCustomerEntryPercentageOfferOnBillings,
           'allowOnTableOrders': allowCustomerEntryPercentageOfferOnTableOrders,
           'discountPercent': customerEntryPercentageOfferPercent,
@@ -2789,6 +3217,9 @@ class CartProvider extends ChangeNotifier {
         },
         'randomCustomerOfferPreview': {
           'enabled': enableRandomCustomerProductOffer,
+          'requiredPhonePresent': hasOfferPhoneNumber,
+          'requiredBranchPresent': hasOfferBranch,
+          'requiredIdentityPresent': hasRequiredOfferIdentity,
           'allowOnBillings': allowRandomCustomerProductOfferOnBillings,
           'allowOnTableOrders': allowRandomCustomerProductOfferOnTableOrders,
           'rulesConfigured': enabledRandomCustomerOfferRules,
@@ -2807,6 +3238,707 @@ class CartProvider extends ChangeNotifier {
     }
   }
 
+  Future<Map<String, dynamic>?> fetchCustomerLookupPreview(
+    String phoneNumber, {
+    int limit = 15,
+    bool includeCancelled = false,
+    bool useHeavyFallback = true,
+    bool includeGlobalLookup = true,
+  }) async {
+    try {
+      final normalizedPhone = phoneNumber.replaceAll(RegExp(r'\D'), '');
+      if (normalizedPhone.length < 10) return null;
+
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      if (token == null) return null;
+
+      final headers = {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      };
+
+      int readCount(dynamic value) {
+        if (value is num) return value.toInt();
+        if (value is String) return int.tryParse(value) ?? 0;
+        return 0;
+      }
+
+      double readMoney(dynamic value) {
+        if (value is num) return value.toDouble();
+        if (value is String) return double.tryParse(value) ?? 0.0;
+        return 0.0;
+      }
+
+      Map<String, dynamic>? asMap(dynamic value) {
+        if (value is Map) return Map<String, dynamic>.from(value);
+        return null;
+      }
+
+      List<dynamic> asList(dynamic value) {
+        if (value is List) return List<dynamic>.from(value);
+        return const [];
+      }
+
+      int readFirstPositiveCount(List<dynamic> candidates) {
+        for (final candidate in candidates) {
+          final parsed = readCount(candidate);
+          if (parsed > 0) return parsed;
+        }
+        return 0;
+      }
+
+      double readFirstPositiveMoney(List<dynamic> candidates) {
+        for (final candidate in candidates) {
+          final parsed = readMoney(candidate);
+          if (parsed > 0) return parsed;
+        }
+        return 0.0;
+      }
+
+      List<dynamic> extractBills(dynamic raw) {
+        if (raw is List) return List<dynamic>.from(raw);
+        if (raw is Map) {
+          final map = Map<String, dynamic>.from(raw);
+          return asList(
+            map['bills'] ??
+                map['billings'] ??
+                map['docs'] ??
+                map['history'] ??
+                map['items'] ??
+                map['rows'] ??
+                map['results'] ??
+                map['records'],
+          );
+        }
+        return const [];
+      }
+
+      List<dynamic> readBillsFromPayload(Map<String, dynamic> payload) {
+        final nestedData =
+            asMap(payload['data']) ?? asMap(payload['result']) ?? payload;
+        final historyMap =
+            asMap(payload['history']) ??
+            asMap(nestedData['history']) ??
+            asMap(asMap(payload['summary'])?['history']) ??
+            asMap(asMap(nestedData['summary'])?['history']);
+        return extractBills(
+          payload['bills'] ??
+              payload['billings'] ??
+              payload['docs'] ??
+              payload['history'] ??
+              nestedData['bills'] ??
+              nestedData['billings'] ??
+              nestedData['docs'] ??
+              nestedData['history'] ??
+              asMap(payload['summary'])?['bills'] ??
+              asMap(payload['summary'])?['docs'] ??
+              asMap(nestedData['summary'])?['bills'] ??
+              asMap(nestedData['summary'])?['docs'] ??
+              historyMap?['bills'] ??
+              historyMap?['billings'] ??
+              historyMap?['docs'],
+        );
+      }
+
+      int historyCountOf(Map<String, dynamic>? result) {
+        if (result == null) return 0;
+        return (result['totalBills'] as num?)?.toInt() ?? 0;
+      }
+
+      double historyAmountOf(Map<String, dynamic>? result) {
+        if (result == null) return 0.0;
+        return (result['totalAmount'] as num?)?.toDouble() ?? 0.0;
+      }
+
+      List<dynamic> historyBillsOf(Map<String, dynamic>? result) {
+        if (result == null) return const [];
+        final bills = result['bills'];
+        if (bills is List) return List<dynamic>.from(bills);
+        return const [];
+      }
+
+      bool hasHistorySnapshot(Map<String, dynamic>? result) {
+        if (result == null) return false;
+        if (historyCountOf(result) > 0) return true;
+        if (historyAmountOf(result) > 0) return true;
+        return historyBillsOf(result).isNotEmpty;
+      }
+
+      Map<String, dynamic> preferBetterHistory(
+        Map<String, dynamic> primary,
+        Map<String, dynamic> candidate,
+      ) {
+        final primaryCount = historyCountOf(primary);
+        final candidateCount = historyCountOf(candidate);
+        if (candidateCount > primaryCount) return candidate;
+        if (primaryCount > candidateCount) return primary;
+
+        final primaryAmount = historyAmountOf(primary);
+        final candidateAmount = historyAmountOf(candidate);
+        if (candidateAmount > primaryAmount) return candidate;
+        if (primaryAmount > candidateAmount) return primary;
+
+        final primaryBills = historyBillsOf(primary).length;
+        final candidateBills = historyBillsOf(candidate).length;
+        if (candidateBills > primaryBills) return candidate;
+        return primary;
+      }
+
+      Map<String, dynamic> mergeLookupWithFallback(
+        Map<String, dynamic> lookup,
+        Map<String, dynamic> fallback,
+      ) {
+        final merged = Map<String, dynamic>.from(lookup);
+        final mergedName = merged['name']?.toString().trim() ?? '';
+        final fallbackName = fallback['name']?.toString().trim() ?? '';
+        if (mergedName.isEmpty && fallbackName.isNotEmpty) {
+          merged['name'] = fallbackName;
+        }
+
+        final fallbackBills = historyCountOf(fallback);
+        if (fallbackBills > historyCountOf(merged)) {
+          merged['totalBills'] = fallbackBills;
+        }
+
+        final fallbackAmount = historyAmountOf(fallback);
+        if (fallbackAmount > historyAmountOf(merged)) {
+          merged['totalAmount'] = fallbackAmount;
+        }
+
+        final fallbackBillList = historyBillsOf(fallback);
+        if (fallbackBillList.length > historyBillsOf(merged).length) {
+          merged['bills'] = fallbackBillList;
+        }
+
+        if (historyCountOf(merged) > 0 || historyAmountOf(merged) > 0) {
+          merged['isNewCustomer'] = false;
+        }
+
+        return merged;
+      }
+
+      bool shouldTryBillingFallback(Map<String, dynamic> lookupResult) {
+        final totalBills = historyCountOf(lookupResult);
+        final totalAmount = historyAmountOf(lookupResult);
+        final loadedBills = historyBillsOf(lookupResult).length;
+        final hasHistory = hasHistorySnapshot(lookupResult);
+        final isNewCustomer = lookupResult['isNewCustomer'] == true;
+        final resolvedName = lookupResult['name']?.toString().trim() ?? '';
+        if (!hasHistory) {
+          return !(isNewCustomer && resolvedName.isEmpty);
+        }
+
+        // When API returns large total bill count with limited docs payload, the
+        // spent amount can represent only recent/partial history. Fetch fallback
+        // snapshot to normalize total amount and count together.
+        final hasPartialDocs = totalBills > loadedBills && loadedBills > 0;
+        final hasMissingDocs = totalBills > 0 && loadedBills == 0;
+        final hasMissingAmount = totalBills > 0 && totalAmount <= 0;
+        return hasPartialDocs || hasMissingDocs || hasMissingAmount;
+      }
+
+      final clampedLimit = limit.clamp(1, 50).toInt();
+
+      Future<Map<String, dynamic>?> requestLookupData({
+        String? branchId,
+      }) async {
+        final lookupQuery = <String, String>{
+          'phoneNumber': normalizedPhone,
+          'limit': clampedLimit.toString(),
+          'includeCancelled': includeCancelled ? 'true' : 'false',
+        };
+        final trimmedBranchId = branchId?.trim();
+        if (trimmedBranchId != null && trimmedBranchId.isNotEmpty) {
+          lookupQuery['branchId'] = trimmedBranchId;
+        }
+
+        final lookupUri = Uri.parse(
+          'https://blackforest.vseyal.com/api/billing/customer-lookup',
+        ).replace(queryParameters: lookupQuery);
+        final lookupResponse = await http.get(lookupUri, headers: headers);
+        if (lookupResponse.statusCode != 200) return null;
+
+        final decoded = jsonDecode(lookupResponse.body);
+        if (decoded is! Map) return null;
+        return Map<String, dynamic>.from(decoded);
+      }
+
+      Map<String, dynamic> parseLookupPreview(Map<String, dynamic> lookupData) {
+        final nestedData =
+            asMap(lookupData['data']) ?? asMap(lookupData['result']);
+        final summaryMap =
+            asMap(lookupData['summary']) ?? asMap(nestedData?['summary']);
+        final statsMap =
+            asMap(lookupData['stats']) ?? asMap(nestedData?['stats']);
+        final historyMap =
+            asMap(lookupData['history']) ??
+            asMap(nestedData?['history']) ??
+            asMap(summaryMap?['history']) ??
+            asMap(statsMap?['history']);
+        final bills = extractBills(
+          lookupData['bills'] ??
+              lookupData['billings'] ??
+              lookupData['docs'] ??
+              lookupData['history'] ??
+              nestedData?['bills'] ??
+              nestedData?['billings'] ??
+              nestedData?['docs'] ??
+              nestedData?['history'] ??
+              summaryMap?['bills'] ??
+              summaryMap?['docs'] ??
+              summaryMap?['history'] ??
+              statsMap?['bills'] ??
+              statsMap?['docs'] ??
+              historyMap?['bills'] ??
+              historyMap?['docs'],
+        );
+
+        Map<String, dynamic>? customerDoc;
+        final customerCandidates = [
+          lookupData['customer'],
+          lookupData['customerDoc'],
+          lookupData['customerDetails'],
+          nestedData?['customer'],
+          nestedData?['customerDoc'],
+          nestedData?['customerDetails'],
+          summaryMap?['customer'],
+          summaryMap?['customerDoc'],
+          summaryMap?['customerDetails'],
+          historyMap?['customer'],
+          historyMap?['customerDoc'],
+          historyMap?['customerDetails'],
+          statsMap?['customer'],
+          statsMap?['customerDoc'],
+          statsMap?['customerDetails'],
+        ];
+        for (final candidate in customerCandidates) {
+          final map = asMap(candidate);
+          if (map != null) {
+            customerDoc = map;
+            break;
+          }
+        }
+        if (customerDoc == null) {
+          final customerList = asList(
+            lookupData['customers'] ??
+                lookupData['customerDocs'] ??
+                nestedData?['customers'] ??
+                nestedData?['docs'] ??
+                summaryMap?['customers'] ??
+                summaryMap?['customerDocs'] ??
+                historyMap?['customers'] ??
+                historyMap?['customerDocs'],
+          );
+          if (customerList.isNotEmpty && customerList.first is Map) {
+            customerDoc = Map<String, dynamic>.from(customerList.first as Map);
+          }
+        }
+
+        final directName = lookupData['name']?.toString().trim() ?? '';
+        final docName = customerDoc?['name']?.toString().trim() ?? '';
+        final firstBill = bills.isNotEmpty && bills.first is Map
+            ? Map<String, dynamic>.from(bills.first as Map)
+            : null;
+        final firstBillCustomer = asMap(firstBill?['customerDetails']);
+        final billName = firstBillCustomer?['name']?.toString().trim() ?? '';
+        final resolvedName = directName.isNotEmpty
+            ? directName
+            : docName.isNotEmpty
+            ? docName
+            : billName;
+
+        final meta = asMap(lookupData['meta']);
+        final pagination = asMap(lookupData['pagination']);
+        final nestedMeta = asMap(nestedData?['meta']);
+        final nestedPagination = asMap(nestedData?['pagination']);
+        final summaryMeta = asMap(summaryMap?['meta']);
+        final summaryPagination = asMap(summaryMap?['pagination']);
+        final statsSummary = asMap(statsMap?['summary']);
+        final customerHistoryMap = asMap(customerDoc?['history']);
+        final customerStatsMap = asMap(customerDoc?['stats']);
+
+        int totalBills = readFirstPositiveCount([
+          lookupData['totalBills'],
+          lookupData['billCount'],
+          lookupData['count'],
+          lookupData['historyCount'],
+          lookupData['totalDocs'],
+          nestedData?['totalBills'],
+          nestedData?['billCount'],
+          nestedData?['count'],
+          nestedData?['historyCount'],
+          nestedData?['totalDocs'],
+          customerDoc?['totalBills'],
+          customerDoc?['billCount'],
+          customerDoc?['count'],
+          customerDoc?['historyCount'],
+          historyMap?['totalBills'],
+          historyMap?['billCount'],
+          historyMap?['count'],
+          historyMap?['historyCount'],
+          historyMap?['totalDocs'],
+          summaryMap?['totalBills'],
+          summaryMap?['billCount'],
+          summaryMap?['count'],
+          summaryMap?['historyCount'],
+          summaryMap?['totalDocs'],
+          statsMap?['totalBills'],
+          statsMap?['billCount'],
+          statsMap?['count'],
+          statsMap?['historyCount'],
+          statsMap?['totalDocs'],
+          customerHistoryMap?['totalBills'],
+          customerHistoryMap?['billCount'],
+          customerHistoryMap?['count'],
+          customerHistoryMap?['historyCount'],
+          customerHistoryMap?['totalDocs'],
+          customerStatsMap?['totalBills'],
+          customerStatsMap?['billCount'],
+          customerStatsMap?['count'],
+          customerStatsMap?['historyCount'],
+          customerStatsMap?['totalDocs'],
+          meta?['totalBills'],
+          meta?['billCount'],
+          meta?['count'],
+          meta?['totalDocs'],
+          pagination?['total'],
+          pagination?['totalDocs'],
+          nestedMeta?['totalBills'],
+          nestedMeta?['billCount'],
+          nestedMeta?['count'],
+          nestedMeta?['totalDocs'],
+          nestedPagination?['total'],
+          nestedPagination?['totalDocs'],
+          summaryMeta?['totalBills'],
+          summaryMeta?['billCount'],
+          summaryMeta?['count'],
+          summaryMeta?['totalDocs'],
+          summaryPagination?['total'],
+          summaryPagination?['totalDocs'],
+          statsSummary?['totalBills'],
+          statsSummary?['billCount'],
+          statsSummary?['count'],
+          statsSummary?['totalDocs'],
+        ]);
+        if (totalBills <= 0) totalBills = bills.length;
+
+        double totalAmount = readFirstPositiveMoney([
+          lookupData['totalAmount'],
+          lookupData['totalSpent'],
+          lookupData['totalSpend'],
+          lookupData['spentAmount'],
+          lookupData['spent'],
+          lookupData['lifetimeSpend'],
+          lookupData['customerSpend'],
+          nestedData?['totalAmount'],
+          nestedData?['totalSpent'],
+          nestedData?['totalSpend'],
+          nestedData?['spentAmount'],
+          nestedData?['spent'],
+          nestedData?['lifetimeSpend'],
+          nestedData?['customerSpend'],
+          customerDoc?['totalAmount'],
+          customerDoc?['totalSpent'],
+          customerDoc?['spentAmount'],
+          customerDoc?['spent'],
+          customerDoc?['lifetimeSpend'],
+          customerHistoryMap?['totalAmount'],
+          customerHistoryMap?['totalSpent'],
+          customerHistoryMap?['spentAmount'],
+          customerHistoryMap?['spent'],
+          customerStatsMap?['totalAmount'],
+          customerStatsMap?['totalSpent'],
+          customerStatsMap?['spentAmount'],
+          customerStatsMap?['spent'],
+          historyMap?['totalAmount'],
+          historyMap?['totalSpent'],
+          historyMap?['spentAmount'],
+          historyMap?['spent'],
+          summaryMap?['totalAmount'],
+          summaryMap?['totalSpent'],
+          summaryMap?['spentAmount'],
+          summaryMap?['spent'],
+          statsMap?['totalAmount'],
+          statsMap?['totalSpent'],
+          statsMap?['spentAmount'],
+          statsMap?['spent'],
+          statsSummary?['totalAmount'],
+          statsSummary?['totalSpent'],
+          statsSummary?['spentAmount'],
+          statsSummary?['spent'],
+        ]);
+        if (totalAmount <= 0 && bills.isNotEmpty) {
+          double running = 0.0;
+          for (final bill in bills) {
+            if (bill is Map) {
+              running += readMoney(
+                bill['totalAmount'] ??
+                    bill['grossAmount'] ??
+                    bill['finalAmount'] ??
+                    bill['subtotal'] ??
+                    bill['amount'],
+              );
+            }
+          }
+          totalAmount = running;
+        }
+
+        final isNewCustomerFlag = lookupData['isNewCustomer'];
+        final isNewCustomer = isNewCustomerFlag is bool
+            ? isNewCustomerFlag
+            : (customerDoc == null && totalBills == 0);
+
+        final result = <String, dynamic>{
+          'name': resolvedName,
+          'phoneNumber': normalizedPhone,
+          'totalBills': totalBills,
+          'totalAmount': totalAmount,
+          'isNewCustomer': isNewCustomer,
+          'orderType': 'all',
+        };
+
+        if (bills.isNotEmpty) {
+          result['bills'] = bills;
+        }
+        return result;
+      }
+
+      Future<Map<String, dynamic>?> requestBillingHistoryFallback({
+        String? branchId,
+      }) async {
+        const int fallbackPageLimit = 100;
+        const int fallbackMaxPages = 20;
+        final trimmedBranchId = branchId?.trim();
+        final baseQuery = <String, String>{
+          'sort': '-createdAt',
+          'limit': fallbackPageLimit.toString(),
+          'depth': '0',
+        };
+        if (trimmedBranchId != null && trimmedBranchId.isNotEmpty) {
+          baseQuery['where[branch][equals]'] = trimmedBranchId;
+        }
+
+        final possiblePhoneFields = [
+          'customerDetails.phoneNumber',
+          'customerDetails.phone',
+          'customerPhone',
+          'phoneNumber',
+        ];
+
+        for (final phoneField in possiblePhoneFields) {
+          final query = Map<String, String>.from(baseQuery);
+          query['where[$phoneField][equals]'] = normalizedPhone;
+          final firstPageUri = Uri.parse(
+            'https://blackforest.vseyal.com/api/billings',
+          ).replace(queryParameters: query);
+          final firstPageResponse = await http.get(
+            firstPageUri,
+            headers: headers,
+          );
+          if (firstPageResponse.statusCode != 200) continue;
+
+          final decoded = jsonDecode(firstPageResponse.body);
+          if (decoded is! Map) continue;
+          final payload = Map<String, dynamic>.from(decoded);
+
+          final collectedBills = <Map<String, dynamic>>[];
+          final seenBillIds = <String>{};
+          void addBills(dynamic rawBills) {
+            final entries = rawBills is List ? rawBills : <dynamic>[];
+            for (final entry in entries) {
+              if (entry is! Map) continue;
+              final bill = Map<String, dynamic>.from(entry);
+              final billId =
+                  (bill['id'] ??
+                          bill['_id'] ??
+                          bill[r'$oid'] ??
+                          bill['invoiceNumber'] ??
+                          '')
+                      .toString();
+              if (billId.isNotEmpty && seenBillIds.contains(billId)) continue;
+              if (billId.isNotEmpty) {
+                seenBillIds.add(billId);
+              }
+              collectedBills.add(bill);
+            }
+          }
+
+          addBills(readBillsFromPayload(payload));
+
+          final payloadData =
+              asMap(payload['data']) ?? asMap(payload['result']);
+          final payloadMeta = asMap(payload['meta']);
+          final payloadPagination = asMap(payload['pagination']);
+          final payloadDataMeta = asMap(payloadData?['meta']);
+          final payloadDataPagination = asMap(payloadData?['pagination']);
+
+          final totalBillsHint = readFirstPositiveCount([
+            payload['totalBills'],
+            payload['billCount'],
+            payload['count'],
+            payload['historyCount'],
+            payload['totalDocs'],
+            payloadData?['totalBills'],
+            payloadData?['billCount'],
+            payloadData?['count'],
+            payloadData?['historyCount'],
+            payloadData?['totalDocs'],
+            payloadMeta?['totalBills'],
+            payloadMeta?['billCount'],
+            payloadMeta?['count'],
+            payloadMeta?['totalDocs'],
+            payloadPagination?['total'],
+            payloadPagination?['totalDocs'],
+            payloadDataMeta?['totalBills'],
+            payloadDataMeta?['billCount'],
+            payloadDataMeta?['count'],
+            payloadDataMeta?['totalDocs'],
+            payloadDataPagination?['total'],
+            payloadDataPagination?['totalDocs'],
+          ]);
+
+          var totalPages = readFirstPositiveCount([
+            payload['totalPages'],
+            payloadData?['totalPages'],
+            payloadMeta?['totalPages'],
+            payloadPagination?['totalPages'],
+            payloadDataMeta?['totalPages'],
+            payloadDataPagination?['totalPages'],
+          ]);
+          if (totalPages <= 0 && totalBillsHint > 0) {
+            totalPages = (totalBillsHint / fallbackPageLimit).ceil();
+          }
+          if (totalPages < 1) totalPages = 1;
+
+          final pagesToFetch = totalPages > fallbackMaxPages
+              ? fallbackMaxPages
+              : totalPages;
+          for (var page = 2; page <= pagesToFetch; page++) {
+            final pagedQuery = Map<String, String>.from(query);
+            pagedQuery['page'] = page.toString();
+            final pageUri = Uri.parse(
+              'https://blackforest.vseyal.com/api/billings',
+            ).replace(queryParameters: pagedQuery);
+            final pageResponse = await http.get(pageUri, headers: headers);
+            if (pageResponse.statusCode != 200) break;
+            final pageDecoded = jsonDecode(pageResponse.body);
+            if (pageDecoded is! Map) break;
+            final pagePayload = Map<String, dynamic>.from(pageDecoded);
+            addBills(readBillsFromPayload(pagePayload));
+          }
+
+          var bills = List<Map<String, dynamic>>.from(collectedBills);
+          if (!includeCancelled && bills.isNotEmpty) {
+            bills = bills.where((bill) {
+              final status = bill['status']?.toString().toLowerCase().trim();
+              return status != 'cancelled' && status != 'canceled';
+            }).toList();
+          }
+
+          double totalAmount = 0.0;
+          for (final bill in bills) {
+            totalAmount += readMoney(
+              bill['totalAmount'] ??
+                  bill['grossAmount'] ??
+                  bill['finalAmount'] ??
+                  bill['subtotal'] ??
+                  bill['amount'],
+            );
+          }
+          totalAmount = double.parse(totalAmount.toStringAsFixed(2));
+
+          var totalBills = bills.length;
+          if (totalBills <= 0 && totalBillsHint > 0) {
+            totalBills = totalBillsHint;
+          }
+
+          String resolvedName = payload['name']?.toString().trim() ?? '';
+          if (resolvedName.isEmpty) {
+            for (final bill in bills) {
+              final customer = asMap(bill['customerDetails']);
+              final billName = customer?['name']?.toString().trim() ?? '';
+              if (billName.isNotEmpty) {
+                resolvedName = billName;
+                break;
+              }
+            }
+          }
+
+          bills.sort((a, b) {
+            final aDate =
+                DateTime.tryParse(a['createdAt']?.toString() ?? '') ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+            final bDate =
+                DateTime.tryParse(b['createdAt']?.toString() ?? '') ??
+                DateTime.fromMillisecondsSinceEpoch(0);
+            return bDate.compareTo(aDate);
+          });
+
+          final result = <String, dynamic>{
+            'name': resolvedName,
+            'phoneNumber': normalizedPhone,
+            'totalBills': totalBills,
+            'totalAmount': totalAmount,
+            'isNewCustomer': totalBills == 0,
+            'orderType': 'all',
+          };
+          if (bills.isNotEmpty) {
+            result['bills'] = bills.take(clampedLimit).toList();
+          }
+
+          if (hasHistorySnapshot(result) || resolvedName.isNotEmpty) {
+            return result;
+          }
+        }
+
+        return null;
+      }
+
+      final activeBranchId = _branchId?.trim();
+      final scopedLookup = await requestLookupData(branchId: activeBranchId);
+      if (scopedLookup == null) return null;
+      final scopedResult = parseLookupPreview(scopedLookup);
+      var preferredResult = scopedResult;
+
+      final hasScopedBranch =
+          activeBranchId != null && activeBranchId.isNotEmpty;
+      if (hasScopedBranch && includeGlobalLookup) {
+        final globalLookup = await requestLookupData();
+        if (globalLookup != null) {
+          final globalResult = parseLookupPreview(globalLookup);
+          preferredResult = preferBetterHistory(preferredResult, globalResult);
+        }
+      }
+
+      if (!useHeavyFallback || !shouldTryBillingFallback(preferredResult)) {
+        return preferredResult;
+      }
+
+      final scopedFallback = await requestBillingHistoryFallback(
+        branchId: activeBranchId,
+      );
+      var bestFallback = scopedFallback;
+
+      if (hasScopedBranch && includeGlobalLookup) {
+        final globalFallback = await requestBillingHistoryFallback();
+        if (globalFallback != null) {
+          bestFallback = bestFallback == null
+              ? globalFallback
+              : preferBetterHistory(bestFallback, globalFallback);
+        }
+      }
+
+      if (bestFallback != null) {
+        return mergeLookupWithFallback(preferredResult, bestFallback);
+      }
+
+      return preferredResult;
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<Map<String, dynamic>?> _getCustomerOfferSettings(
     Map<String, String> headers,
   ) async {
@@ -2821,7 +3953,7 @@ class CartProvider extends ChangeNotifier {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest.vseyal.com/api/globals/customer-offer-settings',
+          'https://blackforest.vseyal.com/api/globals/customer-offer-settings?depth=0',
         ),
         headers: headers,
       );

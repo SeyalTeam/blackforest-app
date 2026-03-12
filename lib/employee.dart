@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:async';
+import 'package:blackforest_app/api_server_prefs.dart';
 import 'package:flutter/material.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/app_http.dart' as http;
 import 'package:intl/intl.dart';
+import 'package:blackforest_app/session_prefs.dart';
 
 class EmployeePage extends StatefulWidget {
   const EmployeePage({super.key});
@@ -20,6 +22,10 @@ class _EmployeePageState extends State<EmployeePage> {
   String? _employeeId;
   String? _employeePhotoUrl;
   String? _branchName;
+  bool _api1Selected = true;
+  bool _api2Selected = true;
+  bool _api3Selected = true;
+  bool _isLoggingOut = false;
 
   Timer? _timer;
   Duration _workDuration = Duration.zero;
@@ -41,6 +47,22 @@ class _EmployeePageState extends State<EmployeePage> {
   Future<void> _loadEmployeeData() async {
     final prefs = await SharedPreferences.getInstance();
     final loginTimeMs = prefs.getInt('login_time');
+    final apiSelections = await loadApiServerSelections(prefs: prefs);
+    final branchId = prefs.getString('branchId');
+    final token = prefs.getString('token');
+    String? branchName = prefs.getString('branchName');
+
+    if ((branchName?.trim().isEmpty ?? true) &&
+        token != null &&
+        token.isNotEmpty &&
+        branchId != null &&
+        branchId.isNotEmpty) {
+      final fetchedBranchName = await _fetchBranchName(token, branchId);
+      if (fetchedBranchName != null && fetchedBranchName.trim().isNotEmpty) {
+        branchName = fetchedBranchName;
+        await prefs.setString('branchName', fetchedBranchName);
+      }
+    }
 
     setState(() {
       _employeeName =
@@ -48,7 +70,10 @@ class _EmployeePageState extends State<EmployeePage> {
       _employeeRole = prefs.getString('role');
       _employeeId = prefs.getString('employee_code');
       _employeePhotoUrl = prefs.getString('employee_photo_url');
-      _branchName = prefs.getString('branchName');
+      _branchName = branchName;
+      _api1Selected = apiSelections[apiHostPrimary] ?? true;
+      _api2Selected = apiSelections[apiHostSecondary] ?? true;
+      _api3Selected = apiSelections[apiHostTertiary] ?? true;
       _profileLoading = false;
 
       if (loginTimeMs != null) {
@@ -61,6 +86,34 @@ class _EmployeePageState extends State<EmployeePage> {
     });
 
     await _fetchAttendance();
+  }
+
+  Future<String?> _fetchBranchName(String token, String branchId) async {
+    try {
+      final response = await http.get(
+        Uri.parse('https://blackforest.vseyal.com/api/branches/$branchId'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map<String, dynamic>) {
+          final directName = decoded['name']?.toString();
+          if (directName != null && directName.trim().isNotEmpty) {
+            return directName;
+          }
+          final nested = decoded['doc'];
+          if (nested is Map<String, dynamic>) {
+            final nestedName = nested['name']?.toString();
+            if (nestedName != null && nestedName.trim().isNotEmpty) {
+              return nestedName;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching branch name for employee page: $e');
+    }
+    return null;
   }
 
   Future<void> _fetchAttendance() async {
@@ -208,6 +261,182 @@ class _EmployeePageState extends State<EmployeePage> {
     return n.toString().padLeft(2, '0');
   }
 
+  Future<void> _updateApiSelection(String host, bool isSelected) async {
+    final nextSelections = <String, bool>{
+      apiHostPrimary: _api1Selected,
+      apiHostSecondary: _api2Selected,
+      apiHostTertiary: _api3Selected,
+    };
+    nextSelections[host] = isSelected;
+
+    if (!nextSelections.values.any((selected) => selected)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Select at least one API server.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _api1Selected = nextSelections[apiHostPrimary] ?? true;
+      _api2Selected = nextSelections[apiHostSecondary] ?? true;
+      _api3Selected = nextSelections[apiHostTertiary] ?? true;
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    await saveApiServerSelections(nextSelections, prefs: prefs);
+  }
+
+  Future<void> _confirmLogout() async {
+    if (_isLoggingOut || !mounted) return;
+    final shouldLogout = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Logout'),
+          content: const Text('Do you want to logout from this device?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.red[600],
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Logout'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (shouldLogout == true) {
+      await _logout();
+    }
+  }
+
+  Future<void> _logout() async {
+    if (_isLoggingOut) return;
+    setState(() {
+      _isLoggingOut = true;
+    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      final userId = prefs.getString('user_id');
+      if (token != null && userId != null) {
+        try {
+          final now = DateTime.now();
+          final searchUrl =
+              'https://blackforest.vseyal.com/api/attendance?where[user][equals]=$userId&where[activities.status][equals]=active&limit=1';
+          final searchResp = await http
+              .get(
+                Uri.parse(searchUrl),
+                headers: {'Authorization': 'Bearer $token'},
+              )
+              .timeout(const Duration(seconds: 3));
+
+          if (searchResp.statusCode == 200) {
+            final data = jsonDecode(searchResp.body);
+            final docs = data['docs'] as List;
+            if (docs.isNotEmpty) {
+              final attendanceDoc = docs[0];
+              final sessionId = attendanceDoc['id'];
+              final activities = List<Map<String, dynamic>>.from(
+                attendanceDoc['activities'] ?? [],
+              );
+
+              if (activities.isNotEmpty) {
+                for (int i = activities.length - 1; i >= 0; i--) {
+                  if (activities[i]['type'] == 'session' &&
+                      activities[i]['status'] == 'active') {
+                    activities[i]['punchOut'] = now.toUtc().toIso8601String();
+                    activities[i]['status'] = 'closed';
+                    final punchIn = DateTime.parse(activities[i]['punchIn']);
+                    activities[i]['durationSeconds'] = now
+                        .difference(punchIn)
+                        .inSeconds;
+                    break;
+                  }
+                }
+
+                final updateResp = await http
+                    .patch(
+                      Uri.parse(
+                        'https://blackforest.vseyal.com/api/attendance/$sessionId',
+                      ),
+                      headers: {
+                        'Authorization': 'Bearer $token',
+                        'Content-Type': 'application/json',
+                      },
+                      body: jsonEncode({'activities': activities}),
+                    )
+                    .timeout(const Duration(seconds: 3));
+
+                if (updateResp.statusCode != 200) {
+                  debugPrint(
+                    'Failed to update daily log: ${updateResp.statusCode} ${updateResp.body}',
+                  );
+                }
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('Employee page logout attendance error: $e');
+        }
+      }
+
+      await clearSessionPreservingFavorites(prefs);
+      if (mounted) {
+        Navigator.pushReplacementNamed(context, '/login');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoggingOut = false;
+        });
+      } else {
+        _isLoggingOut = false;
+      }
+    }
+  }
+
+  Widget _buildApiCheckbox({
+    required String label,
+    required bool value,
+    required ValueChanged<bool?> onChanged,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: Colors.grey[300]!),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Checkbox(
+            value: value,
+            onChanged: onChanged,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: const VisualDensity(horizontal: -4, vertical: -4),
+          ),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return CommonScaffold(
@@ -332,6 +561,38 @@ class _EmployeePageState extends State<EmployeePage> {
                           ),
                         ),
                       ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _buildApiCheckbox(
+                          label: 'API1',
+                          value: _api1Selected,
+                          onChanged: (value) => _updateApiSelection(
+                            apiHostPrimary,
+                            value ?? false,
+                          ),
+                        ),
+                        _buildApiCheckbox(
+                          label: 'API2',
+                          value: _api2Selected,
+                          onChanged: (value) => _updateApiSelection(
+                            apiHostSecondary,
+                            value ?? false,
+                          ),
+                        ),
+                        _buildApiCheckbox(
+                          label: 'API3',
+                          value: _api3Selected,
+                          onChanged: (value) => _updateApiSelection(
+                            apiHostTertiary,
+                            value ?? false,
+                          ),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 16),
 
                     // Working Hours Card
@@ -458,7 +719,7 @@ class _EmployeePageState extends State<EmployeePage> {
                         borderRadius: BorderRadius.circular(12),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.orange.withOpacity(0.1),
+                            color: Colors.orange.withValues(alpha: 0.1),
                             blurRadius: 5,
                             offset: const Offset(0, 2),
                           ),
@@ -477,6 +738,40 @@ class _EmployeePageState extends State<EmployeePage> {
                             ),
                           ),
                         ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xFFD32F2F),
+                          foregroundColor: Colors.white,
+                          minimumSize: const Size.fromHeight(52),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        onPressed: _isLoggingOut ? null : _confirmLogout,
+                        icon: _isLoggingOut
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.white,
+                                  ),
+                                ),
+                              )
+                            : const Icon(Icons.logout_rounded, size: 20),
+                        label: Text(
+                          _isLoggingOut ? 'Logging out...' : 'Logout',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                       ),
                     ),
                     const SizedBox(height: 24),
@@ -541,7 +836,9 @@ class _EmployeePageState extends State<EmployeePage> {
                                   child: Container(
                                     padding: const EdgeInsets.all(16),
                                     decoration: BoxDecoration(
-                                      color: Colors.green.withOpacity(0.1),
+                                      color: Colors.green.withValues(
+                                        alpha: 0.1,
+                                      ),
                                       borderRadius: const BorderRadius.only(
                                         topLeft: Radius.circular(12),
                                         bottomLeft: Radius.circular(12),
@@ -591,7 +888,7 @@ class _EmployeePageState extends State<EmployeePage> {
                                     decoration: BoxDecoration(
                                       color: activity['isActive'] == true
                                           ? Colors.white
-                                          : Colors.red.withOpacity(0.08),
+                                          : Colors.red.withValues(alpha: 0.08),
                                       borderRadius: const BorderRadius.only(
                                         topRight: Radius.circular(12),
                                         bottomRight: Radius.circular(12),

@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:blackforest_app/app_http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:blackforest_app/categories_page.dart';
+import 'package:blackforest_app/home_page.dart';
 import 'package:blackforest_app/session_prefs.dart';
 import 'package:blackforest_app/auth_flags.dart';
 import 'package:blackforest_app/table_customer_details_visibility_service.dart';
@@ -267,7 +267,7 @@ class _LoginPageState extends State<LoginPage> {
               context,
               MaterialPageRoute(
                 builder: (_) =>
-                    IdleTimeoutWrapper(child: const CategoriesPage()),
+                    IdleTimeoutWrapper(child: const HomePage()),
               ),
             );
           }
@@ -574,6 +574,7 @@ class _LoginPageState extends State<LoginPage> {
                                     locBranch['_id'] ??
                                     locBranch['\$oid'])
                                 ?.toString();
+                        branchName = locBranch['name']?.toString();
                       } else {
                         branchId = locBranch?.toString();
                       }
@@ -639,6 +640,16 @@ class _LoginPageState extends State<LoginPage> {
                 if (branchConfig != null) {
                   branchIpRange = branchConfig['ipAddress']?.toString().trim();
                   printerIp = branchConfig['printerIp']?.toString().trim();
+                  final configBranch = branchConfig['branch'];
+                  if ((branchName?.trim().isEmpty ?? true) &&
+                      configBranch is Map) {
+                    branchName = configBranch['name']?.toString();
+                  }
+                  if (branchName?.trim().isEmpty ?? true) {
+                    branchName =
+                        branchConfig['branchName']?.toString() ??
+                        branchConfig['name']?.toString();
+                  }
 
                   // Store Geo settings for future use
                   final prefs = await SharedPreferences.getInstance();
@@ -668,7 +679,11 @@ class _LoginPageState extends State<LoginPage> {
           }
 
           // 2. Fallback to Branches Collection if not found in global
-          if (branchIpRange == null || branchIpRange.isEmpty) {
+          final shouldFetchBranchDetails =
+              branchIpRange == null ||
+              branchIpRange.isEmpty ||
+              (branchName?.trim().isEmpty ?? true);
+          if (shouldFetchBranchDetails) {
             final bRes = await http.get(
               Uri.parse(
                 "https://blackforest.vseyal.com/api/branches/$branchId",
@@ -681,10 +696,16 @@ class _LoginPageState extends State<LoginPage> {
 
             if (bRes.statusCode == 200) {
               final branch = jsonDecode(bRes.body);
-              branchIpRange = branch["ipAddress"]?.toString().trim();
-              printerIp = branch["printerIp"]?.toString().trim();
-              if (branchName == null) {
-                branchName = branch["name"]?.toString();
+              if (branchIpRange == null || branchIpRange.isEmpty) {
+                branchIpRange = branch["ipAddress"]?.toString().trim();
+              }
+              if (printerIp == null || printerIp.isEmpty) {
+                printerIp = branch["printerIp"]?.toString().trim();
+              }
+              final fetchedBranchName = branch["name"]?.toString();
+              if (fetchedBranchName != null &&
+                  fetchedBranchName.trim().isNotEmpty) {
+                branchName = fetchedBranchName;
               }
             }
           }
@@ -837,12 +858,12 @@ class _LoginPageState extends State<LoginPage> {
           }
         }
 
-        // NAVIGATE TO CATEGORIES
+        // NAVIGATE TO HOME
         if (mounted) {
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(
-              builder: (_) => IdleTimeoutWrapper(child: const CategoriesPage()),
+              builder: (_) => IdleTimeoutWrapper(child: const HomePage()),
             ),
           );
         }

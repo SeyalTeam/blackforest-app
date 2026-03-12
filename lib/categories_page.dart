@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:blackforest_app/app_http.dart' as http;
+import 'package:blackforest_app/category_popularity_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/common_scaffold.dart';
+import 'package:blackforest_app/product_popularity_service.dart';
 import 'package:blackforest_app/products_page.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:provider/provider.dart';
@@ -10,6 +13,9 @@ import 'package:blackforest_app/cart_provider.dart';
 import 'package:blackforest_app/offer_banner.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:blackforest_app/customer_history_dialog.dart';
+import 'package:blackforest_app/table_customer_details_visibility_service.dart';
+import 'package:blackforest_app/widgets/product_rating_badge.dart';
 
 class _CategoriesCacheEntry {
   final List<dynamic> categories;
@@ -23,8 +29,17 @@ class _CategoriesCacheEntry {
 
 class CategoriesPage extends StatefulWidget {
   final PageType sourcePage;
+  final String? initialCategoryId;
+  final String? initialCategoryName;
+  final List<Map<String, dynamic>> initialHomeTopCategories;
 
-  const CategoriesPage({super.key, this.sourcePage = PageType.billing});
+  const CategoriesPage({
+    super.key,
+    this.sourcePage = PageType.billing,
+    this.initialCategoryId,
+    this.initialCategoryName,
+    this.initialHomeTopCategories = const <Map<String, dynamic>>[],
+  });
 
   @override
   State<CategoriesPage> createState() => _CategoriesPageState();
@@ -33,6 +48,7 @@ class CategoriesPage extends StatefulWidget {
 class _CategoriesPageState extends State<CategoriesPage> {
   static const Duration _categoriesCacheTtl = Duration(seconds: 90);
   static final Map<String, _CategoriesCacheEntry> _categoriesCache = {};
+  static const Color _homeAccentColor = Color(0xFFEF4F5F);
 
   List<dynamic> _categories = [];
   bool _isLoading = true;
@@ -41,6 +57,14 @@ class _CategoriesPageState extends State<CategoriesPage> {
   String? _userRole;
   String? _currentUserId;
   List<String> _favoriteCategoryIds = <String>[];
+  final TextEditingController _homeSearchController = TextEditingController();
+  String _homeSearchQuery = '';
+  bool _didOpenInitialCategory = false;
+  Map<String, ProductPopularityInfo> _categoryPopularityById =
+      <String, ProductPopularityInfo>{};
+  TableCustomerDetailsVisibilityConfig _customerDetailsVisibilityConfig =
+      TableCustomerDetailsVisibilityConfig.defaultValue;
+  Future<void>? _customerDetailsVisibilityLoadFuture;
 
   String _categoriesCacheKey(String filterQuery) =>
       '${_favoritesScope()}|$filterQuery';
@@ -70,10 +94,686 @@ class _CategoriesPageState extends State<CategoriesPage> {
   void initState() {
     super.initState();
     _fetchCategories();
+    _loadCategoryPopularity();
+    unawaited(_ensureCustomerDetailsVisibilityConfigLoaded());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _openInitialCategoryIfNeeded();
+    });
+  }
+
+  @override
+  void dispose() {
+    _homeSearchController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _ensureCustomerDetailsVisibilityConfigLoaded() async {
+    if (widget.sourcePage != PageType.billing) return;
+    final existing = _customerDetailsVisibilityLoadFuture;
+    if (existing != null) {
+      await existing;
+      return;
+    }
+
+    final future = () async {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token')?.trim();
+      final branchId = prefs.getString('branchId')?.trim();
+      if (token == null ||
+          token.isEmpty ||
+          branchId == null ||
+          branchId.isEmpty) {
+        return;
+      }
+      final config =
+          await TableCustomerDetailsVisibilityService.getConfigForBranch(
+            branchId: branchId,
+            token: token,
+            forceRefresh: true,
+          );
+      if (!mounted) return;
+      setState(() {
+        _customerDetailsVisibilityConfig = config;
+      });
+    }();
+
+    _customerDetailsVisibilityLoadFuture = future.whenComplete(() {
+      _customerDetailsVisibilityLoadFuture = null;
+    });
+    await _customerDetailsVisibilityLoadFuture;
+  }
+
+  Future<Map<String, dynamic>?> _showBillingCustomerDetailsDialog(
+    CartProvider cartProvider, {
+    bool allowSkip = true,
+    bool showHistory = true,
+    bool enableAutoSubmit = true,
+  }) async {
+    final nameCtrl = TextEditingController(
+      text: cartProvider.customerName ?? '',
+    );
+    final phoneCtrl = TextEditingController(
+      text: cartProvider.customerPhone ?? '',
+    );
+    Timer? debounceTimer;
+    bool isDialogActive = true;
+    bool isDialogSubmitting = false;
+    bool didCloseDialog = false;
+    int lookupSequence = 0;
+    Map<String, dynamic>? customerLookupData;
+    bool isLookupInProgress = false;
+    String? lookupError;
+
+    String normalizePhone(String value) => value.replaceAll(RegExp(r'\D'), '');
+
+    double readMoney(dynamic value) {
+      if (value is num) return value.toDouble();
+      if (value is String) return double.tryParse(value) ?? 0.0;
+      return 0.0;
+    }
+
+    Future<void> lookupCustomerPreview(
+      String normalizedPhone,
+      int requestId,
+      void Function(VoidCallback fn) setDialogState,
+    ) async {
+      try {
+        final quickData = await cartProvider.fetchCustomerLookupPreview(
+          normalizedPhone,
+          limit: 1,
+          useHeavyFallback: true,
+          includeGlobalLookup: true,
+        );
+        final latestPhone = normalizePhone(phoneCtrl.text);
+        if (!isDialogActive ||
+            !mounted ||
+            latestPhone != normalizedPhone ||
+            requestId != lookupSequence) {
+          return;
+        }
+
+        final quickName = quickData?['name']?.toString().trim() ?? '';
+        final quickIsNewCustomer = quickData?['isNewCustomer'] == true;
+        if (!quickIsNewCustomer &&
+            quickName.isNotEmpty &&
+            nameCtrl.text.trim().isEmpty) {
+          nameCtrl.text = quickName;
+        }
+
+        setDialogState(() {
+          customerLookupData = quickData;
+          isLookupInProgress = false;
+          lookupError = null;
+        });
+      } catch (error) {
+        final latestPhone = normalizePhone(phoneCtrl.text);
+        if (!isDialogActive ||
+            !mounted ||
+            latestPhone != normalizedPhone ||
+            requestId != lookupSequence) {
+          return;
+        }
+        setDialogState(() {
+          customerLookupData = null;
+          isLookupInProgress = false;
+          lookupError = 'Unable to fetch customer details';
+        });
+      }
+    }
+
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            void closeDialogSafely(Map<String, dynamic>? value) {
+              if (didCloseDialog) return;
+              didCloseDialog = true;
+              setDialogState(() {
+                isDialogSubmitting = true;
+              });
+              isDialogActive = false;
+              lookupSequence += 1;
+              debounceTimer?.cancel();
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                final nav = Navigator.of(dialogContext);
+                if (nav.canPop()) {
+                  nav.pop(value);
+                }
+              });
+            }
+
+            bool autoSubmitIfReady() {
+              if (!enableAutoSubmit) return false;
+              if (!isDialogActive || isDialogSubmitting || didCloseDialog) {
+                return false;
+              }
+              final normalizedPhone = normalizePhone(phoneCtrl.text);
+              final customerName = nameCtrl.text.trim();
+              if (normalizedPhone.length < 10 || customerName.isEmpty) {
+                return false;
+              }
+              closeDialogSafely(<String, dynamic>{
+                'name': customerName,
+                'phone': phoneCtrl.text.trim(),
+              });
+              return true;
+            }
+
+            final normalizedPhoneForHistory = normalizePhone(phoneCtrl.text);
+            final canOpenHistoryFromHeader =
+                showHistory &&
+                !isDialogSubmitting &&
+                normalizedPhoneForHistory.length >= 10;
+            final lookupName =
+                customerLookupData?['name']?.toString().trim() ?? '';
+            final historyBills =
+                (customerLookupData?['totalBills'] as num?)?.toInt() ?? 0;
+            final historyAmount = readMoney(customerLookupData?['totalAmount']);
+
+            return Dialog(
+              backgroundColor: const Color(0xFF1E1E1E),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              insetPadding: const EdgeInsets.symmetric(horizontal: 28),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(dialogContext).size.height * 0.78,
+                ),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          SizedBox(
+                            width: 40,
+                            height: 40,
+                            child: IconButton(
+                              tooltip: showHistory
+                                  ? 'Customer History'
+                                  : 'Customer History disabled',
+                              padding: EdgeInsets.zero,
+                              icon: Icon(
+                                Icons.history_rounded,
+                                color: canOpenHistoryFromHeader
+                                    ? const Color(0xFF4ADE80)
+                                    : Colors.white30,
+                              ),
+                              onPressed: canOpenHistoryFromHeader
+                                  ? () async {
+                                      await showCustomerHistoryDialog(
+                                        dialogContext,
+                                        phoneNumber: phoneCtrl.text,
+                                      );
+                                    }
+                                  : null,
+                            ),
+                          ),
+                          const Expanded(
+                            child: Center(
+                              child: Text(
+                                'Customer Details',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 40, height: 40),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      const Text(
+                        'Phone Number',
+                        style: TextStyle(color: Colors.white70, fontSize: 14),
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF121212),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: const Color(
+                              0xFF0A84FF,
+                            ).withValues(alpha: 0.5),
+                          ),
+                        ),
+                        child: TextField(
+                          controller: phoneCtrl,
+                          keyboardType: TextInputType.phone,
+                          textInputAction: enableAutoSubmit
+                              ? TextInputAction.done
+                              : TextInputAction.next,
+                          style: const TextStyle(color: Colors.white),
+                          onSubmitted: (_) {
+                            if (autoSubmitIfReady()) return;
+                            FocusScope.of(dialogContext).nextFocus();
+                          },
+                          onChanged: (value) {
+                            if (!isDialogActive || isDialogSubmitting) return;
+                            setDialogState(() {});
+                            final normalizedPhone = normalizePhone(value);
+                            lookupSequence += 1;
+                            if (normalizedPhone.length < 10) {
+                              debounceTimer?.cancel();
+                              setDialogState(() {
+                                customerLookupData = null;
+                                lookupError = null;
+                                isLookupInProgress = false;
+                              });
+                              return;
+                            }
+                            setDialogState(() {
+                              lookupError = null;
+                              isLookupInProgress = true;
+                            });
+                            debounceTimer?.cancel();
+                            final requestId = lookupSequence;
+                            debounceTimer = Timer(
+                              const Duration(milliseconds: 350),
+                              () async {
+                                await lookupCustomerPreview(
+                                  normalizedPhone,
+                                  requestId,
+                                  setDialogState,
+                                );
+                                if (!mounted) return;
+                                autoSubmitIfReady();
+                              },
+                            );
+                          },
+                          decoration: const InputDecoration(
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 14,
+                            ),
+                            border: InputBorder.none,
+                            hintText: 'Enter phone number',
+                            hintStyle: TextStyle(color: Colors.white38),
+                          ),
+                        ),
+                      ),
+                      if (isLookupInProgress) ...[
+                        const SizedBox(height: 10),
+                        const Center(
+                          child: SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Color(0xFF0A84FF),
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (lookupError != null) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          lookupError!,
+                          style: const TextStyle(
+                            color: Colors.redAccent,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 18),
+                      const Text(
+                        'Customer Name',
+                        style: TextStyle(color: Colors.white70, fontSize: 14),
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF121212),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: const Color(
+                              0xFF0A84FF,
+                            ).withValues(alpha: 0.5),
+                          ),
+                        ),
+                        child: TextField(
+                          controller: nameCtrl,
+                          textInputAction: TextInputAction.done,
+                          style: const TextStyle(color: Colors.white),
+                          onSubmitted: (_) {
+                            if (autoSubmitIfReady()) return;
+                            FocusScope.of(dialogContext).unfocus();
+                          },
+                          decoration: const InputDecoration(
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 14,
+                            ),
+                            border: InputBorder.none,
+                            hintText: 'Enter customer name',
+                            hintStyle: TextStyle(color: Colors.white38),
+                          ),
+                        ),
+                      ),
+                      if (normalizedPhoneForHistory.length >= 10 &&
+                          customerLookupData != null) ...[
+                        const SizedBox(height: 14),
+                        GestureDetector(
+                          onTap: (!showHistory || isDialogSubmitting)
+                              ? null
+                              : () async {
+                                  await showCustomerHistoryDialog(
+                                    dialogContext,
+                                    phoneNumber: phoneCtrl.text,
+                                  );
+                                },
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF121212),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.12),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Customer: ${lookupName.isNotEmpty ? lookupName : (customerLookupData!['isNewCustomer'] == true ? 'New customer' : 'N/A')}',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text.rich(
+                                  TextSpan(
+                                    children: [
+                                      const TextSpan(
+                                        text: 'History: ',
+                                        style: TextStyle(
+                                          color: Color(0xFF7DD3FC),
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      TextSpan(
+                                        text: '$historyBills bills',
+                                        style: const TextStyle(
+                                          color: Color(0xFFFDE047),
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const TextSpan(
+                                        text: ' | ',
+                                        style: TextStyle(color: Colors.white54),
+                                      ),
+                                      TextSpan(
+                                        text:
+                                            '₹${historyAmount.toStringAsFixed(2)}',
+                                        style: const TextStyle(
+                                          color: Color(0xFF4ADE80),
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                      const TextSpan(
+                                        text: ' spent',
+                                        style: TextStyle(color: Colors.white70),
+                                      ),
+                                    ],
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  softWrap: false,
+                                  style: const TextStyle(fontSize: 16),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (phoneCtrl.text.trim().isEmpty) ...[
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Enter customer phone number to apply offers',
+                          style: TextStyle(
+                            color: Colors.orangeAccent,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 28),
+                      if (allowSkip)
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton(
+                                onPressed: isDialogSubmitting
+                                    ? null
+                                    : () => closeDialogSafely(
+                                        <String, dynamic>{},
+                                      ),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.white70,
+                                  side: const BorderSide(color: Colors.white24),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 12,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                                child: const Text('Skip'),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: ElevatedButton(
+                                onPressed: isDialogSubmitting
+                                    ? null
+                                    : () {
+                                        final customerName = nameCtrl.text
+                                            .trim();
+                                        final customerPhone = phoneCtrl.text
+                                            .trim();
+                                        if (customerName.isEmpty &&
+                                            customerPhone.isEmpty) {
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            const SnackBar(
+                                              content: Text(
+                                                'Please enter customer name or phone number, or use Skip',
+                                              ),
+                                            ),
+                                          );
+                                          return;
+                                        }
+                                        closeDialogSafely(<String, dynamic>{
+                                          'name': customerName,
+                                          'phone': customerPhone,
+                                        });
+                                      },
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF0A84FF),
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 12,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                                child: const Text(
+                                  'Submit',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        )
+                      else
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: isDialogSubmitting
+                                ? null
+                                : () {
+                                    final customerName = nameCtrl.text.trim();
+                                    final customerPhone = phoneCtrl.text.trim();
+                                    if (customerName.isEmpty &&
+                                        customerPhone.isEmpty) {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Please enter customer name or phone number',
+                                          ),
+                                        ),
+                                      );
+                                      return;
+                                    }
+                                    closeDialogSafely(<String, dynamic>{
+                                      'name': customerName,
+                                      'phone': customerPhone,
+                                    });
+                                  },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF0A84FF),
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                            ),
+                            child: const Text(
+                              'Submit',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    debounceTimer?.cancel();
+    return result;
+  }
+
+  Future<bool> _ensureBillingCustomerDetailsBeforeProducts() async {
+    if (widget.sourcePage != PageType.billing) return true;
+    final cartProvider = Provider.of<CartProvider>(context, listen: false);
+    cartProvider.setCartType(CartType.billing, notify: false);
+
+    await _ensureCustomerDetailsVisibilityConfigLoaded();
+    if (!_customerDetailsVisibilityConfig.showCustomerDetailsForBillingOrders) {
+      return true;
+    }
+
+    final existingName = (cartProvider.customerName ?? '').trim();
+    final existingPhone = (cartProvider.customerPhone ?? '').trim();
+    if (existingName.isNotEmpty || existingPhone.isNotEmpty) {
+      return true;
+    }
+
+    final customerDetails = await _showBillingCustomerDetailsDialog(
+      cartProvider,
+      allowSkip: _customerDetailsVisibilityConfig
+          .allowSkipCustomerDetailsForBillingOrders,
+      showHistory:
+          _customerDetailsVisibilityConfig.showCustomerHistoryForBillingOrders,
+      enableAutoSubmit: _customerDetailsVisibilityConfig
+          .autoSubmitCustomerDetailsForBillingOrders,
+    );
+    if (!mounted || customerDetails == null) return false;
+
+    cartProvider.setCartType(CartType.billing, notify: false);
+    if (customerDetails.isEmpty) {
+      cartProvider.setCustomerDetails();
+    } else {
+      cartProvider.setCustomerDetails(
+        name: customerDetails['name']?.toString(),
+        phone: customerDetails['phone']?.toString(),
+      );
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+    return mounted;
+  }
+
+  Future<void> _openProductsPage({
+    required String categoryId,
+    required String categoryName,
+    bool instant = false,
+  }) async {
+    final normalizedId = categoryId.trim();
+    if (normalizedId.isEmpty) return;
+    final allowedToOpen = await _ensureBillingCustomerDetailsBeforeProducts();
+    if (!allowedToOpen || !mounted) return;
+
+    final route = instant
+        ? PageRouteBuilder(
+            transitionDuration: Duration.zero,
+            reverseTransitionDuration: Duration.zero,
+            pageBuilder: (context, animation, secondaryAnimation) =>
+                ProductsPage(
+                  categoryId: normalizedId,
+                  categoryName: categoryName,
+                  sourcePage: widget.sourcePage,
+                  initialHomeTopCategories: widget.initialHomeTopCategories,
+                ),
+          )
+        : MaterialPageRoute(
+            builder: (context) => ProductsPage(
+              categoryId: normalizedId,
+              categoryName: categoryName,
+              sourcePage: widget.sourcePage,
+              initialHomeTopCategories: widget.initialHomeTopCategories,
+            ),
+          );
+
+    await Navigator.push(context, route);
+  }
+
+  Future<void> _openInitialCategoryIfNeeded() async {
+    if (!mounted || _didOpenInitialCategory) return;
+    final categoryId = widget.initialCategoryId?.trim() ?? '';
+    if (categoryId.isEmpty) return;
+
+    _didOpenInitialCategory = true;
+    final categoryName =
+        (widget.initialCategoryName?.trim().isNotEmpty ?? false)
+        ? widget.initialCategoryName!.trim()
+        : 'Category';
+    await _openProductsPage(
+      categoryId: categoryId,
+      categoryName: categoryName,
+      instant: true,
+    );
   }
 
   String _favoritesScope() {
-    if (widget.sourcePage == PageType.table) {
+    if (widget.sourcePage == PageType.table ||
+        widget.sourcePage == PageType.home) {
       return 'table';
     }
     return 'billing';
@@ -198,6 +898,387 @@ class _CategoriesPageState extends State<CategoriesPage> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text('$categoryName added to favorites')));
+  }
+
+  bool get _isHomeMode => widget.sourcePage == PageType.home;
+
+  ProductPopularityInfo? _categoryBadgeInfo(String categoryId) {
+    final normalizedId = categoryId.trim();
+    if (normalizedId.isEmpty) return null;
+    return _categoryPopularityById[normalizedId];
+  }
+
+  Future<void> _loadCategoryPopularity() async {
+    if (!_isHomeMode) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token')?.trim();
+      final branchId = (prefs.getString('branchId') ?? '').trim();
+      if (token == null || token.isEmpty || branchId.isEmpty) {
+        return;
+      }
+
+      final popularity = await CategoryPopularityService.getPopularityForBranch(
+        token: token,
+        branchId: branchId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _categoryPopularityById = popularity;
+      });
+    } catch (_) {}
+  }
+
+  List<dynamic> _filteredHomeCategories() {
+    final query = _homeSearchQuery.trim().toLowerCase();
+    final orderedCategories = _orderedCategories();
+    if (query.isEmpty) {
+      return orderedCategories;
+    }
+
+    return orderedCategories
+        .where((rawCategory) {
+          if (rawCategory is! Map) return false;
+          final category = Map<String, dynamic>.from(rawCategory);
+          final name = (category['name'] ?? '').toString().trim().toLowerCase();
+          return name.contains(query);
+        })
+        .toList(growable: false);
+  }
+
+  String? _resolveCategoryImageUrl(dynamic rawCategory) {
+    if (rawCategory is! Map) return null;
+    final category = Map<String, dynamic>.from(rawCategory);
+
+    final image = category['image'];
+    if (image is Map) {
+      final url =
+          image['url']?.toString().trim() ??
+          image['thumbnailURL']?.toString().trim() ??
+          image['thumbnailUrl']?.toString().trim();
+      if (url != null && url.isNotEmpty) {
+        return url.startsWith('/') ? 'https://blackforest.vseyal.com$url' : url;
+      }
+    }
+
+    final directUrl =
+        category['imageUrl']?.toString().trim() ??
+        category['thumbnail']?.toString().trim();
+    if (directUrl != null && directUrl.isNotEmpty) {
+      return directUrl.startsWith('/')
+          ? 'https://blackforest.vseyal.com$directUrl'
+          : directUrl;
+    }
+    return null;
+  }
+
+  Widget _buildHomeHeader() {
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+        child: Row(
+          children: [
+            InkWell(
+              onTap: () => Navigator.of(context).maybePop(),
+              borderRadius: BorderRadius.circular(18),
+              child: Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  border: Border.all(color: const Color(0xFFE2E5EA)),
+                ),
+                child: const Icon(
+                  Icons.arrow_back_ios_new_rounded,
+                  size: 18,
+                  color: Colors.black87,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Container(
+                height: 42,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF5F6FA),
+                  borderRadius: BorderRadius.circular(21),
+                  border: Border.all(color: const Color(0xFFE1E4EA)),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.search_rounded,
+                      size: 27,
+                      color: _homeAccentColor,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextField(
+                        controller: _homeSearchController,
+                        onChanged: (value) {
+                          setState(() {
+                            _homeSearchQuery = value;
+                          });
+                        },
+                        style: const TextStyle(
+                          color: Color(0xFF70768B),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                        decoration: const InputDecoration(
+                          isCollapsed: true,
+                          border: InputBorder.none,
+                          hintText: 'Search in categories',
+                          hintStyle: TextStyle(
+                            color: Color(0xFF70768B),
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHomeCategoryGrid(List<dynamic> visibleCategories) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final crossAxisCount = width > 960
+            ? 4
+            : width > 680
+            ? 3
+            : 2;
+        final spacing = width > 680 ? 16.0 : 14.0;
+        final aspectRatio = width > 680 ? 0.92 : 0.95;
+
+        return GridView.builder(
+          padding: const EdgeInsets.fromLTRB(8, 6, 8, 18),
+          physics: const AlwaysScrollableScrollPhysics(),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            crossAxisSpacing: spacing,
+            mainAxisSpacing: 12,
+            childAspectRatio: aspectRatio,
+          ),
+          itemCount: visibleCategories.length,
+          itemBuilder: (context, index) {
+            return _buildHomeCategoryCard(visibleCategories[index]);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildHomeCategoryCard(dynamic rawCategory) {
+    final category = rawCategory is Map
+        ? Map<String, dynamic>.from(rawCategory)
+        : <String, dynamic>{};
+    final categoryId = category['id']?.toString().trim() ?? '';
+    final categoryName = (category['name'] ?? 'Unknown').toString().trim();
+    final imageUrl = _resolveCategoryImageUrl(category);
+    final isFavorite = _favoriteCategoryIds.contains(categoryId);
+    final badgeInfo = _categoryBadgeInfo(categoryId);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: () => _openProductsPage(
+          categoryId: categoryId,
+          categoryName: categoryName,
+        ),
+        onLongPress: () => _toggleFavoriteCategory(categoryId, categoryName),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: const Color(0xFFE5E7EB)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 14,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: imageUrl != null && imageUrl.isNotEmpty
+                      ? CachedNetworkImage(
+                          imageUrl: imageUrl,
+                          fit: BoxFit.cover,
+                          placeholder: (context, url) => Container(
+                            color: const Color(0xFFF3F5F7),
+                            alignment: Alignment.center,
+                            child: const CircularProgressIndicator(
+                              color: _homeAccentColor,
+                            ),
+                          ),
+                          errorWidget: (context, url, error) {
+                            return _buildHomeCategoryPlaceholder();
+                          },
+                        )
+                      : _buildHomeCategoryPlaceholder(),
+                ),
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: Container(
+                    height: 72,
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          Color(0x8A000000),
+                          Color(0xCC000000),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                if (badgeInfo != null)
+                  Positioned(
+                    top: 8,
+                    left: 8,
+                    child: ProductRatingBadge(
+                      info: badgeInfo,
+                      fontSize: 10,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 4,
+                      ),
+                    ),
+                  ),
+                Positioned(
+                  left: 12,
+                  right: 12,
+                  bottom: 13,
+                  child: Text(
+                    categoryName,
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.left,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                      height: 1.1,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () =>
+                        _toggleFavoriteCategory(categoryId, categoryName),
+                    child: Container(
+                      padding: const EdgeInsets.all(3),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.26),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Icon(
+                        isFavorite
+                            ? Icons.favorite_rounded
+                            : Icons.favorite_border_rounded,
+                        color: isFavorite
+                            ? _homeAccentColor
+                            : Colors.white.withValues(alpha: 0.95),
+                        size: 18,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHomeCategoryPlaceholder() {
+    return Container(
+      color: const Color(0xFFF3F5F7),
+      alignment: Alignment.center,
+      child: const Icon(
+        Icons.restaurant_menu_rounded,
+        color: Color(0xFF98A2B3),
+        size: 40,
+      ),
+    );
+  }
+
+  Widget _buildHomeModeBody({required List<dynamic> visibleCategories}) {
+    return Column(
+      children: [
+        _buildHomeHeader(),
+        Expanded(
+          child: _isLoading
+              ? const Center(
+                  child: CircularProgressIndicator(color: Colors.black),
+                )
+              : _errorMessage.isNotEmpty
+              ? ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(24, 80, 24, 24),
+                  children: [
+                    Text(
+                      _errorMessage,
+                      style: const TextStyle(
+                        color: Color(0xFF4A4A4A),
+                        fontSize: 18,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 12),
+                    Center(
+                      child: ElevatedButton(
+                        onPressed: _fetchCategories,
+                        child: const Text('Retry'),
+                      ),
+                    ),
+                  ],
+                )
+              : visibleCategories.isEmpty
+              ? ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.fromLTRB(24, 80, 24, 24),
+                  children: const [
+                    Text(
+                      'No categories found',
+                      style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                )
+              : RefreshIndicator(
+                  onRefresh: _fetchCategories,
+                  child: _buildHomeCategoryGrid(visibleCategories),
+                ),
+        ),
+      ],
+    );
   }
 
   Future<void> _fetchUserData(String token) async {
@@ -631,6 +1712,22 @@ class _CategoriesPageState extends State<CategoriesPage> {
     });
     try {
       final prefs = await SharedPreferences.getInstance();
+      if (_isHomeMode && widget.initialHomeTopCategories.isNotEmpty) {
+        final storedUserId = prefs.getString('user_id');
+        if (storedUserId != _currentUserId) {
+          await _loadFavoriteCategories(preferredUserId: storedUserId);
+        }
+        if (!mounted) return;
+        setState(() {
+          _categories = widget.initialHomeTopCategories
+              .map((category) => Map<String, dynamic>.from(category))
+              .toList(growable: false);
+          _isLoading = false;
+          _errorMessage = '';
+        });
+        return;
+      }
+
       final token = prefs.getString('token');
       _userRole ??= prefs.getString('role');
       _companyId ??= prefs.getString('company_id');
@@ -835,213 +1932,257 @@ class _CategoriesPageState extends State<CategoriesPage> {
   @override
   Widget build(BuildContext context) {
     final cartProvider = Provider.of<CartProvider>(context);
-    String title = 'Billing';
-    if (cartProvider.selectedTable != null) {
+    final visibleHomeCategories = _filteredHomeCategories();
+    String title = _isHomeMode ? 'Categories' : 'Billing';
+    if (!_isHomeMode && cartProvider.selectedTable != null) {
       title =
           'Table: ${cartProvider.selectedTable} (${cartProvider.selectedSection})';
-    } else if (cartProvider.isSharedTableOrder) {
+    } else if (!_isHomeMode && cartProvider.isSharedTableOrder) {
       title = CartProvider.sharedTablesSectionName;
     }
-    PageType pageType = widget.sourcePage;
 
     return CommonScaffold(
       title: title,
-      pageType: pageType,
+      pageType: widget.sourcePage,
+      showAppBar: !_isHomeMode,
       onScanCallback: _handleScan, // Add this for global scan from categories
-      body: RefreshIndicator(
-        onRefresh: _fetchCategories,
-        child: _isLoading
-            ? const Center(
-                child: CircularProgressIndicator(color: Colors.black),
-              )
-            : _errorMessage.isNotEmpty
-            ? Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      _errorMessage,
-                      style: const TextStyle(
-                        color: Color(0xFF4A4A4A),
-                        fontSize: 18,
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    ElevatedButton(
-                      onPressed: _fetchCategories,
-                      child: const Text('Retry'),
-                    ),
-                  ],
-                ),
-              )
-            : _categories.isEmpty
-            ? const Center(
-                child: Text(
-                  'No categories found',
-                  style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18),
-                ),
-              )
-            : LayoutBuilder(
+      body: _isHomeMode
+          ? Container(
+              color: const Color(0xFFF4F8F4),
+              child: _buildHomeModeBody(
+                visibleCategories: visibleHomeCategories,
+              ),
+            )
+          : RefreshIndicator(
+              onRefresh: _fetchCategories,
+              child: LayoutBuilder(
                 builder: (context, constraints) {
                   final orderedCategories = _orderedCategories();
                   final width = constraints.maxWidth;
                   final crossAxisCount = (width > 600) ? 5 : 3;
 
                   return CustomScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
                     slivers: [
-                      const SliverToBoxAdapter(child: OfferBanner()),
-                      SliverPadding(
-                        padding: const EdgeInsets.all(10),
-                        sliver: SliverGrid(
-                          gridDelegate:
-                              SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: crossAxisCount,
-                                crossAxisSpacing: 10,
-                                mainAxisSpacing: 10,
-                                childAspectRatio: 0.75,
-                              ),
-                          delegate: SliverChildBuilderDelegate((
-                            context,
-                            index,
-                          ) {
-                            final category = orderedCategories[index];
-                            final String categoryId =
-                                category['id']?.toString() ?? '';
-                            final String categoryName =
-                                category['name']?.toString() ?? 'Unknown';
-                            final isFavorite = _favoriteCategoryIds.contains(
-                              categoryId,
-                            );
-
-                            String? imageUrl;
-                            if (category['image'] != null &&
-                                category['image']['url'] != null) {
-                              imageUrl = category['image']['url'];
-                              if (imageUrl?.startsWith('/') ?? false) {
-                                imageUrl =
-                                    'https://blackforest.vseyal.com$imageUrl';
-                              }
-                            }
-                            imageUrl ??=
-                                'https://via.placeholder.com/150?text=No+Image';
-                            return GestureDetector(
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => ProductsPage(
-                                      categoryId: categoryId,
-                                      categoryName: categoryName,
-                                      sourcePage: widget.sourcePage,
-                                    ),
-                                  ),
-                                );
-                              },
-                              onLongPress: () => _toggleFavoriteCategory(
-                                categoryId,
-                                categoryName,
-                              ),
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(8),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.grey.withValues(alpha: 0.1),
-                                      spreadRadius: 2,
-                                      blurRadius: 4,
-                                      offset: const Offset(0, 2),
-                                    ),
-                                  ],
-                                ),
-                                child: Stack(
-                                  children: [
-                                    Column(
-                                      children: [
-                                        Expanded(
-                                          flex: 8,
-                                          child: ClipRRect(
-                                            borderRadius:
-                                                const BorderRadius.vertical(
-                                                  top: Radius.circular(8),
-                                                ),
-                                            child: CachedNetworkImage(
-                                              imageUrl: imageUrl,
-                                              fit: BoxFit.cover,
-                                              width: double.infinity,
-                                              placeholder: (context, url) =>
-                                                  const Center(
-                                                    child:
-                                                        CircularProgressIndicator(),
-                                                  ),
-                                              errorWidget:
-                                                  (context, url, error) =>
-                                                      const Center(
-                                                        child: Text(
-                                                          'No Image',
-                                                          style: TextStyle(
-                                                            color: Colors.grey,
-                                                          ),
-                                                        ),
-                                                      ),
-                                            ),
-                                          ),
-                                        ),
-                                        Expanded(
-                                          flex: 2,
-                                          child: Container(
-                                            width: double.infinity,
-                                            decoration: const BoxDecoration(
-                                              color: Colors.black,
-                                              borderRadius:
-                                                  BorderRadius.vertical(
-                                                    bottom: Radius.circular(8),
-                                                  ),
-                                            ),
-                                            alignment: Alignment.center,
-                                            child: Text(
-                                              categoryName,
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                              textAlign: TextAlign.center,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    if (isFavorite)
-                                      Positioned(
-                                        top: 8,
-                                        right: 8,
-                                        child: Container(
-                                          padding: const EdgeInsets.all(4),
-                                          decoration: BoxDecoration(
-                                            color: Colors.black.withValues(
-                                              alpha: 0.35,
-                                            ),
-                                            shape: BoxShape.circle,
-                                          ),
-                                          child: Icon(
-                                            Icons.star,
-                                            size: 20,
-                                            color: Colors.yellow.shade700,
-                                          ),
-                                        ),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          }, childCount: orderedCategories.length),
+                      const SliverPadding(
+                        padding: EdgeInsets.symmetric(vertical: 10),
+                        sliver: SliverToBoxAdapter(
+                          child: OfferBanner(
+                            height: 156,
+                            showIndicators: false,
+                            itemMargin: EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 4,
+                            ),
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 20,
+                              vertical: 14,
+                            ),
+                            mediaSize: 96,
+                            useCenteredValueLayout: false,
+                            regularTitleFontSize: 17,
+                            regularSubtitleFontSize: 13,
+                            regularSubtitleMaxLines: 3,
+                            regularSubtitleOverflow: TextOverflow.visible,
+                          ),
                         ),
                       ),
+                      if (_isLoading)
+                        const SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: Center(
+                            child: CircularProgressIndicator(
+                              color: Colors.black,
+                            ),
+                          ),
+                        )
+                      else if (_errorMessage.isNotEmpty)
+                        SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  _errorMessage,
+                                  style: const TextStyle(
+                                    color: Color(0xFF4A4A4A),
+                                    fontSize: 18,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 10),
+                                ElevatedButton(
+                                  onPressed: _fetchCategories,
+                                  child: const Text('Retry'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                      else if (orderedCategories.isEmpty)
+                        const SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: Center(
+                            child: Text(
+                              'No categories found',
+                              style: TextStyle(
+                                color: Color(0xFF4A4A4A),
+                                fontSize: 18,
+                              ),
+                            ),
+                          ),
+                        )
+                      else
+                        SliverPadding(
+                          padding: const EdgeInsets.all(10),
+                          sliver: SliverGrid(
+                            gridDelegate:
+                                SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: crossAxisCount,
+                                  crossAxisSpacing: 10,
+                                  mainAxisSpacing: 10,
+                                  childAspectRatio: 0.75,
+                                ),
+                            delegate: SliverChildBuilderDelegate((
+                              context,
+                              index,
+                            ) {
+                              final category = orderedCategories[index];
+                              final String categoryId =
+                                  category['id']?.toString() ?? '';
+                              final String categoryName =
+                                  category['name']?.toString() ?? 'Unknown';
+                              final isFavorite = _favoriteCategoryIds.contains(
+                                categoryId,
+                              );
+
+                              String? imageUrl;
+                              if (category['image'] != null &&
+                                  category['image']['url'] != null) {
+                                imageUrl = category['image']['url'];
+                                if (imageUrl?.startsWith('/') ?? false) {
+                                  imageUrl =
+                                      'https://blackforest.vseyal.com$imageUrl';
+                                }
+                              }
+                              imageUrl ??=
+                                  'https://via.placeholder.com/150?text=No+Image';
+                              return GestureDetector(
+                                onTap: () => _openProductsPage(
+                                  categoryId: categoryId,
+                                  categoryName: categoryName,
+                                ),
+                                onLongPress: () => _toggleFavoriteCategory(
+                                  categoryId,
+                                  categoryName,
+                                ),
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(8),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.grey.withValues(
+                                          alpha: 0.1,
+                                        ),
+                                        spreadRadius: 2,
+                                        blurRadius: 4,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ],
+                                  ),
+                                  child: Stack(
+                                    children: [
+                                      Column(
+                                        children: [
+                                          Expanded(
+                                            flex: 8,
+                                            child: ClipRRect(
+                                              borderRadius:
+                                                  const BorderRadius.vertical(
+                                                    top: Radius.circular(8),
+                                                  ),
+                                              child: CachedNetworkImage(
+                                                imageUrl: imageUrl,
+                                                fit: BoxFit.cover,
+                                                width: double.infinity,
+                                                placeholder: (context, url) =>
+                                                    const Center(
+                                                      child:
+                                                          CircularProgressIndicator(),
+                                                    ),
+                                                errorWidget:
+                                                    (context, url, error) =>
+                                                        const Center(
+                                                          child: Text(
+                                                            'No Image',
+                                                            style: TextStyle(
+                                                              color:
+                                                                  Colors.grey,
+                                                            ),
+                                                          ),
+                                                        ),
+                                              ),
+                                            ),
+                                          ),
+                                          Expanded(
+                                            flex: 2,
+                                            child: Container(
+                                              width: double.infinity,
+                                              decoration: const BoxDecoration(
+                                                color: Colors.black,
+                                                borderRadius:
+                                                    BorderRadius.vertical(
+                                                      bottom: Radius.circular(
+                                                        8,
+                                                      ),
+                                                    ),
+                                              ),
+                                              alignment: Alignment.center,
+                                              child: Text(
+                                                categoryName,
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                                textAlign: TextAlign.center,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      if (isFavorite)
+                                        Positioned(
+                                          top: 8,
+                                          right: 8,
+                                          child: Container(
+                                            padding: const EdgeInsets.all(4),
+                                            decoration: BoxDecoration(
+                                              color: Colors.black.withValues(
+                                                alpha: 0.35,
+                                              ),
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: Icon(
+                                              Icons.star,
+                                              size: 20,
+                                              color: Colors.yellow.shade700,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }, childCount: orderedCategories.length),
+                          ),
+                        ),
                     ],
                   );
                 },
               ),
-      ),
+            ),
     );
   }
 }

@@ -7,22 +7,34 @@ import 'package:shared_preferences/shared_preferences.dart';
 class TableCustomerDetailsVisibilityConfig {
   final bool showCustomerDetailsForTableOrders;
   final bool allowSkipCustomerDetailsForTableOrders;
+  final bool autoSubmitCustomerDetailsForTableOrders;
   final bool showCustomerDetailsForBillingOrders;
   final bool allowSkipCustomerDetailsForBillingOrders;
+  final bool autoSubmitCustomerDetailsForBillingOrders;
+  final bool showCustomerHistoryForTableOrders;
+  final bool showCustomerHistoryForBillingOrders;
 
   const TableCustomerDetailsVisibilityConfig({
     required this.showCustomerDetailsForTableOrders,
     required this.allowSkipCustomerDetailsForTableOrders,
+    required this.autoSubmitCustomerDetailsForTableOrders,
     required this.showCustomerDetailsForBillingOrders,
     required this.allowSkipCustomerDetailsForBillingOrders,
+    required this.autoSubmitCustomerDetailsForBillingOrders,
+    required this.showCustomerHistoryForTableOrders,
+    required this.showCustomerHistoryForBillingOrders,
   });
 
   static const TableCustomerDetailsVisibilityConfig defaultValue =
       TableCustomerDetailsVisibilityConfig(
         showCustomerDetailsForTableOrders: true,
         allowSkipCustomerDetailsForTableOrders: true,
+        autoSubmitCustomerDetailsForTableOrders: true,
         showCustomerDetailsForBillingOrders: true,
         allowSkipCustomerDetailsForBillingOrders: true,
+        autoSubmitCustomerDetailsForBillingOrders: true,
+        showCustomerHistoryForTableOrders: true,
+        showCustomerHistoryForBillingOrders: true,
       );
 }
 
@@ -145,42 +157,187 @@ class TableCustomerDetailsVisibilityService {
 
       final decoded = jsonDecode(response.body);
       if (decoded is Map) {
-        bool readBool(dynamic value, bool defaultValue) {
+        bool? parseBool(dynamic value) {
           if (value is bool) return value;
+          if (value is num) {
+            if (value == 1) return true;
+            if (value == 0) return false;
+          }
           if (value is String) {
             final normalized = value.trim().toLowerCase();
-            if (normalized == 'true') return true;
-            if (normalized == 'false') return false;
+            if (normalized.isEmpty) return null;
+            if (normalized == 'true' ||
+                normalized == '1' ||
+                normalized == 'yes' ||
+                normalized == 'on' ||
+                normalized == 'enabled') {
+              return true;
+            }
+            if (normalized == 'false' ||
+                normalized == '0' ||
+                normalized == 'no' ||
+                normalized == 'off' ||
+                normalized == 'disabled') {
+              return false;
+            }
           }
-          return defaultValue;
+          return null;
         }
 
-        final showCustomerDetailsForTableOrders = readBool(
-          decoded['showCustomerDetailsForTableOrders'],
-          true,
-        );
-        final allowSkipCustomerDetailsForTableOrders = readBool(
-          decoded['allowSkipCustomerDetailsForTableOrders'],
-          true,
-        );
-        final showCustomerDetailsForBillingOrders = readBool(
-          decoded['showCustomerDetailsForBillingOrders'],
-          true,
-        );
-        final allowSkipCustomerDetailsForBillingOrders = readBool(
-          decoded['allowSkipCustomerDetailsForBillingOrders'],
-          true,
-        );
+        Map<String, dynamic>? toMap(dynamic value) {
+          if (value is Map) {
+            return Map<String, dynamic>.from(value);
+          }
+          return null;
+        }
 
-        return TableCustomerDetailsVisibilityConfig(
+        bool readBoolFromTree(
+          dynamic node,
+          List<String> keys,
+          bool defaultValue,
+        ) {
+          final wanted = keys.map((k) => k.toLowerCase()).toSet();
+
+          bool? scan(dynamic current) {
+            if (current is Map) {
+              for (final entry in current.entries) {
+                final key = entry.key.toString().toLowerCase();
+                if (wanted.contains(key)) {
+                  final parsed = parseBool(entry.value);
+                  if (parsed != null) return parsed;
+                }
+              }
+              for (final entry in current.entries) {
+                final nested = scan(entry.value);
+                if (nested != null) return nested;
+              }
+            } else if (current is List) {
+              for (final item in current) {
+                final nested = scan(item);
+                if (nested != null) return nested;
+              }
+            }
+            return null;
+          }
+
+          return scan(node) ?? defaultValue;
+        }
+
+        final root = Map<String, dynamic>.from(decoded);
+        final doc = toMap(root['doc']);
+        final data = toMap(root['data']);
+        final docs = root['docs'];
+        final firstDoc = (docs is List && docs.isNotEmpty)
+            ? toMap(docs.first)
+            : null;
+        final source = doc ?? data ?? firstDoc ?? root;
+
+        final showCustomerDetailsForTableOrders = readBoolFromTree(source, [
+          'showCustomerDetailsForTableOrders',
+          'showCustomerDetailsForTableOrder',
+          'showCustomerDetailsForTable',
+          'showTableCustomerDetails',
+          'show_table_customer_details',
+          'showCustomerDetailsButtonForTableOrders',
+          'showCustomerDetailsButtonForTableOrder',
+        ], true);
+        final allowSkipCustomerDetailsForTableOrders =
+            readBoolFromTree(source, [
+              'allowSkipCustomerDetailsForTableOrders',
+              'allowSkipCustomerDetailsForTableOrder',
+              'allowSkipForTableOrders',
+              'allowSkipForTable',
+              'allow_skip_customer_details_for_table_orders',
+              'allowSkipButtonForTableOrders',
+              'allowSkipButtonForTableOrder',
+            ], true);
+        final autoSubmitCustomerDetailsForTableOrders =
+            readBoolFromTree(source, [
+              'autoSubmitCustomerDetailsForTableOrders',
+              'autoSubmitCustomerDetailsForTableOrder',
+              'enableAutoSubmitCustomerDetailsForTableOrders',
+              'enableAutoSubmitCustomerDetailsForTableOrder',
+              'autoSubmitForTableOrders',
+              'autoSubmitForTableOrder',
+              'autoSubmitForTable',
+              'auto_submit_customer_details_for_table_orders',
+              'autoSubmitCustomerDetails',
+            ], true);
+        final showCustomerDetailsForBillingOrders = readBoolFromTree(source, [
+          'showCustomerDetailsForBillingOrders',
+          'showCustomerDetailsForBillingOrder',
+          'showCustomerDetailsForBilling',
+          'showBillingCustomerDetails',
+          'show_billing_customer_details',
+          'showCustomerDetailsButtonForBillingOrders',
+          'showCustomerDetailsButtonForBillingOrder',
+        ], true);
+        final allowSkipCustomerDetailsForBillingOrders =
+            readBoolFromTree(source, [
+              'allowSkipCustomerDetailsForBillingOrders',
+              'allowSkipCustomerDetailsForBillingOrder',
+              'allowSkipCustomerDetailsForBilling',
+              'allowSkipForBillingOrders',
+              'allowSkipForBilling',
+              'allow_skip_customer_details_for_billing_orders',
+              'allowSkipButtonForBillingOrders',
+              'allowSkipButtonForBillingOrder',
+            ], true);
+        final autoSubmitCustomerDetailsForBillingOrders =
+            readBoolFromTree(source, [
+              'autoSubmitCustomerDetailsForBillingOrders',
+              'autoSubmitCustomerDetailsForBillingOrder',
+              'enableAutoSubmitCustomerDetailsForBillingOrders',
+              'enableAutoSubmitCustomerDetailsForBillingOrder',
+              'autoSubmitForBillingOrders',
+              'autoSubmitForBillingOrder',
+              'autoSubmitForBilling',
+              'auto_submit_customer_details_for_billing_orders',
+              'autoSubmitCustomerDetails',
+            ], true);
+        final showCustomerHistoryForTableOrders = readBoolFromTree(source, [
+          'showCustomerHistoryForTableOrders',
+          'showCustomerHistoryForTableOrder',
+          'showCustomerHistoryForTable',
+          'showTableCustomerHistory',
+          'show_table_customer_history',
+          'showCustomerHistoryButtonForTableOrders',
+          'showCustomerHistoryButtonForTableOrder',
+          'showCustomerHistory',
+        ], true);
+        final showCustomerHistoryForBillingOrders = readBoolFromTree(source, [
+          'showCustomerHistoryForBillingOrders',
+          'showCustomerHistoryForBillingOrder',
+          'showCustomerHistoryForBilling',
+          'showBillingCustomerHistory',
+          'show_billing_customer_history',
+          'showCustomerHistoryButtonForBillingOrders',
+          'showCustomerHistoryButtonForBillingOrder',
+          'showCustomerHistory',
+        ], true);
+
+        final config = TableCustomerDetailsVisibilityConfig(
           showCustomerDetailsForTableOrders: showCustomerDetailsForTableOrders,
           allowSkipCustomerDetailsForTableOrders:
               allowSkipCustomerDetailsForTableOrders,
+          autoSubmitCustomerDetailsForTableOrders:
+              autoSubmitCustomerDetailsForTableOrders,
           showCustomerDetailsForBillingOrders:
               showCustomerDetailsForBillingOrders,
           allowSkipCustomerDetailsForBillingOrders:
               allowSkipCustomerDetailsForBillingOrders,
+          autoSubmitCustomerDetailsForBillingOrders:
+              autoSubmitCustomerDetailsForBillingOrders,
+          showCustomerHistoryForTableOrders: showCustomerHistoryForTableOrders,
+          showCustomerHistoryForBillingOrders:
+              showCustomerHistoryForBillingOrders,
         );
+
+        debugPrint(
+          '[TableCustomerDetailsVisibilityService] config table(show=${config.showCustomerDetailsForTableOrders}, skip=${config.allowSkipCustomerDetailsForTableOrders}, history=${config.showCustomerHistoryForTableOrders}, autoSubmit=${config.autoSubmitCustomerDetailsForTableOrders}) billing(show=${config.showCustomerDetailsForBillingOrders}, skip=${config.allowSkipCustomerDetailsForBillingOrders}, history=${config.showCustomerHistoryForBillingOrders}, autoSubmit=${config.autoSubmitCustomerDetailsForBillingOrders})',
+        );
+
+        return config;
       }
     } catch (error) {
       debugPrint(
