@@ -10,6 +10,7 @@ import 'package:blackforest_app/customer_history_dialog.dart';
 import 'package:blackforest_app/table_customer_details_visibility_service.dart';
 import 'package:blackforest_app/table.dart';
 import 'package:blackforest_app/app_http.dart' as http;
+import 'package:blackforest_app/kot_auto_print_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:flutter/services.dart';
@@ -4538,6 +4539,16 @@ class _CartPageState extends State<CartPage> {
           }
           kotItems.addAll(referenceItems);
 
+          final submittedBillId = (savedBillId ?? billId ?? '').trim();
+          if (submittedBillId.isNotEmpty && kotItems.isNotEmpty) {
+            unawaited(
+              KotAutoPrintService.acknowledgeSubmittedKotItems(
+                billId: submittedBillId,
+                items: kotItems,
+              ),
+            );
+          }
+
           _handleKOTPrinting(
             items: kotItems,
             billingResponse: billingResponse,
@@ -4620,6 +4631,14 @@ class _CartPageState extends State<CartPage> {
             tSection: sectionForSubmit,
           );
         } else {
+          final completedBillId = (savedBillId ?? billId ?? '').trim();
+          if (completedBillId.isNotEmpty) {
+            unawaited(
+              KotAutoPrintService.acknowledgeCompletedBill(
+                billId: completedBillId,
+              ),
+            );
+          }
           cartProvider.clearCart();
         }
 

@@ -377,11 +377,9 @@ class _TablePageState extends State<TablePage> {
     );
   }
 
-  Color _getTableColor(dynamic runningBill, {bool isReservedDraft = false}) {
+  Color _getTableColor(dynamic runningBill) {
     if (runningBill == null) {
-      return isReservedDraft
-          ? const Color(0xFFFFE0B2)
-          : const Color(0xFFEEEEEE);
+      return const Color(0xFFEEEEEE);
     }
 
     final items = _activeItemsFromBill(runningBill);
@@ -411,18 +409,6 @@ class _TablePageState extends State<TablePage> {
       default:
         return const Color(0xFFEEEEEE); // Default grey
     }
-  }
-
-  String _draftWaiterLabel(CartProvider cartProvider) {
-    final localOwner = cartProvider.draftOwnerNameFor(CartType.table)?.trim();
-    if (localOwner != null && localOwner.isNotEmpty) {
-      return localOwner;
-    }
-    final current = _currentWaiterName?.trim();
-    if (current != null && current.isNotEmpty) {
-      return current;
-    }
-    return 'You';
   }
 
   Widget _buildCategorySection(String categoryName, int tableCount) {
@@ -456,8 +442,6 @@ class _TablePageState extends State<TablePage> {
     required VoidCallback onTap,
     required VoidCallback onDoubleTap,
     bool showDashedWhenIdle = true,
-    bool isReservedDraft = false,
-    String? reservedWaiterLabel,
   }) {
     final isRunning = runningBill != null;
 
@@ -465,20 +449,14 @@ class _TablePageState extends State<TablePage> {
       onTap: onTap,
       onDoubleTap: onDoubleTap,
       child: CustomPaint(
-        painter: !isRunning && !isReservedDraft && showDashedWhenIdle
+        painter: !isRunning && showDashedWhenIdle
             ? DashedBorderPainter()
             : null,
         child: Container(
           decoration: BoxDecoration(
-            color: _getTableColor(
-              runningBill,
-              isReservedDraft: isReservedDraft,
-            ),
+            color: _getTableColor(runningBill),
             borderRadius: BorderRadius.circular(8),
-            border: isReservedDraft
-                ? Border.all(color: const Color(0xFFEF6C00), width: 1.4)
-                : null,
-            boxShadow: isRunning || isReservedDraft
+            boxShadow: isRunning
                 ? [
                     BoxShadow(
                       color: Colors.black.withValues(alpha: 0.05),
@@ -493,26 +471,12 @@ class _TablePageState extends State<TablePage> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 if (isRunning) _buildRunningTimeWidget(runningBill),
-                if (isReservedDraft) ...[
-                  const Text(
-                    'RESERVED',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFFE65100),
-                      letterSpacing: 0.8,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                ],
                 Text(
                   tableLabel,
                   textAlign: TextAlign.center,
                   style: TextStyle(
                     fontSize: 18,
-                    fontWeight: (isRunning || isReservedDraft)
-                        ? FontWeight.bold
-                        : FontWeight.w500,
+                    fontWeight: isRunning ? FontWeight.bold : FontWeight.w500,
                   ),
                 ),
                 if (isRunning) ...[
@@ -537,23 +501,6 @@ class _TablePageState extends State<TablePage> {
                         fontSize: 10,
                         fontWeight: FontWeight.w500,
                         color: Colors.black45,
-                      ),
-                    ),
-                  ),
-                ],
-                if (isReservedDraft && reservedWaiterLabel != null) ...[
-                  const SizedBox(height: 4),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    child: Text(
-                      'By: $reservedWaiterLabel',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFFBF360C),
                       ),
                     ),
                   ),
@@ -758,7 +705,6 @@ class _TablePageState extends State<TablePage> {
     bool shrinkWrap = false,
     required String sectionName,
   }) {
-    final cartProvider = context.watch<CartProvider>();
     return GridView.builder(
       shrinkWrap: shrinkWrap,
       physics: shrinkWrap
@@ -780,21 +726,10 @@ class _TablePageState extends State<TablePage> {
           tableNumber: tableNumberText,
           sectionName: sectionName,
         );
-        final isReservedDraft =
-            runningBill == null &&
-            cartProvider.hasDraftForTableSelection(
-              table: tableNumberText,
-              section: sectionName,
-            );
-        final reservedWaiterLabel = isReservedDraft
-            ? _draftWaiterLabel(cartProvider)
-            : null;
 
         return _buildTableTile(
           tableLabel: 'Table $tableNumber',
           runningBill: runningBill,
-          isReservedDraft: isReservedDraft,
-          reservedWaiterLabel: reservedWaiterLabel,
           onTap: () => _handleTableTap(
             runningBill,
             tableNumber,
@@ -2183,9 +2118,7 @@ class _TablePageState extends State<TablePage> {
             );
 
         if (hasExistingDraftForSameTable) {
-          debugPrint(
-            '🪑 Reopening reserved table draft: $targetTable / $sectionName',
-          );
+          debugPrint('🪑 Reopening table draft: $targetTable / $sectionName');
           cartProvider.setSelectedTableMetadata(targetTable, sectionName);
         } else if (currentTable == targetTable &&
             currentSection == targetSection) {

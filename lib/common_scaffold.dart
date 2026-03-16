@@ -17,6 +17,7 @@ import 'package:blackforest_app/employee.dart'; // Import EmployeePage
 import 'package:blackforest_app/table.dart'; // Import TablePage
 import 'package:blackforest_app/home_page.dart';
 import 'package:blackforest_app/kitchen_notifications_page.dart'; // Import HomePage
+import 'package:blackforest_app/kot_auto_print_service.dart';
 import 'package:blackforest_app/auth_flags.dart';
 import 'package:blackforest_app/session_prefs.dart';
 
@@ -69,6 +70,8 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   Timer? _sessionCheckTimer;
   bool _isLoggingOut = false;
   bool _isPrinterTestRunning = false;
+  bool _isDrainingWebsiteAlertQueue = false;
+  final List<AutoSyncAlert> _websiteAlertQueue = [];
 
   @override
   void initState() {
@@ -104,6 +107,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
           context,
           listen: false,
         ).syncKitchenNotifications();
+        unawaited(_syncWebsiteOrderSignals());
       }
     });
 
@@ -114,8 +118,41 @@ class _CommonScaffoldState extends State<CommonScaffold> {
           context,
           listen: false,
         ).syncKitchenNotifications();
+        unawaited(_syncWebsiteOrderSignals());
       }
     });
+  }
+
+  Future<void> _syncWebsiteOrderSignals() async {
+    final alerts = await KotAutoPrintService.syncPendingWebsiteKots();
+    if (!mounted || alerts.isEmpty) {
+      return;
+    }
+
+    _websiteAlertQueue.addAll(alerts);
+    if (_isDrainingWebsiteAlertQueue) {
+      return;
+    }
+
+    _isDrainingWebsiteAlertQueue = true;
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      while (mounted && _websiteAlertQueue.isNotEmpty) {
+        final alert = _websiteAlertQueue.removeAt(0);
+        messenger.hideCurrentSnackBar();
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(alert.message),
+            backgroundColor: alert.isSuccess ? Colors.green : Colors.redAccent,
+            behavior: SnackBarBehavior.floating,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 3200));
+      }
+    } finally {
+      _isDrainingWebsiteAlertQueue = false;
+    }
   }
 
   void _startSessionCheck() {
