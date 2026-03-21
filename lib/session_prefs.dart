@@ -4,17 +4,28 @@ import 'package:blackforest_app/table_customer_details_visibility_service.dart';
 const String _favoriteCategoryPrefix = 'favorite_category_ids_';
 
 Future<void> clearSessionPreservingFavorites(SharedPreferences prefs) async {
-  final Map<String, List<String>> favoritesBackup = {};
+  final Map<String, dynamic> backup = {};
   for (final key in prefs.getKeys()) {
     if (key.startsWith(_favoriteCategoryPrefix)) {
-      favoritesBackup[key] = prefs.getStringList(key) ?? <String>[];
+      backup[key] = prefs.getStringList(key) ?? <String>[];
+    } else if (key == 'bt_printer_mac' || 
+               key == 'bt_printer_name' || 
+               key == 'printerPort' || 
+               key == 'printerIp') {
+      backup[key] = prefs.get(key);
     }
   }
 
   await prefs.clear();
   TableCustomerDetailsVisibilityService.clearCache();
 
-  for (final entry in favoritesBackup.entries) {
-    await prefs.setStringList(entry.key, entry.value);
+  for (final entry in backup.entries) {
+    if (entry.value is List<String>) {
+      await prefs.setStringList(entry.key, entry.value as List<String>);
+    } else if (entry.value is String) {
+      await prefs.setString(entry.key, entry.value as String);
+    } else if (entry.value is int) {
+      await prefs.setInt(entry.key, entry.value as int);
+    }
   }
 }

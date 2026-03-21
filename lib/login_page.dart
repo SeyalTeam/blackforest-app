@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:blackforest_app/categories_page.dart';
 import 'package:flutter/material.dart';
 import 'package:blackforest_app/app_http.dart' as http;
+import 'package:blackforest_app/home_navigation_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/home_page.dart';
 import 'package:blackforest_app/session_prefs.dart';
@@ -262,15 +264,28 @@ class _LoginPageState extends State<LoginPage> {
             }
           }
 
-          if (mounted) {
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (_) =>
-                    IdleTimeoutWrapper(child: const HomePage()),
+          final navigationVisibility = await Future.wait<bool>([
+            HomeNavigationService.loadVisibilityForCurrentBranch(
+              prefs: prefs,
+              forceRefresh: true,
+            ),
+            HomeNavigationService.loadTableVisibilityForCurrentBranch(
+              prefs: prefs,
+              forceRefresh: true,
+            ),
+          ]);
+          final showHomeNavigation = navigationVisibility[0];
+          if (!mounted) return;
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => IdleTimeoutWrapper(
+                child: showHomeNavigation
+                    ? const HomePage()
+                    : const CategoriesPage(),
               ),
-            );
-          }
+            ),
+          );
           return;
         }
       } catch (_) {}
@@ -292,14 +307,30 @@ class _LoginPageState extends State<LoginPage> {
       context: context,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
-        title: const Text("Verification Success"),
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text(
+          "Verification Success",
+          style: TextStyle(
+            color: Color(0xFF1A202C),
+            fontWeight: FontWeight.bold,
+          ),
+        ),
         content: Text(
           "Internet: $connectionType\n"
           "Device IP: $deviceIp\n$branchInfo\nPrinter IP: ${printerIp ?? 'Not Set'}",
+          style: const TextStyle(color: Color(0xFF4A5568), fontSize: 15),
         ),
         actions: [
           TextButton(
-            child: const Text("OK"),
+            child: const Text(
+              "OK",
+              style: TextStyle(
+                color: Color(0xFF1A202C),
+                fontWeight: FontWeight.bold,
+              ),
+            ),
             onPressed: () => Navigator.of(ctx).pop(),
           ),
         ],
@@ -339,9 +370,21 @@ class _LoginPageState extends State<LoginPage> {
   }
 
   void _showError(String msg) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.black));
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          msg,
+          style: const TextStyle(
+            fontWeight: FontWeight.w500,
+            color: Colors.white,
+          ),
+        ),
+        backgroundColor: const Color(0xFF1A202C),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
+      ),
+    );
   }
 
   Future<bool> _checkLocationPermission() async {
@@ -858,15 +901,29 @@ class _LoginPageState extends State<LoginPage> {
           }
         }
 
-        // NAVIGATE TO HOME
-        if (mounted) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (_) => IdleTimeoutWrapper(child: const HomePage()),
+        // Navigate to the correct landing page.
+        final navigationVisibility = await Future.wait<bool>([
+          HomeNavigationService.loadVisibilityForCurrentBranch(
+            prefs: prefs,
+            forceRefresh: true,
+          ),
+          HomeNavigationService.loadTableVisibilityForCurrentBranch(
+            prefs: prefs,
+            forceRefresh: true,
+          ),
+        ]);
+        final showHomeNavigation = navigationVisibility[0];
+        if (!mounted) return;
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => IdleTimeoutWrapper(
+              child: showHomeNavigation
+                  ? const HomePage()
+                  : const CategoriesPage(),
             ),
-          );
-        }
+          ),
+        );
       } else {
         String errMsg = "Invalid credentials";
         try {
@@ -899,11 +956,7 @@ class _LoginPageState extends State<LoginPage> {
           // Gradient BG
           Container(
             decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Colors.black, Color(0xFF1E1E1E)],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
+              color: Color(0xFF2D0A0A), // Deep Maroon from Logo
             ),
           ),
 
@@ -913,45 +966,34 @@ class _LoginPageState extends State<LoginPage> {
               duration: const Duration(milliseconds: 300),
               width: 380,
               padding: const EdgeInsets.all(22),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: Colors.white24),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.45),
-                    blurRadius: 22,
-                    spreadRadius: 5,
-                    offset: const Offset(0, 10),
-                  ),
-                ],
-              ),
+              decoration: const BoxDecoration(color: Colors.transparent),
 
               child: Form(
                 key: _formKey,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text(
-                      "Blackforest Billing",
-                      style: TextStyle(
-                        fontSize: 30,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                    Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white, width: 1.5),
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(15),
+                        child: Image.asset(
+                          'assets/logo.png',
+                          width: double.infinity,
+                          fit: BoxFit.contain,
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    const Text(
-                      "Login to Continue",
-                      style: TextStyle(fontSize: 18, color: Colors.white70),
-                    ),
-                    const SizedBox(height: 30),
+                    const SizedBox(height: 25),
 
                     // USERNAME FIELD
                     _premiumInput(
                       controller: _emailController,
-                      hint: "Username",
-                      icon: Icons.person,
+                      hint: "Enter your username ...",
+                      icon: Icons.person_outline,
                       validator: (v) {
                         if (v == null || v.trim().isEmpty) {
                           return "Enter username";
@@ -971,15 +1013,15 @@ class _LoginPageState extends State<LoginPage> {
                     // PASSWORD FIELD
                     _premiumInput(
                       controller: _passwordController,
-                      hint: "Password",
-                      icon: Icons.lock,
+                      hint: "Enter your password ...",
+                      icon: Icons.lock_outline,
                       obscure: _obscurePassword,
                       suffix: IconButton(
                         icon: Icon(
                           _obscurePassword
-                              ? Icons.visibility_off
-                              : Icons.visibility,
-                          color: Colors.white,
+                              ? Icons.visibility_off_outlined
+                              : Icons.visibility_outlined,
+                          color: const Color(0xFF718096),
                         ),
                         onPressed: () => setState(
                           () => _obscurePassword = !_obscurePassword,
@@ -998,21 +1040,22 @@ class _LoginPageState extends State<LoginPage> {
                         onPressed: _isLoading ? null : _login,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.white,
-                          foregroundColor: Colors.black,
-                          elevation: 10,
+                          foregroundColor: const Color(0xFF2D0A0A),
+                          elevation: 4,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
+                            borderRadius: BorderRadius.circular(30),
                           ),
                         ),
                         child: _isLoading
                             ? const CircularProgressIndicator(
-                                color: Colors.black,
+                                color: Color(0xFF2D0A0A),
                               )
                             : const Text(
-                                "Login",
+                                "SIGN IN",
                                 style: TextStyle(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 1.2,
                                 ),
                               ),
                       ),
@@ -1032,9 +1075,9 @@ class _LoginPageState extends State<LoginPage> {
                 'Version $_appVersion',
                 textAlign: TextAlign.center,
                 style: const TextStyle(
-                  color: Colors.white60,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
+                  color: Colors.white54,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w400,
                 ),
               ),
             ),
@@ -1055,20 +1098,32 @@ class _LoginPageState extends State<LoginPage> {
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white12,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white30),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.1),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: TextFormField(
         controller: controller,
         obscureText: obscure,
         validator: validator,
-        style: const TextStyle(color: Colors.white),
+        style: const TextStyle(
+          color: Color(0xFF4A5568),
+          fontWeight: FontWeight.w500,
+        ),
         decoration: InputDecoration(
-          prefixIcon: Icon(icon, color: Colors.white),
+          prefixIcon: Icon(icon, color: const Color(0xFF718096)),
           suffixIcon: suffix,
           hintText: hint,
-          hintStyle: const TextStyle(color: Colors.white60),
+          hintStyle: const TextStyle(
+            color: Color(0xFFA0AEC0),
+            fontWeight: FontWeight.w400,
+          ),
           border: InputBorder.none,
           contentPadding: const EdgeInsets.symmetric(
             horizontal: 18,

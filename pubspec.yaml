@@ -29,6 +29,8 @@ dependencies:
   geolocator: ^14.0.2
   connectivity_plus: ^7.0.0
   flutter_local_notifications: ^20.0.0
+  print_bluetooth_thermal: ^1.1.7
+  flutter_foreground_task: ^9.2.1
 
 dev_dependencies:
   flutter_test:

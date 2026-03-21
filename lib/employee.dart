@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/app_http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:blackforest_app/session_prefs.dart';
+import 'package:blackforest_app/printer/bluetooth_printer_settings_page.dart';
+import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 
 class EmployeePage extends StatefulWidget {
   const EmployeePage({super.key});
@@ -28,6 +30,9 @@ class _EmployeePageState extends State<EmployeePage> {
   Duration _breakDuration = Duration.zero;
   List<Map<String, dynamic>> _activities = [];
 
+  bool _isBluetoothConnected = false;
+  String? _btPrinterName;
+
   @override
   void initState() {
     super.initState();
@@ -38,6 +43,17 @@ class _EmployeePageState extends State<EmployeePage> {
   void dispose() {
     _timer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _checkBluetoothStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    final connected = await PrintBluetoothThermal.connectionStatus;
+    if (mounted) {
+      setState(() {
+        _isBluetoothConnected = connected;
+        _btPrinterName = connected ? prefs.getString('bt_printer_name') : null;
+      });
+    }
   }
 
   Future<void> _loadEmployeeData() async {
@@ -78,6 +94,7 @@ class _EmployeePageState extends State<EmployeePage> {
     });
 
     await _fetchAttendance();
+    await _checkBluetoothStatus();
   }
 
   Future<String?> _fetchBranchName(String token, String branchId) async {
@@ -370,6 +387,109 @@ class _EmployeePageState extends State<EmployeePage> {
     }
   }
 
+  Widget _buildBluetoothStatusCard() {
+    return InkWell(
+      onTap: () async {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const BluetoothPrinterSettingsPage(),
+          ),
+        );
+        // Refresh status when returning from settings
+        _checkBluetoothStatus();
+      },
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey[200]!),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.03),
+              blurRadius: 10,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Icon(
+                  Icons.print,
+                  color: _isBluetoothConnected
+                      ? const Color(0xFF1BA672)
+                      : Colors.black87,
+                  size: 24,
+                ),
+                if (!_isBluetoothConnected)
+                  const Positioned(
+                    top: -2,
+                    right: -2,
+                    child: Icon(Icons.close, color: Colors.red, size: 10),
+                  ),
+              ],
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Text(
+                _isBluetoothConnected && _btPrinterName != null
+                    ? _btPrinterName!
+                    : 'Device not connected',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+              ),
+            ),
+            if (_isBluetoothConnected)
+              const Row(
+                children: [
+                  Icon(Icons.check, color: Color(0xFF1BA672), size: 16),
+                  SizedBox(width: 4),
+                  Text(
+                    'Connected',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w500,
+                      color: Colors.black54,
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  Icon(Icons.bluetooth, color: Color(0xFF1BA672), size: 16),
+                ],
+              )
+            else
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFF1BA672)),
+                ),
+                child: const Text(
+                  'Connect',
+                  style: TextStyle(
+                    color: Color(0xFF1BA672),
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return CommonScaffold(
@@ -494,6 +614,8 @@ class _EmployeePageState extends State<EmployeePage> {
                           ),
                         ),
                       ),
+                    const SizedBox(height: 16),
+                    _buildBluetoothStatusCard(),
                     const SizedBox(height: 16),
 
                     // Working Hours Card

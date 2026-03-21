@@ -11,6 +11,7 @@ class CartItem {
   final String? billingItemId; // Billing sub-item id from server
   final String name;
   final double price;
+  final double gstPercent;
   final String? imageUrl;
   double quantity; // ✅ changed from int → double
   final String? unit; // ✅ optional, e.g. "pcs" or "kg"
@@ -35,6 +36,7 @@ class CartItem {
     this.billingItemId,
     required this.name,
     required this.price,
+    this.gstPercent = 0.0,
     this.imageUrl,
     required this.quantity,
     this.unit,
@@ -59,6 +61,7 @@ class CartItem {
     dynamic product,
     double quantity, {
     double? branchPrice,
+    String? branchId,
   }) {
     String? imageUrl;
     if (product['images'] != null &&
@@ -74,6 +77,7 @@ class CartItem {
     double price =
         branchPrice ??
         (product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0);
+    final gstPercent = extractEffectiveGstPercent(product, branchId: branchId);
 
     // ✅ read unit from product (default to 'pcs' if missing)
     String? unit = product['unit']?.toString().toLowerCase() ?? 'pcs';
@@ -102,6 +106,7 @@ class CartItem {
       id: product['id'],
       name: product['name'] ?? 'Unknown',
       price: price,
+      gstPercent: gstPercent,
       imageUrl: imageUrl,
       quantity: quantity,
       unit: unit,
@@ -129,6 +134,7 @@ class CartItem {
       'billingItemId': billingItemId,
       'name': name,
       'price': price,
+      'gstPercent': gstPercent,
       'imageUrl': imageUrl,
       'quantity': quantity,
       'unit': unit,
@@ -169,6 +175,7 @@ class CartItem {
       billingItemId: json['billingItemId']?.toString(),
       name: json['name'],
       price: toSafeDouble(json['price']),
+      gstPercent: parsePercent(json['gstPercent']),
       imageUrl: json['imageUrl'],
       quantity: toSafeDouble(json['quantity']),
       unit: json['unit'],
@@ -290,6 +297,84 @@ class CartItem {
   }
 
   double get lineTotal => lineSubtotal ?? (price * quantity);
+
+  static double parsePercent(dynamic value) {
+    if (value is num) {
+      final parsed = value.toDouble();
+      return parsed < 0 ? 0.0 : parsed;
+    }
+    if (value is String) {
+      final normalized = value.trim().replaceAll('%', '').trim();
+      if (normalized.isEmpty) return 0.0;
+      final parsed = double.tryParse(normalized);
+      if (parsed == null || parsed < 0) return 0.0;
+      return parsed;
+    }
+    return 0.0;
+  }
+
+  static String? extractRefId(dynamic value) {
+    if (value == null) return null;
+    if (value is String) return value.trim().isEmpty ? null : value.trim();
+    if (value is num) return value.toString();
+    if (value is Map) {
+      final map = Map<String, dynamic>.from(value);
+      final id = map['id'] ?? map['_id'] ?? map[r'$oid'];
+      if (id is String) return id.trim().isEmpty ? null : id.trim();
+      if (id is num) return id.toString();
+    }
+    return null;
+  }
+
+  static double extractProductGstPercent(dynamic product) {
+    if (product is! Map) return 0.0;
+    final productMap = Map<String, dynamic>.from(product);
+    final defaultPriceDetails = productMap['defaultPriceDetails'];
+    if (defaultPriceDetails is Map) {
+      final parsed = parsePercent(defaultPriceDetails['gst']);
+      if (parsed > 0) return parsed;
+    }
+    return parsePercent(productMap['gst']);
+  }
+
+  static double? extractBranchOverrideGstPercent(
+    dynamic product, {
+    String? branchId,
+  }) {
+    final normalizedBranchId = branchId?.trim();
+    if (product is! Map ||
+        normalizedBranchId == null ||
+        normalizedBranchId.isEmpty) {
+      return null;
+    }
+    final productMap = Map<String, dynamic>.from(product);
+    final branchOverrides = productMap['branchOverrides'];
+    if (branchOverrides is! List) return null;
+
+    for (final rawOverride in branchOverrides) {
+      if (rawOverride is! Map) continue;
+      final override = Map<String, dynamic>.from(rawOverride);
+      final overrideBranchId = extractRefId(override['branch']);
+      if (overrideBranchId != normalizedBranchId) continue;
+      if (override.containsKey('gst')) {
+        return parsePercent(override['gst']);
+      }
+      return null;
+    }
+    return null;
+  }
+
+  static double extractEffectiveGstPercent(
+    dynamic product, {
+    String? branchId,
+  }) {
+    final branchOverrideGst = extractBranchOverrideGstPercent(
+      product,
+      branchId: branchId,
+    );
+    if (branchOverrideGst != null) return branchOverrideGst;
+    return extractProductGstPercent(product);
+  }
 }
 
 enum CartType { billing, table }
@@ -452,7 +537,41 @@ class CartProvider extends ChangeNotifier {
     final list = _itemsMap[_currentType]!;
     final index = list.indexWhere((i) => i.id == item.id);
     if (index != -1) {
-      list[index].quantity += item.quantity;
+      final existing = list[index];
+      final updatedQuantity = existing.quantity + item.quantity;
+      final resolvedGstPercent = item.gstPercent > 0
+          ? item.gstPercent
+          : existing.gstPercent;
+      if ((existing.gstPercent - resolvedGstPercent).abs() > 0.001) {
+        list[index] = CartItem(
+          id: existing.id,
+          billingItemId: existing.billingItemId,
+          name: existing.name,
+          price: existing.price,
+          gstPercent: resolvedGstPercent,
+          imageUrl: existing.imageUrl,
+          quantity: updatedQuantity,
+          unit: existing.unit,
+          department: existing.department,
+          categoryId: existing.categoryId,
+          specialNote: existing.specialNote,
+          status: existing.status,
+          isOfferFreeItem: existing.isOfferFreeItem,
+          offerRuleKey: existing.offerRuleKey,
+          offerTriggerProductId: existing.offerTriggerProductId,
+          isRandomCustomerOfferItem: existing.isRandomCustomerOfferItem,
+          randomCustomerOfferCampaignCode:
+              existing.randomCustomerOfferCampaignCode,
+          isPriceOfferApplied: existing.isPriceOfferApplied,
+          priceOfferRuleKey: existing.priceOfferRuleKey,
+          priceOfferDiscountPerUnit: existing.priceOfferDiscountPerUnit,
+          priceOfferAppliedUnits: existing.priceOfferAppliedUnits,
+          effectiveUnitPrice: existing.effectiveUnitPrice,
+          lineSubtotal: existing.lineSubtotal,
+        );
+      } else {
+        list[index].quantity = updatedQuantity;
+      }
     } else {
       list.add(item);
     }
@@ -893,6 +1012,7 @@ class CartProvider extends ChangeNotifier {
       billingItemId: item.billingItemId,
       name: item.name,
       price: item.price,
+      gstPercent: item.gstPercent,
       imageUrl: item.imageUrl,
       quantity: item.quantity,
       unit: item.unit,
@@ -964,6 +1084,7 @@ class CartProvider extends ChangeNotifier {
         billingItemId: item.billingItemId,
         name: item.name,
         price: item.price,
+        gstPercent: item.gstPercent,
         imageUrl: item.imageUrl,
         quantity: item.quantity,
         unit: item.unit,
@@ -1080,6 +1201,10 @@ class CartProvider extends ChangeNotifier {
                       sItem['unitPrice'] ??
                       sItem['price'],
                 );
+          final sGstPercent = CartItem.extractEffectiveGstPercent(
+            sItem['product'],
+            branchId: _branchId,
+          );
 
           // Prefer matching by billing sub-item ID, fallback to product ID.
           int idx = -1;
@@ -1105,6 +1230,9 @@ class CartProvider extends ChangeNotifier {
 
           if (idx != -1) {
             final lItem = localRecalled[idx];
+            final resolvedServerGstPercent = sGstPercent > 0
+                ? sGstPercent
+                : lItem.gstPercent;
             final shouldUpdate =
                 lItem.status != sStatus ||
                 lItem.isOfferFreeItem != sIsOfferFreeItem ||
@@ -1124,6 +1252,7 @@ class CartProvider extends ChangeNotifier {
                     (sEffectiveUnitPrice ?? -1) ||
                 ((lItem.lineSubtotal ?? -1) - (sSubtotal ?? -1)).abs() >
                     0.001 ||
+                (lItem.gstPercent - resolvedServerGstPercent).abs() > 0.001 ||
                 lItem.billingItemId != serverItemID ||
                 (lItem.price - sPrice).abs() > 0.001 ||
                 (lItem.quantity - sQuantity).abs() > 0.001;
@@ -1138,6 +1267,7 @@ class CartProvider extends ChangeNotifier {
                 billingItemId: serverItemID ?? lItem.billingItemId,
                 name: lItem.name,
                 price: sPrice,
+                gstPercent: resolvedServerGstPercent,
                 imageUrl: lItem.imageUrl,
                 quantity: updatedQuantity,
                 unit: lItem.unit,
@@ -1391,6 +1521,13 @@ class CartProvider extends ChangeNotifier {
                 : hasSubtotal
                 ? toSafeDouble(itemMap['subtotal'])
                 : null;
+            final productGstPercent = CartItem.extractEffectiveGstPercent(
+              prod,
+              branchId: _branchId,
+            );
+            final gstPercent = productGstPercent > 0
+                ? productGstPercent
+                : CartItem.parsePercent(itemMap['gstPercent']);
             final hasEffectiveUnitPrice = itemMap.containsKey(
               'effectiveUnitPrice',
             );
@@ -1411,6 +1548,7 @@ class CartProvider extends ChangeNotifier {
                           itemMap['unitPrice'] ??
                           itemMap['price'],
                     ),
+              gstPercent: gstPercent,
               imageUrl: imageUrl,
               quantity: isRandomCustomerOfferItem
                   ? 1.0

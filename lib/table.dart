@@ -2047,6 +2047,13 @@ class _TablePageState extends State<TablePage> {
               : hasSubtotal
               ? toSafeDouble(itemMap['subtotal'])
               : null;
+          final productGstPercent = CartItem.extractEffectiveGstPercent(
+            prod,
+            branchId: _branchId,
+          );
+          final gstPercent = productGstPercent > 0
+              ? productGstPercent
+              : CartItem.parsePercent(itemMap['gstPercent']);
 
           return CartItem(
             id: pid,
@@ -2059,6 +2066,7 @@ class _TablePageState extends State<TablePage> {
                         itemMap['unitPrice'] ??
                         itemMap['price'],
                   ),
+            gstPercent: gstPercent,
             imageUrl: imageUrl,
             quantity: isRandomCustomerOfferItem
                 ? 1.0

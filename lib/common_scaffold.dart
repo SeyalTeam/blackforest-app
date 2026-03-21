@@ -14,12 +14,14 @@ import 'package:blackforest_app/cart_page.dart'; // Import CartPage
 import 'package:blackforest_app/cart_provider.dart'; // Import CartProvider
 import 'package:blackforest_app/chat_page.dart';
 import 'package:blackforest_app/employee.dart'; // Import EmployeePage
+import 'package:blackforest_app/home_navigation_service.dart';
 import 'package:blackforest_app/table.dart'; // Import TablePage
 import 'package:blackforest_app/home_page.dart';
 import 'package:blackforest_app/kitchen_notifications_page.dart'; // Import HomePage
 import 'package:blackforest_app/kot_auto_print_service.dart';
 import 'package:blackforest_app/auth_flags.dart';
 import 'package:blackforest_app/session_prefs.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 enum PageType {
   home,
@@ -67,6 +69,8 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   String? _photoUrl;
   String _branchName = '';
   String _role = '';
+  bool _showHomeNavigation = true;
+  bool _showTableNavigation = true;
   Timer? _sessionCheckTimer;
   bool _isLoggingOut = false;
   bool _isPrinterTestRunning = false;
@@ -77,6 +81,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   void initState() {
     super.initState();
     _loadUsername();
+    _loadNavigationVisibility();
     _resetTimer(); // Changed from _startTimer() to _resetTimer() as per original code
     _startKitchenSync();
     _startSessionCheck();
@@ -124,6 +129,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   }
 
   Future<void> _syncWebsiteOrderSignals() async {
+    if (io.Platform.isAndroid && await FlutterForegroundTask.isRunningService) {
+      return;
+    }
+
     final alerts = await KotAutoPrintService.syncPendingWebsiteKots();
     if (!mounted || alerts.isEmpty) {
       return;
@@ -227,6 +236,55 @@ class _CommonScaffoldState extends State<CommonScaffold> {
       _photoUrl = prefs.getString('employee_photo_url');
       _branchName = prefs.getString('branchName') ?? '';
       _role = prefs.getString('role') ?? 'Role';
+    });
+  }
+
+  Future<void> _loadNavigationVisibility() async {
+    final prefs = await SharedPreferences.getInstance();
+    final branchId = prefs.getString('branchId')?.trim() ?? '';
+    final cachedHomeVisibility = HomeNavigationService.readCachedVisibility(
+      prefs,
+      branchId: branchId,
+      fallback: true,
+    );
+    final cachedTableVisibility =
+        HomeNavigationService.readCachedTableVisibility(
+          prefs,
+          branchId: branchId,
+          fallback: true,
+        );
+
+    if (mounted &&
+        (_showHomeNavigation != cachedHomeVisibility ||
+            _showTableNavigation != cachedTableVisibility)) {
+      setState(() {
+        _showHomeNavigation = cachedHomeVisibility;
+        _showTableNavigation = cachedTableVisibility;
+      });
+    }
+
+    final visibility = await Future.wait<bool>([
+      HomeNavigationService.loadVisibilityForCurrentBranch(
+        prefs: prefs,
+        fallback: cachedHomeVisibility,
+      ),
+      HomeNavigationService.loadTableVisibilityForCurrentBranch(
+        prefs: prefs,
+        fallback: cachedTableVisibility,
+      ),
+    ]);
+    final refreshedHomeVisibility = visibility[0];
+    final refreshedTableVisibility = visibility[1];
+
+    if (!mounted ||
+        (_showHomeNavigation == refreshedHomeVisibility &&
+            _showTableNavigation == refreshedTableVisibility)) {
+      return;
+    }
+
+    setState(() {
+      _showHomeNavigation = refreshedHomeVisibility;
+      _showTableNavigation = refreshedTableVisibility;
     });
   }
 
@@ -972,19 +1030,23 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                   ],
                 ),
               ),
-              ListTile(
-                leading: const Icon(Icons.home_outlined, color: Colors.black87),
-                title: const Text('Home'),
-                onTap: () {
-                  _resetTimer();
-                  Navigator.pop(context);
-                  Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(builder: (context) => const HomePage()),
-                    (route) => false,
-                  );
-                },
-              ),
+              if (_showHomeNavigation)
+                ListTile(
+                  leading: const Icon(
+                    Icons.home_outlined,
+                    color: Colors.black87,
+                  ),
+                  title: const Text('Home'),
+                  onTap: () {
+                    _resetTimer();
+                    Navigator.pop(context);
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      MaterialPageRoute(builder: (context) => const HomePage()),
+                      (route) => false,
+                    );
+                  },
+                ),
               ListTile(
                 leading: const Icon(
                   Icons.receipt_outlined,
@@ -1004,22 +1066,25 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                   );
                 },
               ),
-              ListTile(
-                leading: const Icon(
-                  Icons.table_restaurant_outlined,
-                  color: Colors.black87,
+              if (_showTableNavigation)
+                ListTile(
+                  leading: const Icon(
+                    Icons.table_restaurant_outlined,
+                    color: Colors.black87,
+                  ),
+                  title: const Text('Table'),
+                  onTap: () {
+                    _resetTimer();
+                    Navigator.pop(context);
+                    Navigator.pushAndRemoveUntil(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => const TablePage(),
+                      ),
+                      (route) => false,
+                    );
+                  },
                 ),
-                title: const Text('Table'),
-                onTap: () {
-                  _resetTimer();
-                  Navigator.pop(context);
-                  Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(builder: (context) => const TablePage()),
-                    (route) => false,
-                  );
-                },
-              ),
               ListTile(
                 leading: const Icon(
                   Icons.badge_outlined,
@@ -1118,12 +1183,13 @@ class _CommonScaffoldState extends State<CommonScaffold> {
           ),
           child: Row(
             children: [
-              _buildNavItem(
-                icon: Icons.home_rounded,
-                label: 'Home',
-                page: const HomePage(),
-                type: PageType.home,
-              ),
+              if (_showHomeNavigation)
+                _buildNavItem(
+                  icon: Icons.home_rounded,
+                  label: 'Home',
+                  page: const HomePage(),
+                  type: PageType.home,
+                ),
               _buildNavItem(
                 icon: Icons.receipt_long_rounded,
                 label: 'Billing',
@@ -1135,12 +1201,13 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                 label: 'Scan',
                 onTap: _scanBarcode,
               ),
-              _buildNavItem(
-                icon: Icons.table_restaurant_rounded,
-                label: 'Table',
-                page: const TablePage(),
-                type: PageType.table,
-              ),
+              if (_showTableNavigation)
+                _buildNavItem(
+                  icon: Icons.table_restaurant_rounded,
+                  label: 'Table',
+                  page: const TablePage(),
+                  type: PageType.table,
+                ),
               _buildNavItem(
                 icon: Icons.forum_rounded,
                 label: 'Chat',

@@ -21,6 +21,7 @@ import 'package:qr/qr.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
+import 'package:blackforest_app/printer/unified_printer.dart';
 
 class CartPage extends StatefulWidget {
   const CartPage({super.key});
@@ -1144,7 +1145,12 @@ class _CartPageState extends State<CartPage> {
             }
           }
 
-          final item = CartItem.fromProduct(product, 1, branchPrice: price);
+          final item = CartItem.fromProduct(
+            product,
+            1,
+            branchPrice: price,
+            branchId: _branchId,
+          );
           cartProvider.addOrUpdateItem(item);
           final newQty = cartProvider.cartItems
               .firstWhere((i) => i.id == item.id)
@@ -4403,12 +4409,21 @@ class _CartPageState extends State<CartPage> {
               readServerMoney(item['priceOfferAppliedUnits']) ??
               fallback?.priceOfferAppliedUnits ??
               0.0;
+          final productGstPercent = CartItem.extractEffectiveGstPercent(
+            productMap,
+            branchId: _branchId,
+          );
+          final gstPercent = productGstPercent > 0
+              ? productGstPercent
+              : (fallback?.gstPercent ??
+                    CartItem.parsePercent(item['gstPercent']));
 
           return CartItem(
             id: productId ?? fallback?.id ?? '',
             billingItemId: item['id']?.toString() ?? fallback?.billingItemId,
             name: itemName,
             price: isReadOnlyOfferItem ? 0.0 : unitPrice,
+            gstPercent: gstPercent,
             imageUrl: imageUrl,
             quantity: quantity,
             unit: item['unit']?.toString() ?? fallback?.unit,
@@ -4522,6 +4537,7 @@ class _CartPageState extends State<CartPage> {
                       id: triggerItem.id,
                       name: triggerItem.name,
                       price: triggerItem.price,
+                      gstPercent: triggerItem.gstPercent,
                       imageUrl: triggerItem.imageUrl,
                       quantity: triggerItem.quantity,
                       unit: triggerItem.unit,
@@ -4772,6 +4788,14 @@ class _CartPageState extends State<CartPage> {
       return 0.0;
     }
 
+    String formatReceiptMoney(double value) {
+      final rounded = double.parse(value.toStringAsFixed(2));
+      if ((rounded - rounded.truncateToDouble()).abs() < 0.001) {
+        return rounded.toStringAsFixed(0);
+      }
+      return rounded.toStringAsFixed(2);
+    }
+
     final customerOfferDiscountFromServer = toNonNegativeMoney(
       billingResponse['customerOfferDiscount'],
     );
@@ -4868,10 +4892,42 @@ class _CartPageState extends State<CartPage> {
       waiterName = 'Unknown';
     }
 
+    // Prioritize Customer Name for QR/Website orders (Aggressive search)
+    String? custName;
+
+    // 1. Check local state passed to the method
+    if (customerDetails['name'] != null &&
+        customerDetails['name'].toString().trim().isNotEmpty) {
+      custName = customerDetails['name'].toString().trim();
+    }
+
+    // 2. Check server response paths
+    if (custName == null) {
+      final dynamic doc = billingResponse['doc'] ?? billingResponse;
+      final dynamic details = doc['customerDetails'];
+
+      if (details is Map &&
+          details['name'] != null &&
+          details['name'].toString().trim().isNotEmpty) {
+        custName = details['name'].toString().trim();
+      } else if (doc['customerName'] != null &&
+          doc['customerName'].toString().trim().isNotEmpty) {
+        custName = doc['customerName'].toString().trim();
+      } else if (doc['name'] != null &&
+          doc['name'].toString().trim().isNotEmpty &&
+          (doc['name'] != _branchName)) {
+        // Only use top level 'name' if it's not the branch name
+        custName = doc['name'].toString().trim();
+      }
+    }
+
+    if (custName != null && custName.isNotEmpty && custName != 'Unknown') {
+      waiterName = custName;
+    }
+
     try {
       const PaperSize paper = PaperSize.mm80;
       final profile = await CapabilityProfile.load();
-      final printer = NetworkPrinter(paper, profile);
       final prefs = await SharedPreferences.getInstance();
       final prefsPort = int.tryParse(
         (prefs.getString('printerPort') ?? '').trim(),
@@ -4883,25 +4939,15 @@ class _CartPageState extends State<CartPage> {
         9101,
       ].toSet().toList(growable: false);
 
-      PosPrintResult res = PosPrintResult.timeout;
-      int connectedPort = candidatePorts.first;
-      for (final port in candidatePorts) {
-        connectedPort = port;
-        debugPrint('🖨️ Receipt connect attempt: $printerIp:$port');
-        res = await printer
-            .connect(printerIp, port: port)
-            .timeout(
-              const Duration(seconds: 4),
-              onTimeout: () => PosPrintResult.timeout,
-            );
-        debugPrint(
-          '🖨️ Receipt connect result: $printerIp:$port -> ${_posPrintResultLabel(res)}',
-        );
-        if (res == PosPrintResult.success) break;
-      }
+      final printer = await UnifiedPrinter.connect(
+        printerIp: printerIp,
+        candidatePorts: candidatePorts,
+        paperSize: paper,
+        profile: profile,
+      );
 
-      if (res == PosPrintResult.success) {
-        debugPrint('🖨️ Receipt printing on $printerIp:$connectedPort');
+      if (printer != null) {
+        debugPrint('🖨️ Receipt printing started');
         String invoiceNumber =
             billingResponse['invoiceNumber'] ??
             billingResponse['doc']?['invoiceNumber'] ??
@@ -4954,6 +5000,7 @@ class _CartPageState extends State<CartPage> {
             width: 6,
             styles: const PosStyles(
               align: PosAlign.left,
+              bold: true,
             ), // Confirmed Left Align
           ),
           PosColumn(
@@ -4962,47 +5009,54 @@ class _CartPageState extends State<CartPage> {
             styles: const PosStyles(align: PosAlign.right, bold: true),
           ),
         ]);
-        // Extract KOT Number for side-by-side display
-        String kotDisplayDigits = 'N/A';
-        if (billingResponse['kotNumber'] != null) {
-          kotDisplayDigits = billingResponse['kotNumber']
-              .toString()
-              .split('-')
-              .last
-              .replaceAll('KOT', '');
-        } else if (billingResponse['doc']?['kotNumber'] != null) {
-          kotDisplayDigits = billingResponse['doc']['kotNumber']
-              .toString()
-              .split('-')
-              .last
-              .replaceAll('KOT', '');
+
+        // Check if it's a table order to decide whether to show KOT Number
+        final dynamic tableData =
+            billingResponse['tableDetails'] ??
+            billingResponse['doc']?['tableDetails'];
+        final bool isTableOrder =
+            tableData != null &&
+            tableData['tableNumber'] != null &&
+            tableData['tableNumber'].toString().trim().isNotEmpty;
+
+        if (isTableOrder) {
+          final String tableNum = tableData['tableNumber'].toString().trim();
+          final String displayTable = tableNum.length == 1
+              ? '0$tableNum'
+              : tableNum;
+          final String section = tableData['section']?.toString().trim() ?? '';
+          final String tableText = section.isNotEmpty
+              ? 'Table: $displayTable ($section)'
+              : 'Table: $displayTable';
+
+          printer.row([
+            PosColumn(
+              text: 'Assigned by: ${waiterName ?? 'Unknown'}',
+              width: 7,
+              styles: const PosStyles(align: PosAlign.left, bold: true),
+            ),
+            PosColumn(
+              text: tableText,
+              width: 5,
+              styles: const PosStyles(align: PosAlign.right, bold: true),
+            ),
+          ]);
         } else {
-          // Fallback to parse from invoiceNumber CHI-20260207-KOT006
-          final kotRegex = RegExp(r'^[A-Z]+-\d{8}-(KOT)?(\d+)$');
-          final kotMatch = kotRegex.firstMatch(invoiceNumber);
-          if (kotMatch != null) {
-            kotDisplayDigits = kotMatch.group(2)!;
-          }
+          printer.text(
+            'Assigned by: ${waiterName ?? 'Unknown'}',
+            styles: const PosStyles(align: PosAlign.left, bold: true),
+          );
         }
 
-        printer.row([
-          PosColumn(
-            text: 'Assigned by: ${waiterName ?? 'Unknown'}',
-            width: 7,
-            styles: const PosStyles(align: PosAlign.left),
-          ),
-          PosColumn(
-            text: 'KOT NO - $kotDisplayDigits',
-            width: 5,
-            styles: const PosStyles(align: PosAlign.right, bold: true),
-          ),
-        ]);
-
         printer.hr(ch: '=');
+        final gstScale = grossAmount > 0.0001 && totalAmount < grossAmount
+            ? (totalAmount / grossAmount).clamp(0.0, 1.0)
+            : 1.0;
+        final cgstSgstBreakdown = <double, double>{};
         printer.row([
           PosColumn(
             text: 'Item',
-            width: 5,
+            width: 4,
             styles: const PosStyles(bold: true),
           ),
           PosColumn(
@@ -5016,35 +5070,82 @@ class _CartPageState extends State<CartPage> {
             styles: const PosStyles(bold: true, align: PosAlign.right),
           ),
           PosColumn(
-            text: 'Amount',
-            width: 3,
+            text: 'Tax',
+            width: 2,
+            styles: const PosStyles(bold: true, align: PosAlign.right),
+          ),
+          PosColumn(
+            text: 'Amt',
+            width: 2,
             styles: const PosStyles(bold: true, align: PosAlign.right),
           ),
         ]);
         printer.hr(ch: '-');
+        const itemRowLeftStyles = PosStyles(
+          bold: true,
+          fontType: PosFontType.fontA,
+          height: PosTextSize.size1,
+          width: PosTextSize.size1,
+        );
+        const itemRowCenterStyles = PosStyles(
+          bold: true,
+          fontType: PosFontType.fontA,
+          height: PosTextSize.size1,
+          align: PosAlign.center,
+        );
+        const itemRowRightStyles = PosStyles(
+          bold: true,
+          fontType: PosFontType.fontA,
+          height: PosTextSize.size1,
+          width: PosTextSize.size1,
+          align: PosAlign.right,
+        );
 
-        for (var item in items) {
+        for (var index = 0; index < items.length; index++) {
+          final item = items[index];
           final qtyStr = item.quantity % 1 == 0
               ? item.quantity.toStringAsFixed(0)
               : item.quantity.toStringAsFixed(2);
           final unitPriceToPrint = item.effectiveUnitPrice ?? item.price;
           final lineAmount = item.lineTotal;
+          final taxableAmount = (lineAmount * gstScale).clamp(
+            0.0,
+            double.infinity,
+          );
+          final lineTaxAmount = item.gstPercent > 0
+              ? taxableAmount * item.gstPercent / 100
+              : 0.0;
+          if (!item.isOfferFreeItem &&
+              !item.isRandomCustomerOfferItem &&
+              item.gstPercent > 0 &&
+              lineTaxAmount > 0.0001) {
+            final halfRate = double.parse(
+              (item.gstPercent / 2).toStringAsFixed(2),
+            );
+            final halfTaxAmount = lineTaxAmount / 2;
+            cgstSgstBreakdown.update(
+              halfRate,
+              (current) => current + halfTaxAmount,
+              ifAbsent: () => halfTaxAmount,
+            );
+          }
           printer.row([
-            PosColumn(text: item.name, width: 5),
+            PosColumn(text: item.name, width: 4, styles: itemRowLeftStyles),
+            PosColumn(text: qtyStr, width: 2, styles: itemRowCenterStyles),
             PosColumn(
-              text: qtyStr,
+              text: formatReceiptMoney(unitPriceToPrint),
               width: 2,
-              styles: const PosStyles(align: PosAlign.center),
+              styles: itemRowRightStyles,
             ),
             PosColumn(
-              text: unitPriceToPrint.toStringAsFixed(2),
+              text: formatReceiptMoney(lineTaxAmount),
               width: 2,
-              styles: const PosStyles(align: PosAlign.right),
+              styles: itemRowRightStyles,
             ),
             PosColumn(
-              text: lineAmount.toStringAsFixed(2),
-              width: 3,
-              styles: const PosStyles(align: PosAlign.right),
+              text: formatReceiptMoney(lineAmount),
+              width: 2,
+              styles: itemRowRightStyles,
             ),
           ]);
           if (item.isPriceOfferApplied &&
@@ -5061,12 +5162,30 @@ class _CartPageState extends State<CartPage> {
               styles: const PosStyles(align: PosAlign.left),
             );
           }
+          if (index < items.length - 1) {
+            printer.smallRowGap(dots: 8);
+          }
         }
 
         printer.hr(ch: '-');
         final billDiscount = (grossAmount - totalAmount)
             .clamp(0.0, double.infinity)
             .toDouble();
+        final sortedHalfRates = cgstSgstBreakdown.keys.toList()..sort();
+        final receiptGstAmount = double.parse(
+          cgstSgstBreakdown.values
+              .fold<double>(0.0, (sum, taxPart) => sum + (taxPart * 2))
+              .toStringAsFixed(2),
+        );
+        final receiptTotalAmount = double.parse(
+          (totalAmount + receiptGstAmount).toStringAsFixed(2),
+        );
+        final roundedGrandTotal = double.parse(
+          receiptTotalAmount.ceilToDouble().toStringAsFixed(2),
+        );
+        final roundOffAmount = double.parse(
+          (roundedGrandTotal - receiptTotalAmount).toStringAsFixed(2),
+        );
         final explainedBillDiscount =
             customerOfferDiscountFromServer +
             totalPercentageOfferDiscountFromServer +
@@ -5125,23 +5244,108 @@ class _CartPageState extends State<CartPage> {
             ]);
           }
         }
-        printer.row([
-          PosColumn(
-            text: 'PAID BY: ${paymentMethod.toUpperCase()}',
-            width: 5,
-            styles: const PosStyles(align: PosAlign.left, bold: true),
-          ),
-          PosColumn(
-            text: 'TOTAL RS ${totalAmount.toStringAsFixed(2)}',
-            width: 7,
-            styles: const PosStyles(
-              align: PosAlign.right,
-              bold: true,
-              height: PosTextSize.size2,
-              width: PosTextSize.size1,
+        if (receiptGstAmount > 0.0001) {
+          printer.row([
+            PosColumn(
+              text: 'SUB TOTAL RS ${formatReceiptMoney(totalAmount)}',
+              width: 12,
+              styles: const PosStyles(
+                align: PosAlign.right,
+                bold: true,
+                height: PosTextSize.size1,
+                width: PosTextSize.size1,
+              ),
             ),
-          ),
-        ]);
+          ]);
+          for (final halfRate in sortedHalfRates) {
+            final taxPartAmount = double.parse(
+              (cgstSgstBreakdown[halfRate] ?? 0.0).toStringAsFixed(2),
+            );
+            if (taxPartAmount <= 0.0001) continue;
+            printer.row([
+              PosColumn(
+                text:
+                    'CGST ${halfRate.toStringAsFixed(2)}% RS ${formatReceiptMoney(taxPartAmount)}',
+                width: 12,
+                styles: const PosStyles(align: PosAlign.right),
+              ),
+            ]);
+            printer.row([
+              PosColumn(
+                text:
+                    'SGST ${halfRate.toStringAsFixed(2)}% RS ${formatReceiptMoney(taxPartAmount)}',
+                width: 12,
+                styles: const PosStyles(align: PosAlign.right),
+              ),
+            ]);
+          }
+          printer.hr(ch: '-');
+          printer.row([
+            PosColumn(
+              text:
+                  'Round off ${roundOffAmount >= 0 ? '+' : '-'}${roundOffAmount.abs().toStringAsFixed(2)}',
+              width: 12,
+              styles: const PosStyles(align: PosAlign.right),
+            ),
+          ]);
+          printer.row([
+            PosColumn(
+              text: 'PAID BY: ${paymentMethod.toUpperCase()}',
+              width: 5,
+              styles: const PosStyles(align: PosAlign.left, bold: true),
+            ),
+            PosColumn(
+              text: 'GRAND TOTAL RS ${formatReceiptMoney(roundedGrandTotal)}',
+              width: 7,
+              styles: const PosStyles(
+                align: PosAlign.right,
+                bold: true,
+                fontType: PosFontType.fontA,
+                height: PosTextSize.size2,
+                width: PosTextSize.size1,
+              ),
+            ),
+          ]);
+        } else {
+          printer.row([
+            PosColumn(
+              text: 'SUB TOTAL RS ${formatReceiptMoney(totalAmount)}',
+              width: 12,
+              styles: const PosStyles(
+                align: PosAlign.right,
+                bold: true,
+                height: PosTextSize.size1,
+                width: PosTextSize.size1,
+              ),
+            ),
+          ]);
+          printer.row([
+            PosColumn(
+              text:
+                  'Round off ${roundOffAmount >= 0 ? '+' : '-'}${roundOffAmount.abs().toStringAsFixed(2)}',
+              width: 12,
+              styles: const PosStyles(align: PosAlign.right),
+            ),
+          ]);
+          printer.row([
+            PosColumn(
+              text: 'PAID BY: ${paymentMethod.toUpperCase()}',
+              width: 5,
+              styles: const PosStyles(align: PosAlign.left, bold: true),
+            ),
+            PosColumn(
+              text: 'GRAND TOTAL RS ${formatReceiptMoney(roundedGrandTotal)}',
+              width: 7,
+              styles: const PosStyles(
+                align: PosAlign.right,
+                bold: true,
+                fontType: PosFontType.fontA,
+                height: PosTextSize.size2,
+                width: PosTextSize.size1,
+              ),
+            ),
+          ]);
+        }
         printer.hr(ch: '='); // Double line after Total Row as requested
 
         if (customerDetails['name']?.isNotEmpty == true ||
@@ -5345,7 +5549,7 @@ class _CartPageState extends State<CartPage> {
           styles: const PosStyles(align: PosAlign.center),
         );
         printer.cut();
-        printer.disconnect();
+        await printer.disconnectAndPrint();
 
         _showPrintStatusSnack(
           messenger,
@@ -5354,7 +5558,7 @@ class _CartPageState extends State<CartPage> {
         );
       } else {
         debugPrint(
-          '⚠️ Receipt connect failed for $printerIp on ports ${candidatePorts.join(", ")}. Last result: ${_posPrintResultLabel(res)}',
+          '⚠️ Receipt connect failed for $printerIp on ports ${candidatePorts.join(", ")}.',
         );
         _showPrintStatusSnack(
           messenger,
@@ -5553,8 +5757,6 @@ class _CartPageState extends State<CartPage> {
     try {
       const PaperSize paper = PaperSize.mm80;
       final profile = await CapabilityProfile.load();
-      final printer = NetworkPrinter(paper, profile);
-
       final prefsPort = int.tryParse(
         (prefs.getString('printerPort') ?? '').trim(),
       );
@@ -5565,25 +5767,15 @@ class _CartPageState extends State<CartPage> {
         9101,
       ].toSet().toList(growable: false);
 
-      PosPrintResult res = PosPrintResult.timeout;
-      int connectedPort = candidatePorts.first;
-      for (final port in candidatePorts) {
-        connectedPort = port;
-        debugPrint('🖨️ KOT connect attempt: $printerIp:$port');
-        res = await printer
-            .connect(printerIp, port: port)
-            .timeout(
-              const Duration(seconds: 4),
-              onTimeout: () => PosPrintResult.timeout,
-            );
-        debugPrint(
-          '🖨️ KOT connect result: $printerIp:$port -> ${_posPrintResultLabel(res)}',
-        );
-        if (res == PosPrintResult.success) break;
-      }
+      final printer = await UnifiedPrinter.connect(
+        printerIp: printerIp,
+        candidatePorts: candidatePorts,
+        paperSize: paper,
+        profile: profile,
+      );
 
-      if (res == PosPrintResult.success) {
-        debugPrint('🖨️ KOT printing on $printerIp:$connectedPort');
+      if (printer != null) {
+        debugPrint('🖨️ KOT printing started');
         String invoiceNumber =
             billingResponse['invoiceNumber'] ??
             billingResponse['doc']?['invoiceNumber'] ??
@@ -5730,13 +5922,13 @@ class _CartPageState extends State<CartPage> {
 
         printer.feed(2);
         printer.cut();
-        printer.disconnect();
+        await printer.disconnectAndPrint();
         return PosPrintResult.success;
       }
       debugPrint(
-        '⚠️ KOT connect failed for $printerIp on ports ${candidatePorts.join(", ")}. Last result: ${_posPrintResultLabel(res)}',
+        '⚠️ KOT connect failed for $printerIp on ports ${candidatePorts.join(", ")}.',
       );
-      return res;
+      return PosPrintResult.timeout;
     } catch (e) {
       debugPrint("Error printing KOT to $printerIp: $e");
       return PosPrintResult.timeout;

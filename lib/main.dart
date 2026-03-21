@@ -2,8 +2,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:blackforest_app/cart_provider.dart';
+import 'package:blackforest_app/categories_page.dart';
 import 'package:blackforest_app/login_page.dart';
 import 'package:blackforest_app/home_page.dart';
+import 'package:blackforest_app/home_navigation_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/app_http.dart' as http;
 import 'dart:convert';
@@ -12,6 +14,8 @@ import 'package:blackforest_app/notification_service.dart';
 import 'package:blackforest_app/auth_flags.dart';
 import 'package:blackforest_app/auth_session_manager.dart';
 import 'package:blackforest_app/session_prefs.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+// import 'package:blackforest_app/kot_auto_print_service.dart'; // No longer needed in main.dart if we use it elsewhere
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -20,6 +24,27 @@ void main() async {
   } catch (_) {
     // Startup must continue even if notification init fails.
   }
+
+  FlutterForegroundTask.init(
+    androidNotificationOptions: AndroidNotificationOptions(
+      channelId: 'printing_service',
+      channelName: 'Printing Service',
+      channelDescription: 'Monitors and prints website orders',
+      channelImportance: NotificationChannelImportance.LOW,
+      priority: NotificationPriority.LOW,
+    ),
+    iosNotificationOptions: const IOSNotificationOptions(
+      showNotification: true,
+      playSound: false,
+    ),
+    foregroundTaskOptions: ForegroundTaskOptions(
+      eventAction: ForegroundTaskEventAction.repeat(5000),
+      autoRunOnBoot: true,
+      allowWakeLock: true,
+      allowWifiLock: true,
+    ),
+  );
+
   runApp(
     MultiProvider(
       providers: [ChangeNotifierProvider(create: (context) => CartProvider())],
@@ -218,8 +243,23 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               }
             }
           } catch (_) {}
-          // Valid: Return wrapped HomePage
-          return const IdleTimeoutWrapper(child: HomePage());
+          // Valid: Return the authenticated landing page.
+          final navigationVisibility = await Future.wait<bool>([
+            HomeNavigationService.loadVisibilityForCurrentBranch(
+              prefs: prefs,
+              forceRefresh: true,
+            ),
+            HomeNavigationService.loadTableVisibilityForCurrentBranch(
+              prefs: prefs,
+              forceRefresh: true,
+            ),
+          ]);
+          final showHomeNavigation = navigationVisibility[0];
+          return IdleTimeoutWrapper(
+            child: showHomeNavigation
+                ? const HomePage()
+                : const CategoriesPage(),
+          );
         }
       } catch (_) {}
       // Invalid: Clear prefs and fall to login

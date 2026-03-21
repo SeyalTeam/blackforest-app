@@ -1548,7 +1548,12 @@ class _ProductsPageState extends State<ProductsPage> {
     }
 
     // Step 5: Update or add
-    final item = CartItem.fromProduct(product, quantity, branchPrice: price);
+    final item = CartItem.fromProduct(
+      product,
+      quantity,
+      branchPrice: price,
+      branchId: _branchId,
+    );
     if (isWeightBased) {
       if (existingItem.id.isNotEmpty) {
         cartProvider.updateQuantity(productId, quantity);

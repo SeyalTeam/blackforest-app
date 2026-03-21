@@ -1,12 +1,40 @@
 import 'dart:convert';
-
+import 'dart:math';
+import 'dart:typed_data';
 import 'package:blackforest_app/app_http.dart' as http;
 import 'package:blackforest_app/cart_provider.dart';
-import 'package:esc_pos_printer/esc_pos_printer.dart';
 import 'package:esc_pos_utils/esc_pos_utils.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:image/image.dart' as img;
 import 'package:intl/intl.dart';
+import 'package:qr/qr.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:blackforest_app/printer/unified_printer.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+
+@pragma('vm:entry-point')
+void startCallback() {
+  FlutterForegroundTask.setTaskHandler(PrintTaskHandler());
+}
+
+class PrintTaskHandler extends TaskHandler {
+  @override
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
+    // Service started
+  }
+
+  @override
+  Future<void> onRepeatEvent(DateTime timestamp) async {
+    // Run the sync logic in the background
+    await KotAutoPrintService.syncPendingWebsiteKots(isBackground: true);
+  }
+
+  @override
+  Future<void> onDestroy(DateTime timestamp, bool isProfiled) async {
+    // Service stopped
+  }
+}
 
 class KotAutoPrintService {
   static const String _apiBase = 'https://blackforest.vseyal.com/api';
@@ -18,7 +46,21 @@ class KotAutoPrintService {
   static DateTime? _cachedConfigAt;
   static String? _cachedConfigBranchId;
 
-  static Future<List<AutoSyncAlert>> syncPendingWebsiteKots() async {
+  static Future<void> startService() async {
+    if (!await FlutterForegroundTask.isRunningService) {
+      await FlutterForegroundTask.startService(
+        notificationTitle: 'Blackforest Printer Active',
+        notificationText: 'App is monitoring website orders in background',
+        callback: startCallback,
+      );
+    }
+  }
+
+  static Future<void> stopService() async {
+    await FlutterForegroundTask.stopService();
+  }
+
+  static Future<List<AutoSyncAlert>> syncPendingWebsiteKots({bool isBackground = false}) async {
     final alerts = <AutoSyncAlert>[];
     if (_isSyncing) return alerts;
     _isSyncing = true;
@@ -317,7 +359,7 @@ class KotAutoPrintService {
       '&where[updatedAt][greater_than_equal]=$todayStart'
       '&limit=100'
       '&sort=updatedAt'
-      '&depth=1',
+      '&depth=3',
     );
 
     final response = await http.get(
@@ -605,7 +647,7 @@ class KotAutoPrintService {
     }
 
     final profile = await CapabilityProfile.load();
-    final printer = NetworkPrinter(PaperSize.mm80, profile);
+    UnifiedPrinter? printer;
     try {
       final prefsPort = int.tryParse(
         (prefs.getString('printerPort') ?? '').trim(),
@@ -617,28 +659,14 @@ class KotAutoPrintService {
         9101,
       }.toList(growable: false);
 
-      PosPrintResult result = PosPrintResult.timeout;
-      var connectedPort = candidatePorts.first;
-      for (final port in candidatePorts) {
-        connectedPort = port;
-        debugPrint(
-          '🧾 Auto receipt connect attempt: ${target.printerIp}:$port',
-        );
-        result = await printer
-            .connect(target.printerIp, port: port)
-            .timeout(
-              const Duration(seconds: 4),
-              onTimeout: () => PosPrintResult.timeout,
-            );
-        debugPrint(
-          '🧾 Auto receipt connect result: ${target.printerIp}:$port -> ${result.msg} (code: ${result.value})',
-        );
-        if (result == PosPrintResult.success) {
-          break;
-        }
-      }
+      printer = await UnifiedPrinter.connect(
+        printerIp: target.printerIp,
+        candidatePorts: candidatePorts,
+        paperSize: PaperSize.mm80,
+        profile: profile,
+      );
 
-      if (result != PosPrintResult.success) {
+      if (printer == null) {
         debugPrint(
           '⚠️ Auto receipt connect failed for ${target.printerIp} on ports ${candidatePorts.join(", ")}',
         );
@@ -662,12 +690,11 @@ class KotAutoPrintService {
       final customerPhone = _toText(customerDetails['phone']).isNotEmpty
           ? _toText(customerDetails['phone'])
           : _toText(customerDetails['phoneNumber']);
-      final tableDetails = bill['tableDetails'] is Map
-          ? Map<String, dynamic>.from(bill['tableDetails'])
-          : const <String, dynamic>{};
-      final tableNumber = _toText(tableDetails['tableNumber']);
-      final tableSection = _toText(tableDetails['section']);
-      final waiterName = prefs.getString('user_name')?.trim() ?? 'Unknown';
+      
+      String waiterName = prefs.getString('user_name')?.trim() ?? 'Unknown';
+      if (customerName.isNotEmpty) {
+        waiterName = customerName;
+      }
 
       printer.text(
         (config?.companyName.isNotEmpty ?? false)
@@ -724,13 +751,7 @@ class KotAutoPrintService {
           styles: const PosStyles(align: PosAlign.right, bold: true),
         ),
       ]);
-      if (tableNumber.isNotEmpty || tableSection.isNotEmpty) {
-        printer.text(
-          'Section: ${tableSection.isEmpty ? 'N/A' : tableSection}  Table: ${tableNumber.isEmpty ? 'N/A' : tableNumber}',
-          styles: const PosStyles(align: PosAlign.left),
-        );
-      }
-
+      
       printer.hr(ch: '=');
       printer.row([
         PosColumn(text: 'Item', width: 5, styles: const PosStyles(bold: true)),
@@ -849,14 +870,140 @@ class KotAutoPrintService {
         printer.hr(ch: '-');
       }
 
+      printer.hr(ch: '=');
+      
+      // Feedback logic (Same as cart_page.dart)
+      bool shouldShowFeedback = rawItems.any((rawItem) {
+        if (rawItem is! Map) return false;
+        
+        // Extract department from nested product data
+        String dept = '';
+        final product = rawItem['product'];
+        if (product is Map) {
+          if (product['department'] != null) {
+            dept = (product['department'] is Map)
+                ? _toText(product['department']['name'])
+                : _toText(product['department']);
+          } else if (product['category'] != null && product['category'] is Map) {
+            final category = product['category'] as Map;
+            if (category['department'] != null) {
+              final catDept = category['department'];
+              dept = (catDept is Map) ? _toText(catDept['name']) : _toText(catDept);
+            }
+          }
+        }
+        
+        dept = dept.trim().toLowerCase();
+        return dept.isNotEmpty && dept != 'others';
+      });
+
+      if (shouldShowFeedback) {
+        try {
+          final ByteData data = await rootBundle.load('assets/feedback_full.png');
+          final Uint8List bytes = data.buffer.asUint8List();
+          final img.Image? image = img.decodeImage(bytes);
+          if (image != null) {
+            final img.Image resized = img.copyResize(image, width: 550);
+            printer.image(resized, align: PosAlign.center);
+          }
+        } catch (e) {
+          debugPrint("Error printing auto-bill feedback image: $e");
+          printer.text(
+            'THE CREATOR OF THIS PRODUCT IS WAITING FOR YOUR',
+            styles: const PosStyles(align: PosAlign.center, bold: true),
+          );
+          printer.text(
+            'FEEDBACK',
+            styles: const PosStyles(
+              align: PosAlign.center,
+              bold: true,
+              height: PosTextSize.size2,
+              width: PosTextSize.size2,
+            ),
+          );
+        }
+        printer.feed(1);
+      }
+
+      // QR Code Logic (Same as cart_page.dart)
+      String billingUrl = 'https://blackforest.vseyal.com/billings';
+      String? billingId =
+          bill['id'] ??
+          bill['doc']?['id'] ??
+          bill['_id'];
+      if (billingId != null) {
+        billingUrl = '$billingUrl/$billingId';
+      }
+
+      if (shouldShowFeedback) {
+        try {
+          // 1. Generate QR Code Image
+          final qrCode = QrCode(4, QrErrorCorrectLevel.L);
+          qrCode.addData(billingUrl);
+          final qrImageMatrix = QrImage(qrCode);
+
+          const int pixelSize = 8;
+          final int qrWidth = qrImageMatrix.moduleCount * pixelSize;
+          final int qrHeight = qrImageMatrix.moduleCount * pixelSize;
+          final img.Image qrImage = img.Image(qrWidth, qrHeight);
+          img.fill(qrImage, img.getColor(255, 255, 255));
+
+          for (int x = 0; x < qrImageMatrix.moduleCount; x++) {
+            for (int y = 0; y < qrImageMatrix.moduleCount; y++) {
+              if (qrImageMatrix.isDark(y, x)) {
+                img.fillRect(qrImage, x * pixelSize, y * pixelSize, (x + 1) * pixelSize, (y + 1) * pixelSize, img.getColor(0, 0, 0));
+              }
+            }
+          }
+
+          // 2. Load Chef Image
+          final ByteData chefData = await rootBundle.load('assets/chef.png');
+          final Uint8List chefBytes = chefData.buffer.asUint8List();
+          final img.Image? chefImageRaw = img.decodeImage(chefBytes);
+
+          if (chefImageRaw != null) {
+            const int maxWidth = 550;
+            const int gap = 10;
+            final int remainingWidth = maxWidth - qrWidth - gap;
+            final img.Image chefImage = img.copyResize(chefImageRaw, width: remainingWidth > 100 ? remainingWidth : 100);
+
+            const int canvasWidth = 550;
+            final int contentWidth = qrWidth + gap + chefImage.width;
+            final int startX = (canvasWidth - contentWidth) ~/ 2;
+            const int textBlockHeight = 40;
+            final int qrBlockHeight = qrHeight + textBlockHeight;
+            final int totalHeight = max(qrBlockHeight, chefImage.height);
+
+            final img.Image combinedImage = img.Image(canvasWidth, totalHeight);
+            img.fill(combinedImage, img.getColor(255, 255, 255));
+
+            final int qrBlockY = (totalHeight - qrBlockHeight) ~/ 2;
+            final int chefY = (totalHeight - chefImage.height) ~/ 2;
+
+            img.drawImage(combinedImage, qrImage, dstX: startX, dstY: qrBlockY);
+            img.fillRect(combinedImage, startX, qrBlockY + qrHeight, startX + qrWidth, qrBlockY + qrHeight + textBlockHeight, img.getColor(0, 0, 0));
+            img.drawString(combinedImage, img.arial_24, startX + (qrWidth - (14 * 16)) ~/ 2, qrBlockY + qrHeight + (textBlockHeight - 24) ~/ 2, 'SCAN TO REVIEW', color: img.getColor(255, 255, 255));
+            img.drawImage(combinedImage, chefImage, dstX: startX + qrWidth + gap, dstY: chefY);
+
+            printer.image(combinedImage, align: PosAlign.center);
+          } else {
+            printer.image(qrImage, align: PosAlign.center);
+          }
+        } catch (e) {
+          debugPrint("Error generating auto-bill QR: $e");
+          printer.qrcode(billingUrl, align: PosAlign.center, size: QRSize.Size6);
+        }
+        printer.feed(1);
+      }
+
       printer.text(
         'Thank you! Visit Again',
         styles: const PosStyles(align: PosAlign.center),
       );
       printer.cut();
-      printer.disconnect();
+      await printer.disconnectAndPrint();
       debugPrint(
-        '🧾 Auto receipt printed on ${target.printerIp}:$connectedPort for ${_tableDisplayLabel(bill)}',
+        '🧾 Auto receipt printed on ${target.printerIp} for ${_tableDisplayLabel(bill)}',
       );
       return const AutoSyncAlert(
         message: 'Bill printed successfully',
@@ -865,7 +1012,7 @@ class KotAutoPrintService {
     } catch (error) {
       debugPrint('🧾 Auto receipt print error: $error');
       try {
-        printer.disconnect();
+        await printer?.disconnectAndPrint();
       } catch (_) {}
       return const AutoSyncAlert(
         message: 'Bill saved, but receipt not printed. Check printer.',
@@ -1048,10 +1195,16 @@ class KotAutoPrintService {
       } catch (_) {}
     }
 
+    // Prioritize Customer Name from Bill (QR Orders)
+    final billCustDetails = bill['customerDetails'];
+    if (billCustDetails is Map && 
+        billCustDetails['name'] != null && 
+        billCustDetails['name'].toString().trim().isNotEmpty) {
+      waiterName = billCustDetails['name'].toString().trim();
+    }
+
     const paper = PaperSize.mm80;
     final profile = await CapabilityProfile.load();
-    final printer = NetworkPrinter(paper, profile);
-
     final prefsPort = int.tryParse(
       (prefs.getString('printerPort') ?? '').trim(),
     );
@@ -1062,22 +1215,14 @@ class KotAutoPrintService {
       9101,
     }.toList(growable: false);
 
-    PosPrintResult result = PosPrintResult.timeout;
-    var connectedPort = candidatePorts.first;
-    for (final port in candidatePorts) {
-      connectedPort = port;
-      result = await printer
-          .connect(printerIp, port: port)
-          .timeout(
-            const Duration(seconds: 4),
-            onTimeout: () => PosPrintResult.timeout,
-          );
-      if (result == PosPrintResult.success) {
-        break;
-      }
-    }
+    final printer = await UnifiedPrinter.connect(
+      printerIp: printerIp,
+      candidatePorts: candidatePorts,
+      paperSize: paper,
+      profile: profile,
+    );
 
-    if (result != PosPrintResult.success) {
+    if (printer == null) {
       debugPrint(
         '🖨️ Auto KOT printer connect failed for $printerIp:${candidatePorts.join(",")}',
       );
@@ -1214,8 +1359,8 @@ class KotAutoPrintService {
 
     printer.feed(2);
     printer.cut();
-    printer.disconnect();
-    debugPrint('🖨️ Auto KOT printed on $printerIp:$connectedPort');
+    await printer.disconnectAndPrint();
+    debugPrint('🖨️ Auto KOT printed on $printerIp');
     return true;
   }
 

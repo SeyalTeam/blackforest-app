@@ -15,6 +15,9 @@ import 'package:blackforest_app/widgets/rolling_qty_text.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'dart:io';
+// import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:blackforest_app/kot_auto_print_service.dart';
 
 class _FilledTrianglePainter extends CustomPainter {
   final Color color;
@@ -1021,6 +1024,14 @@ class _HomePageState extends State<HomePage> {
     _loadCategoryPopularity();
     _loadProductPopularity();
     _ensureTableCartMode();
+    _initForegroundTask();
+  }
+
+  Future<void> _initForegroundTask() async {
+    if (!Platform.isAndroid) return;
+
+    // Start the service
+    await KotAutoPrintService.startService();
   }
 
   @override
@@ -2573,6 +2584,7 @@ class _HomePageState extends State<HomePage> {
       product,
       1,
       branchPrice: _readProductPrice(product),
+      branchId: _branchId,
     );
     cartProvider.addOrUpdateItem(item);
   }

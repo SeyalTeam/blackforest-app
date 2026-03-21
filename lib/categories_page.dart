@@ -1887,6 +1887,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
             context,
             listen: false,
           );
+          final prefs = await SharedPreferences.getInstance();
+          final branchId = prefs.getString('branchId')?.trim();
           // Get branch-specific price if available (similar to ProductsPage)
           double price =
               product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
@@ -1896,7 +1898,12 @@ class _CategoriesPageState extends State<CategoriesPage> {
               // Removed unused branchId/branchOid loop logic
             }
           }
-          final item = CartItem.fromProduct(product, 1, branchPrice: price);
+          final item = CartItem.fromProduct(
+            product,
+            1,
+            branchPrice: price,
+            branchId: branchId,
+          );
           cartProvider.addOrUpdateItem(item);
           final newQty = cartProvider.cartItems
               .firstWhere((i) => i.id == item.id)
