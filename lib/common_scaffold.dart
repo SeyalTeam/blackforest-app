@@ -42,6 +42,8 @@ class CommonScaffold extends StatefulWidget {
   final bool showAppBar;
   final bool hideBottomNavigationBar;
   final bool showBackButtonInAppBar;
+  final bool showDefaultAppBarActions;
+  final List<Widget> appBarActions;
 
   const CommonScaffold({
     super.key,
@@ -52,6 +54,8 @@ class CommonScaffold extends StatefulWidget {
     this.showAppBar = true,
     this.hideBottomNavigationBar = false,
     this.showBackButtonInAppBar = false,
+    this.showDefaultAppBarActions = true,
+    this.appBarActions = const [],
   });
 
   @override
@@ -762,6 +766,99 @@ class _CommonScaffoldState extends State<CommonScaffold> {
 
   @override
   Widget build(BuildContext context) {
+    final defaultAppBarActions = <Widget>[
+      Consumer<CartProvider>(
+        builder: (context, cartProvider, child) {
+          final int notifyCount = cartProvider.kitchenNotifications.length;
+
+          return Stack(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.notifications_none_outlined),
+                onPressed: () {
+                  _resetTimer();
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const KitchenNotificationsPage(),
+                    ),
+                  );
+                },
+              ),
+              if (notifyCount > 0)
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    constraints: const BoxConstraints(
+                      minWidth: 16,
+                      minHeight: 16,
+                    ),
+                    child: Text(
+                      '$notifyCount',
+                      style: const TextStyle(color: Colors.white, fontSize: 10),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+      Consumer<CartProvider>(
+        builder: (context, cartProvider, child) {
+          final int itemCount = cartProvider.cartItems.length;
+
+          return Stack(
+            children: [
+              IconButton(
+                icon: const Icon(
+                  Icons.shopping_cart_outlined,
+                  color: Colors.black87,
+                ),
+                onPressed: () {
+                  _resetTimer();
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const CartPage()),
+                  );
+                },
+              ),
+              if (itemCount > 0)
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: Container(
+                    padding: const EdgeInsets.all(2),
+                    decoration: BoxDecoration(
+                      color: Colors.red,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    constraints: const BoxConstraints(
+                      minWidth: 16,
+                      minHeight: 16,
+                    ),
+                    child: Text(
+                      '$itemCount',
+                      style: const TextStyle(color: Colors.white, fontSize: 10),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    ];
+    final appBarActions = <Widget>[
+      if (widget.showDefaultAppBarActions) ...defaultAppBarActions,
+      ...widget.appBarActions,
+    ];
     final appBarLeading = widget.showBackButtonInAppBar
         ? Padding(
             padding: const EdgeInsets.fromLTRB(10, 10, 4, 10),
@@ -825,105 +922,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                 ),
                 iconTheme: const IconThemeData(color: Colors.black87),
                 actionsIconTheme: const IconThemeData(color: Colors.black87),
-                actions: [
-                  Consumer<CartProvider>(
-                    builder: (context, cartProvider, child) {
-                      final int notifyCount =
-                          cartProvider.kitchenNotifications.length;
-
-                      return Stack(
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.notifications_none_outlined),
-                            onPressed: () {
-                              _resetTimer();
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) =>
-                                      const KitchenNotificationsPage(),
-                                ),
-                              );
-                            },
-                          ),
-                          if (notifyCount > 0)
-                            Positioned(
-                              right: 8,
-                              top: 8,
-                              child: Container(
-                                padding: const EdgeInsets.all(2),
-                                decoration: BoxDecoration(
-                                  color: Colors.red,
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                constraints: const BoxConstraints(
-                                  minWidth: 16,
-                                  minHeight: 16,
-                                ),
-                                child: Text(
-                                  '$notifyCount',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 10,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
-                            ),
-                        ],
-                      );
-                    },
-                  ),
-                  Consumer<CartProvider>(
-                    builder: (context, cartProvider, child) {
-                      final int itemCount = cartProvider.cartItems.length;
-
-                      return Stack(
-                        children: [
-                          IconButton(
-                            icon: const Icon(
-                              Icons.shopping_cart_outlined,
-                              color: Colors.black87,
-                            ),
-                            onPressed: () {
-                              _resetTimer();
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => const CartPage(),
-                                ),
-                              );
-                            },
-                          ),
-                          if (itemCount > 0)
-                            Positioned(
-                              right: 8,
-                              top: 8,
-                              child: Container(
-                                padding: const EdgeInsets.all(2),
-                                decoration: BoxDecoration(
-                                  color: Colors.red,
-                                  borderRadius: BorderRadius.circular(10),
-                                ),
-                                constraints: const BoxConstraints(
-                                  minWidth: 16,
-                                  minHeight: 16,
-                                ),
-                                child: Text(
-                                  '$itemCount',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 10,
-                                  ),
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
-                            ),
-                        ],
-                      );
-                    },
-                  ),
-                ],
+                actions: appBarActions,
               )
             : null,
 

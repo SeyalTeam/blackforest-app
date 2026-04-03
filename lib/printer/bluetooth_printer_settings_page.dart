@@ -3,6 +3,7 @@ import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:blackforest_app/printer/bluetooth_printer_prefs.dart';
 
 class BluetoothPrinterSettingsPage extends StatefulWidget {
   const BluetoothPrinterSettingsPage({super.key});
@@ -22,6 +23,8 @@ class _BluetoothPrinterSettingsPageState
   bool _connected = false;
   List<BluetoothInfo> _items = [];
   String? _savedMacAddress;
+  bool _printBilling = true;
+  bool _printKot = true;
 
   late AnimationController _animationController;
   late Animation<double> _scaleAnimation;
@@ -30,25 +33,26 @@ class _BluetoothPrinterSettingsPageState
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    
+
     _animationController = AnimationController(
-       vsync: this,
-       duration: const Duration(seconds: 2),
+      vsync: this,
+      duration: const Duration(seconds: 2),
     );
-    
-    _scaleAnimation = Tween<double>(begin: 0.8, end: 1.2).animate(
-      CurvedAnimation(
-        parent: _animationController,
-        curve: Curves.easeInOut,
-      )
-    )..addStatusListener((status) {
-        if (status == AnimationStatus.completed) {
-          _animationController.reverse();
-        } else if (status == AnimationStatus.dismissed) {
-          _animationController.forward();
-        }
-      });
-      
+
+    _scaleAnimation =
+        Tween<double>(begin: 0.8, end: 1.2).animate(
+          CurvedAnimation(
+            parent: _animationController,
+            curve: Curves.easeInOut,
+          ),
+        )..addStatusListener((status) {
+          if (status == AnimationStatus.completed) {
+            _animationController.reverse();
+          } else if (status == AnimationStatus.dismissed) {
+            _animationController.forward();
+          }
+        });
+
     _initBluetooth();
   }
 
@@ -89,8 +93,11 @@ class _BluetoothPrinterSettingsPageState
 
   Future<void> _initBluetooth() async {
     final prefs = await SharedPreferences.getInstance();
+    await ensureBluetoothPrinterRoutingPrefs(prefs);
     setState(() {
-      _savedMacAddress = prefs.getString('bt_printer_mac');
+      _savedMacAddress = prefs.getString(btPrinterMacKey);
+      _printBilling = isBluetoothBillingEnabled(prefs);
+      _printKot = isBluetoothKotEnabled(prefs);
     });
 
     // Request permissions before querying state (For Android 12+)
@@ -118,7 +125,7 @@ class _BluetoothPrinterSettingsPageState
       _msj = 'Scanning...';
     });
     _animationController.forward();
-    
+
     try {
       final devices = await PrintBluetoothThermal.pairedBluetooths;
       setState(() {
@@ -163,7 +170,10 @@ class _BluetoothPrinterSettingsPageState
     }
   }
 
-  Future<void> _connect(BluetoothInfo selectedDevice, {bool isAutoConnect = false}) async {
+  Future<void> _connect(
+    BluetoothInfo selectedDevice, {
+    bool isAutoConnect = false,
+  }) async {
     if (_isConnecting) return;
 
     setState(() {
@@ -193,19 +203,23 @@ class _BluetoothPrinterSettingsPageState
 
       if (result) {
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('bt_printer_mac', selectedDevice.macAdress);
-        await prefs.setString('bt_printer_name', selectedDevice.name);
+        await prefs.setString(btPrinterMacKey, selectedDevice.macAdress);
+        await prefs.setString(btPrinterNameKey, selectedDevice.name);
+        await ensureBluetoothPrinterRoutingPrefs(prefs);
         if (mounted) {
           setState(() {
             _connected = true;
             _savedMacAddress = selectedDevice.macAdress;
+            _printBilling = isBluetoothBillingEnabled(prefs);
+            _printKot = isBluetoothKotEnabled(prefs);
             _msj = 'Connected';
           });
         }
       } else {
         if (mounted) {
           setState(() {
-            _msj = 'Failed to connect. Please make sure the printer is turned on and paired.';
+            _msj =
+                'Failed to connect. Please make sure the printer is turned on and paired.';
           });
         }
       }
@@ -228,18 +242,71 @@ class _BluetoothPrinterSettingsPageState
   Future<void> _disconnect() async {
     final result = await PrintBluetoothThermal.disconnect;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('bt_printer_mac');
-    await prefs.remove('bt_printer_name');
+    await clearBluetoothPrinterPrefs(prefs);
 
     setState(() {
       _connected = false;
       _savedMacAddress = null;
+      _printBilling = true;
+      _printKot = true;
       if (result) {
         _msj = 'Disconnected';
       } else {
         _msj = 'Failed to disconnect';
       }
     });
+  }
+
+  Future<void> _updatePrintRouting({
+    required bool billingEnabled,
+    required bool kotEnabled,
+  }) async {
+    if (!billingEnabled && !kotEnabled) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Select at least one option: Billing or KOT'),
+          ),
+        );
+      }
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    await saveBluetoothPrinterRoutingPrefs(
+      prefs,
+      billingEnabled: billingEnabled,
+      kotEnabled: kotEnabled,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _printBilling = billingEnabled;
+      _printKot = kotEnabled;
+    });
+  }
+
+  Widget _buildRoutingOption({
+    required String label,
+    required bool value,
+    required ValueChanged<bool?> onChanged,
+  }) {
+    return CheckboxListTile(
+      value: value,
+      onChanged: onChanged,
+      contentPadding: EdgeInsets.zero,
+      controlAffinity: ListTileControlAffinity.leading,
+      dense: true,
+      activeColor: const Color(0xFF16A34A),
+      title: Text(
+        label,
+        style: const TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          color: Colors.black87,
+        ),
+      ),
+    );
   }
 
   @override
@@ -264,10 +331,11 @@ class _BluetoothPrinterSettingsPageState
             icon: const Icon(Icons.more_vert),
             onSelected: (value) async {
               if (value == 'reset') {
+                final messenger = ScaffoldMessenger.of(context);
                 await _disconnect();
                 _getDevices();
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  messenger.showSnackBar(
                     const SnackBar(content: Text('Printer settings reset')),
                   );
                 }
@@ -312,7 +380,9 @@ class _BluetoothPrinterSettingsPageState
                   width: 280,
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(30)),
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(30),
+                    ),
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black.withValues(alpha: 0.05),
@@ -335,7 +405,10 @@ class _BluetoothPrinterSettingsPageState
                       const SizedBox(height: 40),
                       Container(
                         margin: const EdgeInsets.symmetric(horizontal: 24),
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 12,
+                        ),
                         decoration: BoxDecoration(
                           color: Colors.white,
                           borderRadius: BorderRadius.circular(12),
@@ -413,7 +486,10 @@ class _BluetoothPrinterSettingsPageState
                     ),
                     elevation: 0,
                   ),
-                  child: const Text('Open Bluetooth', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                  child: const Text(
+                    'Open Bluetooth',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
                 ),
               ),
             ] else if (_connected && connectedDevice != null) ...[
@@ -427,7 +503,7 @@ class _BluetoothPrinterSettingsPageState
                   shape: BoxShape.circle,
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
+                      color: Colors.black.withValues(alpha: 0.05),
                       blurRadius: 20,
                       spreadRadius: 5,
                     ),
@@ -461,6 +537,59 @@ class _BluetoothPrinterSettingsPageState
                     size: 16,
                   ),
                 ],
+              ),
+              const SizedBox(height: 24),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(18),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: Colors.grey[200]!),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Use this printer for',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Choose whether this Bluetooth printer should print Billing, KOT, or both.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey[600],
+                        height: 1.35,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    _buildRoutingOption(
+                      label: 'Billing',
+                      value: _printBilling,
+                      onChanged: (value) {
+                        _updatePrintRouting(
+                          billingEnabled: value ?? false,
+                          kotEnabled: _printKot,
+                        );
+                      },
+                    ),
+                    _buildRoutingOption(
+                      label: 'KOT',
+                      value: _printKot,
+                      onChanged: (value) {
+                        _updatePrintRouting(
+                          billingEnabled: _printBilling,
+                          kotEnabled: value ?? false,
+                        );
+                      },
+                    ),
+                  ],
+                ),
               ),
               const SizedBox(height: 40),
               SizedBox(

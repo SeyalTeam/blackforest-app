@@ -771,8 +771,8 @@ class _LoginPageState extends State<LoginPage> {
               "Branch IP matched",
               printerIp,
             );
-          } else if (!isWifi) {
-            // 2. Fallback to GPS Verification (Mobile Data Only)
+          } else {
+            // 2. Fallback to GPS Verification (for both WiFi and Mobile)
             final prefs = await SharedPreferences.getInstance();
             final branchLat = prefs.getDouble('branchLat');
             final branchLng = prefs.getDouble('branchLng');
@@ -796,7 +796,9 @@ class _LoginPageState extends State<LoginPage> {
                   if (distance <= branchRadius) {
                     // SUCCESS via GPS
                     await _showIpAlert(
-                      "Mobile Internet (GPS Match)",
+                      isWifi
+                          ? "WiFi (GPS Match)"
+                          : "Mobile Internet (GPS Match)",
                       "GPS Verified",
                       "Distance: ${distance.toStringAsFixed(1)}m",
                       printerIp,
@@ -822,15 +824,6 @@ class _LoginPageState extends State<LoginPage> {
               setState(() => _isLoading = false);
               return;
             }
-          } else {
-            // FAILED (was WiFi or GPS not configured)
-            _showError(
-              deviceIp == null
-                  ? "WiFi IP not detected"
-                  : "Access Denied: Outside Branch IP Range",
-            );
-            setState(() => _isLoading = false);
-            return;
           }
         }
 

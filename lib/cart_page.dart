@@ -4753,6 +4753,72 @@ class _CartPageState extends State<CartPage> {
     }
   }
 
+  bool _isQrOrWebsiteOrder(dynamic rawBill) {
+    Map<String, dynamic> asMap(dynamic value) => value is Map
+        ? Map<String, dynamic>.from(value)
+        : const <String, dynamic>{};
+
+    bool isTruthy(dynamic value) {
+      if (value is bool) return value;
+      final normalized = value?.toString().trim().toLowerCase() ?? '';
+      return normalized == 'true' || normalized == '1' || normalized == 'yes';
+    }
+
+    bool hasSourceHint(dynamic value) {
+      final normalized = value?.toString().trim().toLowerCase() ?? '';
+      if (normalized.isEmpty) return false;
+      return normalized.contains('qr') ||
+          normalized.contains('website') ||
+          normalized.contains('web') ||
+          normalized.contains('online');
+    }
+
+    bool containsQrHints(Map<String, dynamic> bill) {
+      const boolKeys = <String>[
+        'isQrOrder',
+        'isQRorder',
+        'isQR',
+        'qrOrder',
+        'isWebsiteOrder',
+        'websiteOrder',
+        'isWebOrder',
+        'isOnlineOrder',
+      ];
+      const sourceKeys = <String>[
+        'source',
+        'orderSource',
+        'sourceType',
+        'orderChannel',
+        'channel',
+        'origin',
+        'platform',
+        'placedVia',
+        'createdFrom',
+        'mode',
+      ];
+
+      for (final key in boolKeys) {
+        if (bill.containsKey(key) && isTruthy(bill[key])) {
+          return true;
+        }
+      }
+      for (final key in sourceKeys) {
+        if (bill.containsKey(key) && hasSourceHint(bill[key])) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    final bill = asMap(rawBill);
+    if (containsQrHints(bill)) return true;
+
+    final doc = asMap(bill['doc']);
+    if (containsQrHints(doc)) return true;
+
+    return false;
+  }
+
   Future<void> _printReceipt({
     required List<CartItem> items,
     required double totalAmount,
@@ -4892,37 +4958,37 @@ class _CartPageState extends State<CartPage> {
       waiterName = 'Unknown';
     }
 
-    // Prioritize Customer Name for QR/Website orders (Aggressive search)
-    String? custName;
+    if (_isQrOrWebsiteOrder(billingResponse)) {
+      // For QR/website-origin orders, display customer name when present.
+      String? custName;
 
-    // 1. Check local state passed to the method
-    if (customerDetails['name'] != null &&
-        customerDetails['name'].toString().trim().isNotEmpty) {
-      custName = customerDetails['name'].toString().trim();
-    }
-
-    // 2. Check server response paths
-    if (custName == null) {
-      final dynamic doc = billingResponse['doc'] ?? billingResponse;
-      final dynamic details = doc['customerDetails'];
-
-      if (details is Map &&
-          details['name'] != null &&
-          details['name'].toString().trim().isNotEmpty) {
-        custName = details['name'].toString().trim();
-      } else if (doc['customerName'] != null &&
-          doc['customerName'].toString().trim().isNotEmpty) {
-        custName = doc['customerName'].toString().trim();
-      } else if (doc['name'] != null &&
-          doc['name'].toString().trim().isNotEmpty &&
-          (doc['name'] != _branchName)) {
-        // Only use top level 'name' if it's not the branch name
-        custName = doc['name'].toString().trim();
+      if (customerDetails['name'] != null &&
+          customerDetails['name'].toString().trim().isNotEmpty) {
+        custName = customerDetails['name'].toString().trim();
       }
-    }
 
-    if (custName != null && custName.isNotEmpty && custName != 'Unknown') {
-      waiterName = custName;
+      if (custName == null) {
+        final dynamic doc = billingResponse['doc'] ?? billingResponse;
+        final dynamic details = doc['customerDetails'];
+
+        if (details is Map &&
+            details['name'] != null &&
+            details['name'].toString().trim().isNotEmpty) {
+          custName = details['name'].toString().trim();
+        } else if (doc['customerName'] != null &&
+            doc['customerName'].toString().trim().isNotEmpty) {
+          custName = doc['customerName'].toString().trim();
+        } else if (doc['name'] != null &&
+            doc['name'].toString().trim().isNotEmpty &&
+            (doc['name'] != _branchName)) {
+          // Only use top-level name when it's not branch name.
+          custName = doc['name'].toString().trim();
+        }
+      }
+
+      if (custName != null && custName.isNotEmpty && custName != 'Unknown') {
+        waiterName = custName;
+      }
     }
 
     try {
@@ -4944,6 +5010,7 @@ class _CartPageState extends State<CartPage> {
         candidatePorts: candidatePorts,
         paperSize: paper,
         profile: profile,
+        jobType: PrintJobType.billing,
       );
 
       if (printer != null) {
@@ -5053,6 +5120,7 @@ class _CartPageState extends State<CartPage> {
             ? (totalAmount / grossAmount).clamp(0.0, 1.0)
             : 1.0;
         final cgstSgstBreakdown = <double, double>{};
+        double receiptTaxableSubtotalAccumulator = 0.0;
         printer.row([
           PosColumn(
             text: 'Item',
@@ -5112,6 +5180,7 @@ class _CartPageState extends State<CartPage> {
             0.0,
             double.infinity,
           );
+          receiptTaxableSubtotalAccumulator += taxableAmount;
           final lineTaxAmount = item.gstPercent > 0
               ? taxableAmount * item.gstPercent / 100
               : 0.0;
@@ -5172,13 +5241,26 @@ class _CartPageState extends State<CartPage> {
             .clamp(0.0, double.infinity)
             .toDouble();
         final sortedHalfRates = cgstSgstBreakdown.keys.toList()..sort();
+        final receiptTaxableSubtotal = double.parse(
+          receiptTaxableSubtotalAccumulator.toStringAsFixed(2),
+        );
         final receiptGstAmount = double.parse(
           cgstSgstBreakdown.values
               .fold<double>(0.0, (sum, taxPart) => sum + (taxPart * 2))
               .toStringAsFixed(2),
         );
+        final hasReceiptGst = receiptGstAmount > 0.0001;
+        final receiptSubTotalAmount = double.parse(
+          ((hasReceiptGst ? receiptTaxableSubtotal : totalAmount).clamp(
+            0.0,
+            double.infinity,
+          )).toStringAsFixed(2),
+        );
         final receiptTotalAmount = double.parse(
-          (totalAmount + receiptGstAmount).toStringAsFixed(2),
+          ((receiptSubTotalAmount + receiptGstAmount).clamp(
+            0.0,
+            double.infinity,
+          )).toStringAsFixed(2),
         );
         final roundedGrandTotal = double.parse(
           receiptTotalAmount.ceilToDouble().toStringAsFixed(2),
@@ -5247,7 +5329,7 @@ class _CartPageState extends State<CartPage> {
         if (receiptGstAmount > 0.0001) {
           printer.row([
             PosColumn(
-              text: 'SUB TOTAL RS ${formatReceiptMoney(totalAmount)}',
+              text: 'SUB TOTAL RS ${formatReceiptMoney(receiptSubTotalAmount)}',
               width: 12,
               styles: const PosStyles(
                 align: PosAlign.right,
@@ -5309,7 +5391,7 @@ class _CartPageState extends State<CartPage> {
         } else {
           printer.row([
             PosColumn(
-              text: 'SUB TOTAL RS ${formatReceiptMoney(totalAmount)}',
+              text: 'SUB TOTAL RS ${formatReceiptMoney(receiptSubTotalAmount)}',
               width: 12,
               styles: const PosStyles(
                 align: PosAlign.right,
@@ -5772,6 +5854,7 @@ class _CartPageState extends State<CartPage> {
         candidatePorts: candidatePorts,
         paperSize: paper,
         profile: profile,
+        jobType: PrintJobType.kot,
       );
 
       if (printer != null) {
@@ -6207,6 +6290,27 @@ class _CartPageState extends State<CartPage> {
     final showKotButton =
         cartProvider.recalledBillId == null ||
         cartProvider.cartItems.isNotEmpty;
+    final allVisibleItems = <CartItem>[...cartProvider.recalledItems, ...items];
+    final overallItemQuantity = allVisibleItems.fold<double>(
+      0,
+      (sum, item) => sum + item.quantity,
+    );
+    final overallItemsDisplay = _formatCartQuantityValue(overallItemQuantity);
+    final overallItemLabel = overallItemQuantity == 1 ? 'item' : 'items';
+    final overallSubtotalWithoutGst = allVisibleItems.fold<double>(
+      0,
+      (sum, item) => sum + item.lineTotal,
+    );
+    final overallGstAmount = allVisibleItems.fold<double>(
+      0,
+      (sum, item) => sum + _cartItemTaxAmount(item),
+    );
+    final overallTotalWithGst = overallSubtotalWithoutGst + overallGstAmount;
+    final overallGrandTotal = overallTotalWithGst.ceilToDouble();
+    final overallRoundOff = (overallGrandTotal - overallTotalWithGst).clamp(
+      0.0,
+      double.infinity,
+    );
     final totalQuantity = cartProvider.cartItems.fold<double>(
       0,
       (sum, item) => sum + item.quantity,
@@ -6216,8 +6320,8 @@ class _CartPageState extends State<CartPage> {
     final sectionName = cartProvider.selectedSection?.trim() ?? '';
     final bottomInset = MediaQuery.of(context).padding.bottom;
     final footerHeight = showSharedTableInput
-        ? 166.0
-        : (showBillButton ? 206.0 : 104.0);
+        ? 214.0
+        : (showBillButton ? 206.0 : 152.0);
 
     return Stack(
       children: [
@@ -6531,6 +6635,52 @@ class _CartPageState extends State<CartPage> {
                 ],
                 if (showKotButton) ...[
                   const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            RichText(
+                              text: TextSpan(
+                                style: const TextStyle(
+                                  color: Color(0xFF1F2430),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                                children: [
+                                  TextSpan(
+                                    text:
+                                        'Total: ₹${_formatCartMoneyCompact(overallSubtotalWithoutGst)} + ₹${_formatCartMoneyCompact(overallGstAmount)} GST  ',
+                                  ),
+                                  TextSpan(
+                                    text:
+                                        '$overallItemsDisplay $overallItemLabel',
+                                    style: const TextStyle(
+                                      color: Color(0xFFC27803),
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              'Grand Total: ₹${_formatCartMoneyCompact(overallGrandTotal)} (Rof +₹${_formatCartMoneyCompact(overallRoundOff)})',
+                              style: const TextStyle(
+                                color: Color(0xFF1BA672),
+                                fontSize: 17,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
                   _buildKotOrderBar(
                     cartItems: activeCartItems,
                     totalQty: totalQuantity,
@@ -6551,15 +6701,27 @@ class _CartPageState extends State<CartPage> {
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'Total: ₹${cartProvider.total.toStringAsFixed(2)}',
+                      'Total: ₹${_formatCartMoneyCompact(overallSubtotalWithoutGst)} + ₹${_formatCartMoneyCompact(overallGstAmount)} GST  $overallItemsDisplay $overallItemLabel',
                       style: const TextStyle(
                         color: Color(0xFF1F2430),
-                        fontSize: 16,
+                        fontSize: 14,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
                   ),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 4),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Grand Total: ₹${_formatCartMoneyCompact(overallGrandTotal)} (Rof +₹${_formatCartMoneyCompact(overallRoundOff)})',
+                      style: const TextStyle(
+                        color: Color(0xFF1BA672),
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
                   _buildPaymentChips(lightMode: true),
                   const SizedBox(height: 12),
                   SizedBox(
@@ -6633,14 +6795,30 @@ class _CartPageState extends State<CartPage> {
               );
             }
 
-            // Calculate total items as sum of quantities (assuming double, but display as int if whole)
-            final totalQuantity = cartProvider.cartItems.fold<double>(
+            final allVisibleItems = <CartItem>[
+              ...cartProvider.recalledItems,
+              ...cartProvider.cartItems,
+            ];
+            final totalQuantity = allVisibleItems.fold<double>(
               0,
               (sum, item) => sum + item.quantity,
             );
-            final totalItemsDisplay = totalQuantity % 1 == 0
-                ? totalQuantity.toInt().toString()
-                : totalQuantity.toStringAsFixed(2);
+            final totalItemsDisplay = _formatCartQuantityValue(totalQuantity);
+            final totalItemLabel = totalQuantity == 1 ? 'item' : 'items';
+            final subtotalWithoutGst = allVisibleItems.fold<double>(
+              0,
+              (sum, item) => sum + item.lineTotal,
+            );
+            final totalGstAmount = allVisibleItems.fold<double>(
+              0,
+              (sum, item) => sum + _cartItemTaxAmount(item),
+            );
+            final totalWithGst = subtotalWithoutGst + totalGstAmount;
+            final roundedGrandTotal = totalWithGst.ceilToDouble();
+            final roundOffAmount = (roundedGrandTotal - totalWithGst).clamp(
+              0.0,
+              double.infinity,
+            );
 
             if (cartProvider.currentType == CartType.table) {
               return SafeArea(
@@ -7102,44 +7280,46 @@ class _CartPageState extends State<CartPage> {
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Row(
-                                  children: [
-                                    const Text(
-                                      'Total: ',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      RichText(
+                                        text: TextSpan(
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w800,
+                                          ),
+                                          children: [
+                                            TextSpan(
+                                              text:
+                                                  'Total: ₹${_formatCartMoneyCompact(subtotalWithoutGst)} + ₹${_formatCartMoneyCompact(totalGstAmount)} GST  ',
+                                            ),
+                                            TextSpan(
+                                              text:
+                                                  '$totalItemsDisplay $totalItemLabel',
+                                              style: const TextStyle(
+                                                color: Colors.yellow,
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
                                       ),
-                                    ),
-                                    Text(
-                                      '₹${cartProvider.total.toStringAsFixed(2)}',
-                                      style: const TextStyle(
-                                        color: Colors.green,
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'Grand Total: ₹${_formatCartMoneyCompact(roundedGrandTotal)} (Rof +₹${_formatCartMoneyCompact(roundOffAmount)})',
+                                        style: const TextStyle(
+                                          color: Color(0xFFA7F3D0),
+                                          fontSize: 17,
+                                          fontWeight: FontWeight.w700,
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(
-                                      width: 12,
-                                    ), // Space between amount and items
-                                    Text(
-                                      totalItemsDisplay,
-                                      style: const TextStyle(
-                                        color: Colors.yellow,
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    const Text(
-                                      ' Items',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
+                                    ],
+                                  ),
                                 ),
                                 Switch(
                                   value:
@@ -7474,6 +7654,9 @@ class _CartItemCardState extends State<_CartItemCard> {
     final isPriceOfferItem = widget.item.isPriceOfferApplied;
     final unitPriceDisplay =
         widget.item.effectiveUnitPrice ?? widget.item.price;
+    final lineSubtotal = widget.item.lineTotal.clamp(0.0, double.infinity);
+    final lineTaxAmount = _cartItemTaxAmount(widget.item);
+    final lineTotalWithGst = lineSubtotal + lineTaxAmount;
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 8),
@@ -7654,13 +7837,31 @@ class _CartItemCardState extends State<_CartItemCard> {
                     ),
                   ),
                   const SizedBox(height: 6),
-                  Text(
-                    'Subtotal: ₹${widget.item.lineTotal.toStringAsFixed(2)}',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
+                  if (lineTaxAmount > 0.0001)
+                    SizedBox(
+                      width: double.infinity,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Sub: ₹${_formatCartMoneyCompact(lineSubtotal)} + ₹${_formatCartMoneyCompact(lineTaxAmount)} (${_formatCartMoneyCompact(widget.item.gstPercent)}%) = ₹${_formatCartMoneyCompact(lineTotalWithGst)}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    )
+                  else
+                    Text(
+                      'Sub: ₹${_formatCartMoneyCompact(lineSubtotal)}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
                   if (widget.item.specialNote != null &&
                       widget.item.specialNote!.isNotEmpty)
                     Padding(
@@ -7852,6 +8053,25 @@ String _formatCartQuantityValue(double qty) {
   return qty.toStringAsFixed(2);
 }
 
+String _formatCartMoneyCompact(double value) {
+  final rounded = double.parse(value.toStringAsFixed(2));
+  if ((rounded - rounded.roundToDouble()).abs() < 0.001) {
+    return rounded.toStringAsFixed(0);
+  }
+  return rounded.toStringAsFixed(2);
+}
+
+double _cartItemTaxAmount(CartItem item) {
+  if (item.isOfferFreeItem || item.isRandomCustomerOfferItem) {
+    return 0.0;
+  }
+  if (item.gstPercent <= 0) {
+    return 0.0;
+  }
+  final taxableAmount = item.lineTotal.clamp(0.0, double.infinity);
+  return taxableAmount * item.gstPercent / 100;
+}
+
 double _cartQuantityStep(double qty) {
   if (qty == 0) return 0.25;
   int a = (qty * 100).round().abs();
@@ -8017,6 +8237,9 @@ class _KotEditableItemRow extends StatelessWidget {
     final qty = item.quantity;
     final step = _cartQuantityStep(qty);
     final currentLineTotal = item.lineTotal;
+    final lineSubtotal = currentLineTotal.clamp(0.0, double.infinity);
+    final lineTaxAmount = _cartItemTaxAmount(item);
+    final lineTotalWithGst = lineSubtotal + lineTaxAmount;
     final originalLineTotal = item.price * qty;
     final showOldLineTotal =
         !isReadOnlyOfferItem && originalLineTotal > currentLineTotal + 0.001;
@@ -8140,6 +8363,32 @@ class _KotEditableItemRow extends StatelessWidget {
                     ),
                   ),
                 ],
+                const SizedBox(height: 6),
+                if (lineTaxAmount > 0.0001)
+                  SizedBox(
+                    width: double.infinity,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Sub: ₹${_formatCartMoneyCompact(lineSubtotal)} + ₹${_formatCartMoneyCompact(lineTaxAmount)} (${_formatCartMoneyCompact(item.gstPercent)}%) = ₹${_formatCartMoneyCompact(lineTotalWithGst)}',
+                        style: const TextStyle(
+                          color: Color(0xFF1F2430),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  Text(
+                    'Sub: ₹${_formatCartMoneyCompact(lineSubtotal)}',
+                    style: const TextStyle(
+                      color: Color(0xFF1F2430),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
               ],
             ),
           ),
@@ -8215,6 +8464,9 @@ class _KotReadOnlyItemRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final note = item.specialNote?.trim() ?? '';
     final displayName = _kotDisplayName(item.name);
+    final lineSubtotal = item.lineTotal.clamp(0.0, double.infinity);
+    final lineTaxAmount = _cartItemTaxAmount(item);
+    final lineTotalWithGst = lineSubtotal + lineTaxAmount;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -8256,6 +8508,32 @@ class _KotReadOnlyItemRow extends StatelessWidget {
                     ),
                   ),
                 ],
+                const SizedBox(height: 6),
+                if (lineTaxAmount > 0.0001)
+                  SizedBox(
+                    width: double.infinity,
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Sub: ₹${_formatCartMoneyCompact(lineSubtotal)} + ₹${_formatCartMoneyCompact(lineTaxAmount)} (${_formatCartMoneyCompact(item.gstPercent)}%) = ₹${_formatCartMoneyCompact(lineTotalWithGst)}',
+                        style: const TextStyle(
+                          color: Color(0xFF1F2430),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  Text(
+                    'Sub: ₹${_formatCartMoneyCompact(lineSubtotal)}',
+                    style: const TextStyle(
+                      color: Color(0xFF1F2430),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 const SizedBox(height: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(

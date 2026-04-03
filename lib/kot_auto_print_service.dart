@@ -60,7 +60,9 @@ class KotAutoPrintService {
     await FlutterForegroundTask.stopService();
   }
 
-  static Future<List<AutoSyncAlert>> syncPendingWebsiteKots({bool isBackground = false}) async {
+  static Future<List<AutoSyncAlert>> syncPendingWebsiteKots({
+    bool isBackground = false,
+  }) async {
     final alerts = <AutoSyncAlert>[];
     if (_isSyncing) return alerts;
     _isSyncing = true;
@@ -664,6 +666,7 @@ class KotAutoPrintService {
         candidatePorts: candidatePorts,
         paperSize: PaperSize.mm80,
         profile: profile,
+        jobType: PrintJobType.billing,
       );
 
       if (printer == null) {
@@ -690,9 +693,9 @@ class KotAutoPrintService {
       final customerPhone = _toText(customerDetails['phone']).isNotEmpty
           ? _toText(customerDetails['phone'])
           : _toText(customerDetails['phoneNumber']);
-      
+
       String waiterName = prefs.getString('user_name')?.trim() ?? 'Unknown';
-      if (customerName.isNotEmpty) {
+      if (_isQrOrWebsiteOrder(bill) && customerName.isNotEmpty) {
         waiterName = customerName;
       }
 
@@ -751,7 +754,7 @@ class KotAutoPrintService {
           styles: const PosStyles(align: PosAlign.right, bold: true),
         ),
       ]);
-      
+
       printer.hr(ch: '=');
       printer.row([
         PosColumn(text: 'Item', width: 5, styles: const PosStyles(bold: true)),
@@ -871,11 +874,11 @@ class KotAutoPrintService {
       }
 
       printer.hr(ch: '=');
-      
+
       // Feedback logic (Same as cart_page.dart)
       bool shouldShowFeedback = rawItems.any((rawItem) {
         if (rawItem is! Map) return false;
-        
+
         // Extract department from nested product data
         String dept = '';
         final product = rawItem['product'];
@@ -884,22 +887,27 @@ class KotAutoPrintService {
             dept = (product['department'] is Map)
                 ? _toText(product['department']['name'])
                 : _toText(product['department']);
-          } else if (product['category'] != null && product['category'] is Map) {
+          } else if (product['category'] != null &&
+              product['category'] is Map) {
             final category = product['category'] as Map;
             if (category['department'] != null) {
               final catDept = category['department'];
-              dept = (catDept is Map) ? _toText(catDept['name']) : _toText(catDept);
+              dept = (catDept is Map)
+                  ? _toText(catDept['name'])
+                  : _toText(catDept);
             }
           }
         }
-        
+
         dept = dept.trim().toLowerCase();
         return dept.isNotEmpty && dept != 'others';
       });
 
       if (shouldShowFeedback) {
         try {
-          final ByteData data = await rootBundle.load('assets/feedback_full.png');
+          final ByteData data = await rootBundle.load(
+            'assets/feedback_full.png',
+          );
           final Uint8List bytes = data.buffer.asUint8List();
           final img.Image? image = img.decodeImage(bytes);
           if (image != null) {
@@ -927,10 +935,7 @@ class KotAutoPrintService {
 
       // QR Code Logic (Same as cart_page.dart)
       String billingUrl = 'https://blackforest.vseyal.com/billings';
-      String? billingId =
-          bill['id'] ??
-          bill['doc']?['id'] ??
-          bill['_id'];
+      String? billingId = bill['id'] ?? bill['doc']?['id'] ?? bill['_id'];
       if (billingId != null) {
         billingUrl = '$billingUrl/$billingId';
       }
@@ -951,7 +956,14 @@ class KotAutoPrintService {
           for (int x = 0; x < qrImageMatrix.moduleCount; x++) {
             for (int y = 0; y < qrImageMatrix.moduleCount; y++) {
               if (qrImageMatrix.isDark(y, x)) {
-                img.fillRect(qrImage, x * pixelSize, y * pixelSize, (x + 1) * pixelSize, (y + 1) * pixelSize, img.getColor(0, 0, 0));
+                img.fillRect(
+                  qrImage,
+                  x * pixelSize,
+                  y * pixelSize,
+                  (x + 1) * pixelSize,
+                  (y + 1) * pixelSize,
+                  img.getColor(0, 0, 0),
+                );
               }
             }
           }
@@ -965,7 +977,10 @@ class KotAutoPrintService {
             const int maxWidth = 550;
             const int gap = 10;
             final int remainingWidth = maxWidth - qrWidth - gap;
-            final img.Image chefImage = img.copyResize(chefImageRaw, width: remainingWidth > 100 ? remainingWidth : 100);
+            final img.Image chefImage = img.copyResize(
+              chefImageRaw,
+              width: remainingWidth > 100 ? remainingWidth : 100,
+            );
 
             const int canvasWidth = 550;
             final int contentWidth = qrWidth + gap + chefImage.width;
@@ -981,9 +996,28 @@ class KotAutoPrintService {
             final int chefY = (totalHeight - chefImage.height) ~/ 2;
 
             img.drawImage(combinedImage, qrImage, dstX: startX, dstY: qrBlockY);
-            img.fillRect(combinedImage, startX, qrBlockY + qrHeight, startX + qrWidth, qrBlockY + qrHeight + textBlockHeight, img.getColor(0, 0, 0));
-            img.drawString(combinedImage, img.arial_24, startX + (qrWidth - (14 * 16)) ~/ 2, qrBlockY + qrHeight + (textBlockHeight - 24) ~/ 2, 'SCAN TO REVIEW', color: img.getColor(255, 255, 255));
-            img.drawImage(combinedImage, chefImage, dstX: startX + qrWidth + gap, dstY: chefY);
+            img.fillRect(
+              combinedImage,
+              startX,
+              qrBlockY + qrHeight,
+              startX + qrWidth,
+              qrBlockY + qrHeight + textBlockHeight,
+              img.getColor(0, 0, 0),
+            );
+            img.drawString(
+              combinedImage,
+              img.arial_24,
+              startX + (qrWidth - (14 * 16)) ~/ 2,
+              qrBlockY + qrHeight + (textBlockHeight - 24) ~/ 2,
+              'SCAN TO REVIEW',
+              color: img.getColor(255, 255, 255),
+            );
+            img.drawImage(
+              combinedImage,
+              chefImage,
+              dstX: startX + qrWidth + gap,
+              dstY: chefY,
+            );
 
             printer.image(combinedImage, align: PosAlign.center);
           } else {
@@ -991,7 +1025,11 @@ class KotAutoPrintService {
           }
         } catch (e) {
           debugPrint("Error generating auto-bill QR: $e");
-          printer.qrcode(billingUrl, align: PosAlign.center, size: QRSize.Size6);
+          printer.qrcode(
+            billingUrl,
+            align: PosAlign.center,
+            size: QRSize.Size6,
+          );
         }
         printer.feed(1);
       }
@@ -1195,10 +1233,11 @@ class KotAutoPrintService {
       } catch (_) {}
     }
 
-    // Prioritize Customer Name from Bill (QR Orders)
+    // For QR/website-origin orders, display customer name when present.
     final billCustDetails = bill['customerDetails'];
-    if (billCustDetails is Map && 
-        billCustDetails['name'] != null && 
+    if (_isQrOrWebsiteOrder(bill) &&
+        billCustDetails is Map &&
+        billCustDetails['name'] != null &&
         billCustDetails['name'].toString().trim().isNotEmpty) {
       waiterName = billCustDetails['name'].toString().trim();
     }
@@ -1220,6 +1259,7 @@ class KotAutoPrintService {
       candidatePorts: candidatePorts,
       paperSize: paper,
       profile: profile,
+      jobType: PrintJobType.kot,
     );
 
     if (printer == null) {
@@ -1571,6 +1611,71 @@ class KotAutoPrintService {
       return 'Table $tableNumber';
     }
     return 'Table $tableNumber ($section)';
+  }
+
+  static bool _isQrOrWebsiteOrder(Map<String, dynamic> rawBill) {
+    Map<String, dynamic> asMap(dynamic value) => value is Map
+        ? Map<String, dynamic>.from(value)
+        : const <String, dynamic>{};
+
+    bool isTruthy(dynamic value) {
+      if (value is bool) return value;
+      final normalized = value?.toString().trim().toLowerCase() ?? '';
+      return normalized == 'true' || normalized == '1' || normalized == 'yes';
+    }
+
+    bool hasSourceHint(dynamic value) {
+      final normalized = value?.toString().trim().toLowerCase() ?? '';
+      if (normalized.isEmpty) return false;
+      return normalized.contains('qr') ||
+          normalized.contains('website') ||
+          normalized.contains('web') ||
+          normalized.contains('online');
+    }
+
+    bool containsQrHints(Map<String, dynamic> bill) {
+      const boolKeys = <String>[
+        'isQrOrder',
+        'isQRorder',
+        'isQR',
+        'qrOrder',
+        'isWebsiteOrder',
+        'websiteOrder',
+        'isWebOrder',
+        'isOnlineOrder',
+      ];
+      const sourceKeys = <String>[
+        'source',
+        'orderSource',
+        'sourceType',
+        'orderChannel',
+        'channel',
+        'origin',
+        'platform',
+        'placedVia',
+        'createdFrom',
+        'mode',
+      ];
+
+      for (final key in boolKeys) {
+        if (bill.containsKey(key) && isTruthy(bill[key])) {
+          return true;
+        }
+      }
+      for (final key in sourceKeys) {
+        if (bill.containsKey(key) && hasSourceHint(bill[key])) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    if (containsQrHints(rawBill)) return true;
+
+    final doc = asMap(rawBill['doc']);
+    if (containsQrHints(doc)) return true;
+
+    return false;
   }
 
   static String _printedStateKey(String userId, String branchId) =>

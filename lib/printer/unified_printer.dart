@@ -4,6 +4,9 @@ import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
+import 'package:blackforest_app/printer/bluetooth_printer_prefs.dart';
+
+enum PrintJobType { billing, kot }
 
 class UnifiedPrinter {
   final NetworkPrinter? networkPrinter;
@@ -23,13 +26,18 @@ class UnifiedPrinter {
     required List<int> candidatePorts,
     required PaperSize paperSize,
     required CapabilityProfile profile,
+    required PrintJobType jobType,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final generator = Generator(paperSize, profile);
 
     // 1. Try Bluetooth first if configured and connected
-    final btMac = prefs.getString('bt_printer_mac');
-    if (btMac != null && btMac.isNotEmpty) {
+    final btMac = prefs.getString(btPrinterMacKey);
+    final shouldUseBluetooth = switch (jobType) {
+      PrintJobType.billing => isBluetoothBillingEnabled(prefs),
+      PrintJobType.kot => isBluetoothKotEnabled(prefs),
+    };
+    if (btMac != null && btMac.isNotEmpty && shouldUseBluetooth) {
       try {
         bool isConnected = await PrintBluetoothThermal.connectionStatus;
         if (!isConnected) {
@@ -64,6 +72,10 @@ class UnifiedPrinter {
       } catch (e) {
         debugPrint('🖨️ Bluetooth connection error: $e');
       }
+    } else if (btMac != null && btMac.isNotEmpty && !shouldUseBluetooth) {
+      debugPrint(
+        '🖨️ Bluetooth printer is configured but disabled for $jobType printing.',
+      );
     }
 
     // 2. Fallback to WiFi / Network if IP is provided

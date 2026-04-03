@@ -1,5 +1,6 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/table_customer_details_visibility_service.dart';
+import 'package:blackforest_app/printer/bluetooth_printer_prefs.dart';
 
 const String _favoriteCategoryPrefix = 'favorite_category_ids_';
 
@@ -8,10 +9,12 @@ Future<void> clearSessionPreservingFavorites(SharedPreferences prefs) async {
   for (final key in prefs.getKeys()) {
     if (key.startsWith(_favoriteCategoryPrefix)) {
       backup[key] = prefs.getStringList(key) ?? <String>[];
-    } else if (key == 'bt_printer_mac' || 
-               key == 'bt_printer_name' || 
-               key == 'printerPort' || 
-               key == 'printerIp') {
+    } else if (key == btPrinterMacKey ||
+        key == btPrinterNameKey ||
+        key == btPrinterUseBillingKey ||
+        key == btPrinterUseKotKey ||
+        key == 'printerPort' ||
+        key == 'printerIp') {
       backup[key] = prefs.get(key);
     }
   }
@@ -26,6 +29,8 @@ Future<void> clearSessionPreservingFavorites(SharedPreferences prefs) async {
       await prefs.setString(entry.key, entry.value as String);
     } else if (entry.value is int) {
       await prefs.setInt(entry.key, entry.value as int);
+    } else if (entry.value is bool) {
+      await prefs.setBool(entry.key, entry.value as bool);
     }
   }
 }
