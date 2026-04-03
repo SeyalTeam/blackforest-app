@@ -1064,6 +1064,25 @@ class CartProvider extends ChangeNotifier {
       // If cancelled, remove from local list to hide from UI
       if (newStatus == 'cancelled') {
         list.removeAt(index);
+        final type = _currentType;
+        final hasRecalledItems = _recalledItemsMap[type]!.isNotEmpty;
+        final hasActiveCartItems = _itemsMap[type]!.isNotEmpty;
+
+        if (!hasRecalledItems) {
+          if (!hasActiveCartItems) {
+            // The recalled order is fully cancelled. Reset metadata so the next
+            // table order starts as a fresh customer/order flow.
+            final preservedTable = _selectedTableMap[type];
+            final preservedSection = _selectedSectionMap[type];
+            _clearMetadata(type);
+            _selectedTableMap[type] = preservedTable;
+            _selectedSectionMap[type] = preservedSection;
+          } else {
+            // Keep the in-progress draft, but don't attach future submits to the
+            // now-drained recalled bill.
+            _recalledBillIdMap[type] = null;
+          }
+        }
       }
       notifyListeners();
       _saveCurrentCart();
