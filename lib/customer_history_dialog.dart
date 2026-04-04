@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:blackforest_app/app_http.dart' as http;
 import 'package:provider/provider.dart';
@@ -71,14 +70,20 @@ class _BillPageResult {
 class _HistorySummaryResult {
   final int? totalBills;
   final double? totalAmount;
+  final List<Map<String, dynamic>> bills;
 
-  const _HistorySummaryResult({this.totalBills, this.totalAmount});
+  const _HistorySummaryResult({
+    this.totalBills,
+    this.totalAmount,
+    this.bills = const [],
+  });
 }
 
 class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
   static const Duration _historyLoadTimeout = Duration(seconds: 12);
   static const int _initialBillLimit = 2;
   static const int _loadMoreBillLimit = 1;
+  static const int _lookupPreviewBillLimit = 15;
   static const List<String> _possiblePhoneFields = [
     'customerDetails.phoneNumber',
     'customerDetails.phone',
@@ -91,7 +96,6 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
   bool _isLoadingMore = false;
   bool _hasMore = false;
   List<Map<String, dynamic>> _bills = [];
-  double _overallTotal = 0;
   String? _error;
   String _normalizedPhone = '';
   String? _resolvedPhoneField;
@@ -126,7 +130,6 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
       setState(() {
         _isLoading = false;
         _bills = [];
-        _overallTotal = 0;
         _error = "Enter a valid 10-digit phone number";
       });
       return;
@@ -144,36 +147,73 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
         _hasMore = false;
         _error = null;
         _bills = [];
-        _overallTotal = 0;
       });
     }
 
     try {
-      final initialData = await Future.wait<dynamic>([
-        _fetchBillsPage(
-          normalizedPhone: normalizedPhone,
-          page: 1,
-          limit: _initialBillLimit,
-        ).timeout(_historyLoadTimeout),
-        _fetchHistorySummary(normalizedPhone).timeout(_historyLoadTimeout),
-      ]);
-      final firstPage = initialData[0] as _BillPageResult;
-      final summary = initialData[1] as _HistorySummaryResult;
-      final initialBills = _sortBillsByDate(firstPage.bills);
+      final quickSummaryFuture = _fetchHistorySummary(
+        normalizedPhone,
+        useHeavyFallback: false,
+      ).timeout(_historyLoadTimeout);
+      final firstPage = await _fetchBillsPage(
+        normalizedPhone: normalizedPhone,
+        page: 1,
+        limit: _initialBillLimit,
+      ).timeout(_historyLoadTimeout);
+
       _resolvedPhoneField = firstPage.phoneField;
-      _knownTotalBills = summary.totalBills ?? firstPage.totalDocs;
+      _knownTotalBills = firstPage.totalDocs;
 
-      final hasMore = (_knownTotalBills != null && _knownTotalBills! > 0)
-          ? initialBills.length < _knownTotalBills!
-          : initialBills.length >= _initialBillLimit;
-      final loadedTotal = summary.totalAmount != null
-          ? summary.totalAmount!
-          : _totalOfBills(initialBills);
+      final fastBills = _sortBillsByDate(firstPage.bills);
+      if (fastBills.isNotEmpty) {
+        _nextSingleItemPage = fastBills.length + 1;
+        final hasMore = (_knownTotalBills != null && _knownTotalBills! > 0)
+            ? fastBills.length < _knownTotalBills!
+            : firstPage.bills.length >= _initialBillLimit;
+        if (mounted) {
+          setState(() {
+            _bills = fastBills;
+            _isLoading = false;
+            _isLoadingMore = false;
+            _hasMore = hasMore;
+            _error = null;
+          });
+        }
+        unawaited(
+          _mergeSummaryInBackground(
+            normalizedPhone: normalizedPhone,
+            summaryFuture: quickSummaryFuture,
+          ),
+        );
+        return;
+      }
 
+      final quickSummary = await quickSummaryFuture;
+      var mergedInitialBills = _sortBillsByDate(
+        _mergeUniqueBills([firstPage.bills, quickSummary.bills]),
+      );
+      var totalBillsHint = quickSummary.totalBills ?? firstPage.totalDocs;
+
+      if (mergedInitialBills.isEmpty) {
+        final heavySummary = await _fetchHistorySummary(
+          normalizedPhone,
+          useHeavyFallback: true,
+        ).timeout(_historyLoadTimeout);
+        mergedInitialBills = _sortBillsByDate(
+          _mergeUniqueBills([mergedInitialBills, heavySummary.bills]),
+        );
+        totalBillsHint ??= heavySummary.totalBills;
+      }
+
+      _knownTotalBills = totalBillsHint;
+      _nextSingleItemPage = mergedInitialBills.length + 1;
+      final canLoadMore = (_knownTotalBills != null && _knownTotalBills! > 0)
+          ? mergedInitialBills.length < _knownTotalBills!
+          : firstPage.bills.length >= _initialBillLimit;
+      final hasMore = mergedInitialBills.isNotEmpty && canLoadMore;
       if (mounted) {
         setState(() {
-          _bills = initialBills;
-          _overallTotal = loadedTotal;
+          _bills = mergedInitialBills;
           _isLoading = false;
           _isLoadingMore = false;
           _hasMore = hasMore;
@@ -195,6 +235,34 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
         });
       }
     }
+  }
+
+  Future<void> _mergeSummaryInBackground({
+    required String normalizedPhone,
+    required Future<_HistorySummaryResult> summaryFuture,
+  }) async {
+    try {
+      final summary = await summaryFuture;
+      if (!mounted || _normalizedPhone != normalizedPhone) return;
+
+      final mergedBills = _sortBillsByDate(
+        _mergeUniqueBills([_bills, summary.bills]),
+      );
+      final totalBillsHint = summary.totalBills ?? _knownTotalBills;
+      final hasMore = (totalBillsHint != null && totalBillsHint > 0)
+          ? mergedBills.length < totalBillsHint
+          : _hasMore;
+
+      if (!mounted) return;
+      setState(() {
+        _bills = mergedBills;
+        _knownTotalBills = totalBillsHint;
+        _hasMore = hasMore;
+        if (_nextSingleItemPage <= mergedBills.length) {
+          _nextSingleItemPage = mergedBills.length + 1;
+        }
+      });
+    } catch (_) {}
   }
 
   Future<void> _loadMoreHistory() async {
@@ -268,26 +336,6 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
     }
   }
 
-  double _readMoney(dynamic value) {
-    if (value is num) return value.toDouble();
-    if (value is String) return double.tryParse(value) ?? 0.0;
-    return 0.0;
-  }
-
-  double _totalOfBills(List<Map<String, dynamic>> bills) {
-    var total = 0.0;
-    for (final bill in bills) {
-      total += _readMoney(
-        bill['totalAmount'] ??
-            bill['grossAmount'] ??
-            bill['finalAmount'] ??
-            bill['subtotal'] ??
-            bill['amount'],
-      );
-    }
-    return total;
-  }
-
   String _billKey(Map<String, dynamic> bill) {
     return (bill['id'] ??
             bill['_id'] ??
@@ -314,6 +362,33 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
     return sorted;
   }
 
+  List<String> _phoneCandidates(String normalizedPhone) {
+    final candidates = <String>{};
+    final trimmed = normalizedPhone.trim();
+    if (trimmed.isNotEmpty) candidates.add(trimmed);
+    if (trimmed.length > 10) {
+      candidates.add(trimmed.substring(trimmed.length - 10));
+    }
+    return candidates.toList();
+  }
+
+  List<Map<String, dynamic>> _mergeUniqueBills(
+    Iterable<List<Map<String, dynamic>>> billGroups,
+  ) {
+    final merged = <Map<String, dynamic>>[];
+    final seen = <String>{};
+
+    for (final group in billGroups) {
+      for (final bill in group) {
+        final key = _billKey(bill);
+        if (key.isNotEmpty && seen.contains(key)) continue;
+        if (key.isNotEmpty) seen.add(key);
+        merged.add(bill);
+      }
+    }
+    return merged;
+  }
+
   Future<_BillPageResult> _fetchBillsPage({
     required String normalizedPhone,
     required int page,
@@ -333,33 +408,36 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
       final fieldsToTry = phoneField == null
           ? _possiblePhoneFields
           : <String>[phoneField];
+      final phoneValues = _phoneCandidates(normalizedPhone);
 
       for (final field in fieldsToTry) {
-        final uri = Uri.parse('https://blackforest.vseyal.com/api/billings')
-            .replace(
-              queryParameters: {
-                'sort': '-createdAt',
-                'page': page.toString(),
-                'limit': limit.toString(),
-                'depth': '4',
-                'where[$field][equals]': normalizedPhone,
-                'where[status][not_equals]': 'cancelled',
-              },
-            );
-        final response = await http
-            .get(uri, headers: headers)
-            .timeout(const Duration(seconds: 8));
-        if (response.statusCode != 200) continue;
+        for (final phoneValue in phoneValues) {
+          final uri = Uri.parse('https://blackforest.vseyal.com/api/billings')
+              .replace(
+                queryParameters: {
+                  'sort': '-createdAt',
+                  'page': page.toString(),
+                  'limit': limit.toString(),
+                  'depth': '4',
+                  'where[$field][equals]': phoneValue,
+                  'where[status][not_equals]': 'cancelled',
+                },
+              );
+          final response = await http
+              .get(uri, headers: headers)
+              .timeout(const Duration(seconds: 8));
+          if (response.statusCode != 200) continue;
 
-        final decoded = jsonDecode(response.body);
-        final docs = _extractBillsFromPayload(decoded);
-        final totalDocs = _extractTotalDocs(decoded);
-        if (docs.isNotEmpty || (totalDocs != null && totalDocs > 0)) {
-          return _BillPageResult(
-            bills: docs,
-            totalDocs: totalDocs,
-            phoneField: field,
-          );
+          final decoded = jsonDecode(response.body);
+          final docs = _extractBillsFromPayload(decoded);
+          final totalDocs = _extractTotalDocs(decoded);
+          if (docs.isNotEmpty || (totalDocs != null && totalDocs > 0)) {
+            return _BillPageResult(
+              bills: docs,
+              totalDocs: totalDocs,
+              phoneField: field,
+            );
+          }
         }
       }
     } catch (_) {}
@@ -367,25 +445,28 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
   }
 
   Future<_HistorySummaryResult> _fetchHistorySummary(
-    String normalizedPhone,
-  ) async {
+    String normalizedPhone, {
+    bool useHeavyFallback = false,
+  }) async {
     try {
       final cartProvider = Provider.of<CartProvider>(context, listen: false);
-      final accurateData = await cartProvider
-          .fetchCustomerLookupPreview(
-            normalizedPhone,
-            limit: 1,
-            includeCancelled: false,
-            useHeavyFallback: true,
-          )
-          .timeout(const Duration(seconds: 12));
+      final accurateData = await cartProvider.fetchCustomerLookupPreview(
+        normalizedPhone,
+        limit: _lookupPreviewBillLimit,
+        includeCancelled: false,
+        useHeavyFallback: useHeavyFallback,
+      );
       if (accurateData != null) {
-        final accurateBills = _extractSummaryTotalBills(accurateData);
+        final accurateBills = _extractBillsFromPayload(accurateData);
+        final accurateTotalBills = _extractSummaryTotalBills(accurateData);
         final accurateAmount = _extractSummaryTotalAmount(accurateData);
-        if (accurateBills != null || accurateAmount != null) {
+        if (accurateTotalBills != null ||
+            accurateAmount != null ||
+            accurateBills.isNotEmpty) {
           return _HistorySummaryResult(
-            totalBills: accurateBills,
+            totalBills: accurateTotalBills,
             totalAmount: accurateAmount,
+            bills: accurateBills,
           );
         }
       }
@@ -414,9 +495,11 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
       if (response.statusCode != 200) return const _HistorySummaryResult();
 
       final decoded = jsonDecode(response.body);
+      final fallbackBills = _extractBillsFromPayload(decoded);
       return _HistorySummaryResult(
         totalBills: _extractSummaryTotalBills(decoded),
         totalAmount: _extractSummaryTotalAmount(decoded),
+        bills: fallbackBills,
       );
     } catch (_) {
       return const _HistorySummaryResult();
@@ -735,43 +818,6 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
                       },
                     ),
             ),
-            if (!_isLoading && _bills.isNotEmpty) ...[
-              const Divider(color: Colors.white24, height: 32),
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  vertical: 8,
-                  horizontal: 12,
-                ),
-                decoration: BoxDecoration(
-                  color: Colors.green.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: Colors.green.withValues(alpha: 0.2),
-                  ),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      "Total Amount",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    Text(
-                      "₹${_overallTotal.toStringAsFixed(2)}",
-                      style: const TextStyle(
-                        color: Colors.green,
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
           ],
         ),
       ),
@@ -871,48 +917,6 @@ class _ReceiptPaperClipper extends CustomClipper<Path> {
   bool shouldReclip(covariant CustomClipper<Path> oldClipper) => false;
 }
 
-class _ReceiptRule extends StatelessWidget {
-  final Color color;
-  final double dashWidth;
-  final double gapWidth;
-
-  const _ReceiptRule({
-    this.color = const Color(0xFF6C675E),
-    this.dashWidth = 8,
-    this.gapWidth = 4,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final dashCount = (constraints.maxWidth / (dashWidth + gapWidth))
-            .floor()
-            .clamp(1, 200);
-
-        return Row(
-          children: List.generate(dashCount, (index) {
-            return Padding(
-              padding: EdgeInsets.only(
-                right: index == dashCount - 1 ? 0 : gapWidth,
-              ),
-              child: SizedBox(
-                width: dashWidth,
-                height: 1.2,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.75),
-                  ),
-                ),
-              ),
-            );
-          }),
-        );
-      },
-    );
-  }
-}
-
 class ReceiptContent extends StatefulWidget {
   final dynamic bill;
   const ReceiptContent({super.key, required this.bill});
@@ -922,315 +926,394 @@ class ReceiptContent extends StatefulWidget {
 }
 
 class _ReceiptContentState extends State<ReceiptContent> {
-  static final Map<String, Map<String, dynamic>?> _reviewCacheByBillId = {};
-  static final Map<String, Future<Map<String, dynamic>?>>
-  _reviewFutureByBillId = {};
-
-  Map<String, dynamic>? _reviewData;
-  bool _isLoadingReview = true;
-
-  @override
-  void initState() {
-    super.initState();
-    final billId = _extractBillId(widget.bill);
-    if (billId != null && _reviewCacheByBillId.containsKey(billId)) {
-      _reviewData = _reviewCacheByBillId[billId];
-      _isLoadingReview = false;
-      return;
-    }
-    if (billId == null || billId.isEmpty) {
-      _isLoadingReview = false;
-      return;
-    }
-    _fetchReview();
-  }
-
-  Future<void> _fetchReview() async {
-    final billId = _extractBillId(widget.bill);
-    if (billId == null || billId.isEmpty) {
-      if (mounted) {
-        setState(() => _isLoadingReview = false);
-      }
-      return;
-    }
-
-    if (_reviewCacheByBillId.containsKey(billId)) {
-      if (mounted) {
-        setState(() {
-          _reviewData = _reviewCacheByBillId[billId];
-          _isLoadingReview = false;
-        });
-      }
-      return;
-    }
-
-    final future = _reviewFutureByBillId[billId] ??= _fetchReviewForBill(
-      billId,
-    );
-    final data = await future;
-    _reviewFutureByBillId.remove(billId);
-    _reviewCacheByBillId[billId] = data;
-
-    if (mounted) {
-      setState(() {
-        _reviewData = data;
-        _isLoadingReview = false;
-      });
-    }
-  }
-
-  String? _extractBillId(dynamic bill) {
-    if (bill is! Map) return null;
-    return (bill['id'] ?? bill['_id'] ?? bill[r'$oid'])?.toString();
-  }
-
-  Future<Map<String, dynamic>?> _fetchReviewForBill(String billId) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('token');
-      if (token == null || token.isEmpty) {
-        return null;
-      }
-
-      final res = await http.get(
-        Uri.parse(
-          'https://blackforest.vseyal.com/api/reviews?where[bill][equals]=$billId&limit=1',
-        ),
-        headers: {'Authorization': 'Bearer $token'},
-      );
-
-      if (res.statusCode == 200) {
-        final data = jsonDecode(res.body);
-        if (data['docs'] is List && (data['docs'] as List).isNotEmpty) {
-          return data['docs'][0] as Map<String, dynamic>;
-        }
-      }
-    } catch (_) {}
+  Map<String, dynamic>? _asMap(dynamic value) {
+    if (value is Map) return Map<String, dynamic>.from(value);
     return null;
   }
 
+  String _textOrEmpty(dynamic value) => value?.toString().trim() ?? '';
+
   String _textOf(dynamic value, {String fallback = 'N/A'}) {
-    final text = value?.toString().trim();
-    if (text == null || text.isEmpty) return fallback;
-    return text;
+    final text = _textOrEmpty(value);
+    return text.isEmpty ? fallback : text;
   }
 
   double _moneyOf(dynamic value) {
     if (value is num) return value.toDouble();
-    if (value is String) return double.tryParse(value) ?? 0;
-    return 0;
+    if (value is String) return double.tryParse(value) ?? 0.0;
+    return 0.0;
   }
 
-  double? _moneyOrNull(dynamic value) {
+  double _positiveMoney(dynamic value) {
     final amount = _moneyOf(value);
-    if (amount <= 0) return null;
-    return amount;
+    if (amount.isNaN || amount.isInfinite) return 0.0;
+    return amount < 0 ? 0.0 : amount;
   }
 
-  String _formatQuantity(dynamic value) {
-    num? quantity;
-    if (value is num) {
-      quantity = value;
-    } else if (value is String) {
-      quantity = num.tryParse(value);
-    }
+  double _qtyOf(dynamic value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value) ?? 0.0;
+    return 0.0;
+  }
 
-    if (quantity == null) return '0';
-    if (quantity % 1 == 0) return quantity.toInt().toString();
+  String _formatQty(double quantity) {
+    if (quantity % 1 == 0) return quantity.toStringAsFixed(0);
     return quantity.toStringAsFixed(2);
   }
 
-  int _totalQuantityOf(List items) {
-    return items.fold<int>(0, (sum, item) {
-      num? quantity;
-      final value = item is Map ? item['quantity'] : null;
-      if (value is num) {
-        quantity = value;
-      } else if (value is String) {
-        quantity = num.tryParse(value);
-      }
-      return sum + (quantity?.round() ?? 0);
-    });
+  String _formatReceiptMoney(double value) {
+    final fixed = value.toStringAsFixed(2);
+    if (fixed.endsWith('.00')) return fixed.substring(0, fixed.length - 3);
+    if (fixed.endsWith('0')) return fixed.substring(0, fixed.length - 1);
+    return fixed;
   }
 
-  Widget _buildSummaryLine(
-    String label,
-    String value,
-    TextStyle labelStyle,
-    TextStyle valueStyle,
-  ) {
+  double? _moneyOrNull(dynamic value) {
+    if (value == null) return null;
+    if (value is num) {
+      final parsed = value.toDouble();
+      if (parsed.isNaN || parsed.isInfinite) return null;
+      return parsed;
+    }
+    if (value is String) {
+      final sanitized = value.replaceAll(RegExp(r'[^0-9\.\-+]'), '');
+      if (sanitized.isEmpty) return null;
+      return double.tryParse(sanitized);
+    }
+    return null;
+  }
+
+  String _formatDateForPrint(DateTime date) {
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    final year = date.year.toString();
+    var hour = date.hour;
+    final ampm = hour >= 12 ? 'PM' : 'AM';
+    hour = hour % 12;
+    if (hour == 0) hour = 12;
+    final minute = date.minute.toString().padLeft(2, '0');
+    return '$year-$month-$day $hour:$minute$ampm';
+  }
+
+  Widget _separator(String character, TextStyle style) {
+    return Text(
+      List<String>.filled(52, character).join(),
+      maxLines: 1,
+      overflow: TextOverflow.clip,
+      style: style,
+    );
+  }
+
+  Widget _rightLine(String text, TextStyle style) {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 2),
+        child: Text(text, style: style, textAlign: TextAlign.right),
+      ),
+    );
+  }
+
+  Widget _itemRow({
+    required String item,
+    required String qty,
+    required String price,
+    required String tax,
+    required String amount,
+    required TextStyle style,
+    bool header = false,
+  }) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: EdgeInsets.only(bottom: header ? 0 : 2),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(child: Text(label, style: labelStyle)),
-          Text(value, style: valueStyle),
+          Expanded(
+            child: Text(
+              item,
+              maxLines: header ? 1 : 2,
+              overflow: TextOverflow.ellipsis,
+              style: style,
+            ),
+          ),
+          SizedBox(
+            width: 36,
+            child: Text(qty, textAlign: TextAlign.right, style: style),
+          ),
+          SizedBox(
+            width: 50,
+            child: Text(price, textAlign: TextAlign.right, style: style),
+          ),
+          SizedBox(
+            width: 50,
+            child: Text(tax, textAlign: TextAlign.right, style: style),
+          ),
+          SizedBox(
+            width: 52,
+            child: Text(amount, textAlign: TextAlign.right, style: style),
+          ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildMetaCell(
-    MapEntry<String, String> entry,
-    TextStyle labelStyle,
-    TextStyle valueStyle,
-  ) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(entry.key, style: labelStyle),
-        const SizedBox(height: 4),
-        Text(
-          entry.value,
-          style: valueStyle,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildMetaSection(
-    List<List<MapEntry<String, String>>> rows,
-    TextStyle labelStyle,
-    TextStyle valueStyle,
-  ) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.04),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: Colors.black.withValues(alpha: 0.08)),
-      ),
-      child: Column(
-        children: List.generate(rows.length, (index) {
-          final rowEntries = rows[index];
-          return Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(
-              border: index == rows.length - 1
-                  ? null
-                  : Border(
-                      bottom: BorderSide(
-                        color: Colors.black.withValues(alpha: 0.08),
-                      ),
-                    ),
-            ),
-            child: IntrinsicHeight(
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: _buildMetaCell(
-                      rowEntries.first,
-                      labelStyle,
-                      valueStyle,
-                    ),
-                  ),
-                  if (rowEntries.length > 1) ...[
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      child: VerticalDivider(
-                        width: 1,
-                        thickness: 1,
-                        color: Colors.black.withValues(alpha: 0.08),
-                      ),
-                    ),
-                    Expanded(
-                      child: _buildMetaCell(
-                        rowEntries[1],
-                        labelStyle,
-                        valueStyle,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          );
-        }),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final bill = widget.bill;
-    final items = bill['items'] as List? ?? [];
-    final createdAt = DateTime.tryParse(
-      _textOf(bill['createdAt'], fallback: ''),
+    final bill = widget.bill is Map<String, dynamic>
+        ? Map<String, dynamic>.from(widget.bill as Map<String, dynamic>)
+        : <String, dynamic>{};
+    final rawItems = bill['items'] is List
+        ? List<dynamic>.from(bill['items'])
+        : const <dynamic>[];
+
+    final branch = _asMap(bill['branch']);
+    final branchCompany = _asMap(branch?['company']);
+    final directCompany = _asMap(bill['company']);
+    final companyName = _textOf(
+      branchCompany?['name'] ??
+          directCompany?['name'] ??
+          bill['companyName'] ??
+          'BlackForest Cakes',
+      fallback: 'BlackForest Cakes',
     );
-    final date = createdAt?.toLocal();
-    final formattedDate = date == null
+    final branchName = _textOrEmpty(branch?['name'] ?? bill['branchName']);
+    final branchGst = _textOrEmpty(
+      branch?['gst'] ?? bill['branchGst'] ?? bill['gst'],
+    );
+    final branchMobile = _textOrEmpty(
+      branch?['phone'] ?? bill['branchMobile'] ?? bill['mobile'],
+    );
+
+    final updatedAtText = _textOrEmpty(bill['updatedAt']);
+    final createdAtText = _textOrEmpty(bill['createdAt']);
+    final parsedDate = DateTime.tryParse(
+      updatedAtText.isNotEmpty ? updatedAtText : createdAtText,
+    )?.toLocal();
+    final dateText = parsedDate == null
         ? 'N/A'
-        : "${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year.toString().substring(2)}";
-    final formattedTime = date == null
-        ? '--:--'
-        : "${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}";
-    final billNumber = _textOf(
-      bill['kotNumber']?.toString().split('-KOT').first ??
-          bill['invoiceNumber']?.toString().split('-').last ??
-          bill['invoiceNumber'],
+        : _formatDateForPrint(parsedDate);
+
+    final rawInvoiceNumber = _textOrEmpty(bill['invoiceNumber']);
+    final rawKotNumber = _textOrEmpty(bill['kotNumber']);
+    final billNo = rawInvoiceNumber.isNotEmpty
+        ? rawInvoiceNumber.split('-').last.trim()
+        : (rawKotNumber.isNotEmpty
+              ? rawKotNumber.split('-KOT').first.trim()
+              : _textOf(bill['id'] ?? bill['_id']));
+
+    final createdBy = _asMap(bill['createdBy']);
+    final assignedBy = _textOf(
+      createdBy?['name'] ?? bill['assignedBy'] ?? bill['waiterName'],
+      fallback: 'Unknown',
     );
-    final createdBy = _textOf(
-      bill['createdBy'] is Map
-          ? (bill['createdBy'] as Map)['name']
-          : bill['createdBy'],
+
+    final tableDetails = _asMap(bill['tableDetails']);
+    final tableInfo = _asMap(bill['table']);
+    final tableNumber = _textOrEmpty(
+      tableDetails?['tableNumber'] ??
+          tableInfo?['tableNumber'] ??
+          bill['tableNumber'] ??
+          bill['tName'],
     );
-    final paymentMethod = _textOf(bill['paymentMethod']).toUpperCase();
-    final rawCustomerDetails = bill['customerDetails'];
-    final Map? customerDetails = rawCustomerDetails is Map
-        ? rawCustomerDetails
-        : null;
-    final customerName = _textOf(customerDetails?['name']).toUpperCase();
-    final customerPhone = _textOf(
-      customerDetails?['phoneNumber'] ?? customerDetails?['phone'],
+    final sectionName = _textOrEmpty(tableDetails?['section']);
+    final tableLabel = tableNumber.isEmpty
+        ? ''
+        : (sectionName.isEmpty
+              ? 'Table :$tableNumber'
+              : 'Table :$tableNumber ($sectionName)');
+
+    final paymentMethod = _textOf(
+      bill['paymentMethod'],
+      fallback: 'N/A',
+    ).toUpperCase();
+
+    final customerDetails = _asMap(bill['customerDetails']);
+    final customerName = _textOrEmpty(customerDetails?['name']);
+    final customerPhone = _textOrEmpty(
+      customerDetails?['phone'] ?? customerDetails?['phoneNumber'],
     );
-    final totalQuantity = _totalQuantityOf(items);
-    final subtotal = _moneyOf(
-      bill['subTotal'] ??
-          bill['subtotal'] ??
-          bill['itemsTotal'] ??
-          bill['totalAmount'],
+
+    final lineItems = <Map<String, dynamic>>[];
+    var lineAmountTotal = 0.0;
+    var lineTaxTotal = 0.0;
+    for (final rawItem in rawItems) {
+      if (rawItem is! Map) continue;
+      final item = Map<String, dynamic>.from(rawItem);
+      if (_textOrEmpty(item['status']).toLowerCase() == 'cancelled') continue;
+
+      final product = _asMap(item['product']);
+      final itemName = _textOf(
+        item['name'] ?? product?['name'] ?? item['productName'],
+        fallback: 'ITEM',
+      ).toUpperCase();
+      final quantity = _qtyOf(item['quantity']);
+      if (quantity <= 0) continue;
+
+      var unitPrice = _positiveMoney(
+        item['effectiveUnitPrice'] ??
+            item['unitPrice'] ??
+            item['price'] ??
+            product?['price'] ??
+            product?['unitPrice'],
+      );
+
+      var amount = _positiveMoney(
+        item['lineTotal'] ??
+            item['subtotal'] ??
+            item['total'] ??
+            item['amount'],
+      );
+      if (amount <= 0 && unitPrice > 0) {
+        amount = unitPrice * quantity;
+      }
+      if (unitPrice <= 0 && quantity > 0 && amount > 0) {
+        unitPrice = amount / quantity;
+      }
+
+      var tax = _positiveMoney(
+        item['taxAmount'] ??
+            item['gstAmount'] ??
+            item['tax'] ??
+            item['lineTaxAmount'],
+      );
+      if (tax <= 0 && amount > 0) {
+        final gstPercent = _positiveMoney(
+          item['gstPercent'] ?? item['gst'] ?? item['taxPercent'],
+        );
+        if (gstPercent > 0) {
+          tax = (amount * gstPercent) / 100;
+        }
+      }
+
+      lineItems.add({
+        'name': itemName,
+        'qty': quantity,
+        'unitPrice': unitPrice,
+        'tax': tax,
+        'amount': amount,
+      });
+      lineAmountTotal += amount;
+      lineTaxTotal += tax;
+    }
+
+    var grossAmount = _positiveMoney(bill['grossAmount']);
+    var totalAmount = _positiveMoney(
+      bill['totalAmount'] ?? bill['finalAmount'] ?? bill['payableAmount'],
     );
-    final discountAmount = _moneyOrNull(
-      bill['discountAmount'] ?? bill['discount'],
+    if (totalAmount <= 0) totalAmount = lineAmountTotal;
+    if (grossAmount <= 0) {
+      grossAmount = _positiveMoney(
+        bill['subTotal'] ?? bill['subtotal'] ?? bill['itemsTotal'],
+      );
+    }
+    if (grossAmount <= 0) grossAmount = lineAmountTotal;
+
+    final billDiscount = (grossAmount - totalAmount)
+        .clamp(0.0, double.infinity)
+        .toDouble();
+    final customerOfferDiscount = _positiveMoney(bill['customerOfferDiscount']);
+    final totalPercentageOfferDiscount = _positiveMoney(
+      bill['totalPercentageOfferDiscount'],
     );
-    final taxAmount = _moneyOrNull(
+    final customerEntryPercentageOfferDiscount = _positiveMoney(
+      bill['customerEntryPercentageOfferDiscount'],
+    );
+    final explainedDiscount =
+        customerOfferDiscount +
+        totalPercentageOfferDiscount +
+        customerEntryPercentageOfferDiscount;
+    final otherDiscount = (billDiscount - explainedDiscount)
+        .clamp(0.0, double.infinity)
+        .toDouble();
+
+    var subTotalAmount = _positiveMoney(
+      bill['subTotal'] ?? bill['subtotal'] ?? bill['itemsTotal'],
+    );
+    if (subTotalAmount <= 0) {
+      subTotalAmount = billDiscount > 0
+          ? grossAmount - billDiscount
+          : lineAmountTotal;
+    }
+
+    var cgstAmount = _positiveMoney(bill['cgstAmount'] ?? bill['cgst']);
+    var sgstAmount = _positiveMoney(bill['sgstAmount'] ?? bill['sgst']);
+    final gstAmount = _positiveMoney(
       bill['gstAmount'] ?? bill['taxAmount'] ?? bill['tax'],
     );
-    final grandTotal = _moneyOf(bill['totalAmount']);
+    if (cgstAmount <= 0 && sgstAmount <= 0) {
+      if (gstAmount > 0) {
+        cgstAmount = gstAmount / 2;
+        sgstAmount = gstAmount / 2;
+      } else if (lineTaxTotal > 0) {
+        cgstAmount = lineTaxTotal / 2;
+        sgstAmount = lineTaxTotal / 2;
+      }
+    }
 
-    const printColor = Color(0xFF1F1B17);
-    const fadedPrintColor = Color(0xFF6C675E);
-    final basePrintStyle = TextStyle(
-      color: printColor,
-      fontSize: 12.6,
-      height: 1.28,
-      letterSpacing: 0.35,
-      fontFeatures: const [ui.FontFeature.tabularFigures()],
+    final storedRoundOff = _moneyOrNull(
+      bill['roundOffAmount'] ??
+          bill['roundOff'] ??
+          bill['roundoff'] ??
+          bill['round_off'] ??
+          bill['roundingOff'],
     );
-    final titlePrintStyle = basePrintStyle.copyWith(
-      fontSize: 19.5,
-      fontWeight: FontWeight.w900,
-      letterSpacing: 1.4,
+    final storedRoundedGrandTotal = _moneyOrNull(
+      bill['roundedGrandTotal'] ??
+          bill['roundedTotal'] ??
+          bill['grandTotal'] ??
+          bill['finalGrandTotal'],
     );
-    final captionPrintStyle = basePrintStyle.copyWith(
-      fontSize: 10.5,
-      color: fadedPrintColor,
-      fontWeight: FontWeight.w700,
-      letterSpacing: 1.6,
-    );
-    final labelPrintStyle = basePrintStyle.copyWith(
-      color: fadedPrintColor,
-      fontWeight: FontWeight.w700,
-      letterSpacing: 0.8,
+
+    final computedPreRoundTotal = () {
+      final summedTax = (cgstAmount + sgstAmount);
+      if (subTotalAmount > 0 && summedTax > 0) {
+        return subTotalAmount + summedTax;
+      }
+      if (subTotalAmount > 0 && gstAmount > 0) {
+        return subTotalAmount + gstAmount;
+      }
+      return totalAmount;
+    }();
+
+    final derivedRoundOff =
+        (computedPreRoundTotal.ceilToDouble() - computedPreRoundTotal)
+            .clamp(0.0, double.infinity)
+            .toDouble();
+
+    final rawRoundOff = storedRoundOff ?? derivedRoundOff;
+    final roundOffAmount = double.parse(rawRoundOff.toStringAsFixed(2));
+    final roundedGrandTotal =
+        storedRoundedGrandTotal ??
+        double.parse(
+          (computedPreRoundTotal + roundOffAmount).toStringAsFixed(2),
+        );
+    final roundOffSign = roundOffAmount >= 0 ? '+' : '-';
+
+    const printInk = Color(0xFF1F1B17);
+    const fadedPrintInk = Color(0xFF686158);
+    final basePrintStyle = const TextStyle(
+      color: printInk,
+      fontFamily: 'monospace',
+      fontSize: 12.2,
+      height: 1.3,
+      letterSpacing: 0.05,
     );
     final strongPrintStyle = basePrintStyle.copyWith(
-      fontWeight: FontWeight.w800,
+      fontWeight: FontWeight.w700,
     );
+    final titlePrintStyle = basePrintStyle.copyWith(
+      fontSize: 19,
+      fontWeight: FontWeight.w800,
+      letterSpacing: 0.4,
+    );
+    final fadedPrintStyle = basePrintStyle.copyWith(
+      color: fadedPrintInk,
+      fontWeight: FontWeight.w600,
+    );
+    const rightHeaderColumnWidth = 132.0;
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 26, 18, 28),
+      padding: const EdgeInsets.fromLTRB(16, 22, 16, 24),
       child: DefaultTextStyle(
         style: basePrintStyle,
         child: Column(
@@ -1238,295 +1321,204 @@ class _ReceiptContentState extends State<ReceiptContent> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              "BLACKFOREST CAKES",
+              companyName,
               textAlign: TextAlign.center,
               style: titlePrintStyle,
             ),
-            const SizedBox(height: 4),
-            Text(
-              "CUSTOMER HISTORY COPY",
-              textAlign: TextAlign.center,
-              style: captionPrintStyle,
+            if (branchName.isNotEmpty)
+              Text(
+                'Branch: $branchName',
+                textAlign: TextAlign.center,
+                style: fadedPrintStyle,
+              ),
+            if (branchGst.isNotEmpty)
+              Text(
+                'GST: $branchGst',
+                textAlign: TextAlign.center,
+                style: fadedPrintStyle,
+              ),
+            if (branchMobile.isNotEmpty)
+              Text(
+                'Mobile: $branchMobile',
+                textAlign: TextAlign.center,
+                style: fadedPrintStyle,
+              ),
+            const SizedBox(height: 8),
+            _separator('=', fadedPrintStyle),
+            const SizedBox(height: 5),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Date: $dateText',
+                      maxLines: 1,
+                      softWrap: false,
+                      style: strongPrintStyle,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: rightHeaderColumnWidth,
+                  child: Text(
+                    'BILL NO - $billNo',
+                    maxLines: 2,
+                    style: strongPrintStyle,
+                    textAlign: TextAlign.right,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 14),
-            const _ReceiptRule(),
-            const SizedBox(height: 12),
-            _buildMetaSection(
-              [
-                [
-                  MapEntry("BILL NO", billNumber),
-                  MapEntry("DATE", "$formattedDate  $formattedTime"),
-                ],
-                [
-                  MapEntry("STAFF", createdBy.toUpperCase()),
-                  MapEntry("PAY MODE", paymentMethod),
-                ],
-                [
-                  MapEntry("CUSTOMER NAME", customerName),
-                  MapEntry("PHONE NUMBER", customerPhone),
+            const SizedBox(height: 2),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Text(
+                    'Assigned by: $assignedBy',
+                    maxLines: 2,
+                    style: strongPrintStyle,
+                  ),
+                ),
+                if (tableLabel.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    width: rightHeaderColumnWidth,
+                    child: Text(
+                      tableLabel,
+                      maxLines: 2,
+                      style: strongPrintStyle,
+                      textAlign: TextAlign.right,
+                    ),
+                  ),
                 ],
               ],
-              labelPrintStyle,
-              strongPrintStyle,
             ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.05),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: Colors.black.withValues(alpha: 0.08)),
-              ),
-              child: Row(
-                children: [
-                  Expanded(child: Text("ITEM", style: labelPrintStyle)),
-                  SizedBox(
-                    width: 44,
-                    child: Text(
-                      "QTY",
-                      textAlign: TextAlign.right,
-                      style: labelPrintStyle,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  SizedBox(
-                    width: 68,
-                    child: Text(
-                      "AMOUNT",
-                      textAlign: TextAlign.right,
-                      style: labelPrintStyle,
-                    ),
-                  ),
-                ],
-              ),
+            const SizedBox(height: 6),
+            _separator('=', fadedPrintStyle),
+            const SizedBox(height: 6),
+            _itemRow(
+              item: 'Item',
+              qty: 'Qty',
+              price: 'Price',
+              tax: 'Tax',
+              amount: 'Amt',
+              style: strongPrintStyle,
+              header: true,
             ),
-            const SizedBox(height: 10),
-            if (items.isEmpty)
+            const SizedBox(height: 4),
+            _separator('-', fadedPrintStyle),
+            const SizedBox(height: 4),
+            if (lineItems.isEmpty)
               Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16),
+                padding: const EdgeInsets.symmetric(vertical: 6),
                 child: Text(
-                  "NO LINE ITEMS AVAILABLE",
+                  'NO ITEMS',
                   textAlign: TextAlign.center,
-                  style: captionPrintStyle,
+                  style: strongPrintStyle,
                 ),
               ),
-            ...items.map((item) {
-              final productId = (item['product'] is Map)
-                  ? item['product']['id']
-                  : item['product'];
-              Map<String, dynamic>? reviewItem;
-              if (_reviewData != null && _reviewData!['items'] != null) {
-                reviewItem = (_reviewData!['items'] as List).firstWhere(
-                  (ri) =>
-                      ((ri['product'] is Map)
-                          ? ri['product']['id']
-                          : ri['product']) ==
-                      productId,
-                  orElse: () => null,
-                );
-              }
-
-              final quantity = _formatQuantity(item['quantity']);
-              final unitPrice = _moneyOf(item['unitPrice']);
-              final itemTotal = _moneyOf(
-                item['subtotal'] ?? item['total'] ?? item['price'],
-              );
-              final itemName = _textOf(
-                item['name'],
-                fallback: 'ITEM',
-              ).toUpperCase();
-              final rating = reviewItem?['rating'];
-              final feedback = reviewItem?['feedback']?.toString().trim() ?? '';
-
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            itemName,
-                            style: strongPrintStyle.copyWith(fontSize: 13.2),
-                          ),
-                        ),
-                        SizedBox(
-                          width: 44,
-                          child: Text(
-                            quantity,
-                            textAlign: TextAlign.right,
-                            style: strongPrintStyle,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        SizedBox(
-                          width: 68,
-                          child: Text(
-                            itemTotal.toStringAsFixed(2),
-                            textAlign: TextAlign.right,
-                            style: strongPrintStyle,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      "$quantity x ${unitPrice.toStringAsFixed(2)}",
-                      style: captionPrintStyle.copyWith(
-                        fontSize: 11.2,
-                        letterSpacing: 0.8,
-                      ),
-                    ),
-                    if (rating is int) ...[
-                      const SizedBox(height: 6),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 7,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.38),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(
-                            color: Colors.black.withValues(alpha: 0.08),
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              "RATING  ${"★" * rating}${"☆" * (5 - rating)}",
-                              style: strongPrintStyle.copyWith(fontSize: 11.8),
-                            ),
-                            if (feedback.isNotEmpty) ...[
-                              const SizedBox(height: 4),
-                              Text(
-                                feedback.toUpperCase(),
-                                style: captionPrintStyle.copyWith(
-                                  fontSize: 11.2,
-                                  letterSpacing: 0.5,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ],
-                    Padding(
-                      padding: const EdgeInsets.only(top: 10),
-                      child: _ReceiptRule(
-                        color: Colors.black.withValues(alpha: 0.28),
-                        dashWidth: 6,
-                        gapWidth: 4,
-                      ),
-                    ),
-                  ],
-                ),
+            ...lineItems.map((entry) {
+              return _itemRow(
+                item: entry['name']?.toString() ?? 'ITEM',
+                qty: _formatQty(entry['qty'] as double),
+                price: _formatReceiptMoney(entry['unitPrice'] as double),
+                tax: _formatReceiptMoney(entry['tax'] as double),
+                amount: _formatReceiptMoney(entry['amount'] as double),
+                style: strongPrintStyle,
               );
             }),
-            if (_isLoadingReview)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    SizedBox(
-                      width: 12,
-                      height: 12,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 1.4,
-                        color: Colors.black.withValues(alpha: 0.65),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text("LOADING CUSTOMER RATING", style: captionPrintStyle),
-                  ],
-                ),
-              ),
-            const SizedBox(height: 4),
-            const _ReceiptRule(),
-            const SizedBox(height: 12),
-            _buildSummaryLine(
-              "LINE ITEMS",
-              items.length.toString(),
-              labelPrintStyle,
-              strongPrintStyle,
-            ),
-            _buildSummaryLine(
-              "TOTAL QTY",
-              totalQuantity.toString(),
-              labelPrintStyle,
-              strongPrintStyle,
-            ),
-            _buildSummaryLine(
-              "SUBTOTAL",
-              subtotal.toStringAsFixed(2),
-              labelPrintStyle,
-              strongPrintStyle,
-            ),
-            if (discountAmount != null)
-              _buildSummaryLine(
-                "DISCOUNT",
-                "-${discountAmount.toStringAsFixed(2)}",
-                labelPrintStyle,
-                strongPrintStyle,
-              ),
-            if (taxAmount != null)
-              _buildSummaryLine(
-                "TAX",
-                taxAmount.toStringAsFixed(2),
-                labelPrintStyle,
-                strongPrintStyle,
-              ),
             const SizedBox(height: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.07),
-                borderRadius: BorderRadius.circular(6),
+            _separator('-', fadedPrintStyle),
+            const SizedBox(height: 4),
+            if (billDiscount > 0.0001) ...[
+              _rightLine(
+                'GROSS RS ${grossAmount.toStringAsFixed(2)}',
+                strongPrintStyle,
               ),
-              child: Row(
-                children: [
-                  Expanded(
+              if (otherDiscount > 0.009)
+                _rightLine(
+                  'OTHER DISCOUNT RS ${otherDiscount.toStringAsFixed(2)}',
+                  strongPrintStyle,
+                ),
+              if (customerOfferDiscount > 0.0001)
+                _rightLine(
+                  'CREDIT OFFER RS ${customerOfferDiscount.toStringAsFixed(2)}',
+                  strongPrintStyle,
+                ),
+              if (totalPercentageOfferDiscount > 0.0001)
+                _rightLine(
+                  'PERCENT OFFER RS ${totalPercentageOfferDiscount.toStringAsFixed(2)}',
+                  strongPrintStyle,
+                ),
+              if (customerEntryPercentageOfferDiscount > 0.0001)
+                _rightLine(
+                  'ENTRY PERCENT OFFER RS ${customerEntryPercentageOfferDiscount.toStringAsFixed(2)}',
+                  strongPrintStyle,
+                ),
+            ],
+            _rightLine(
+              'SUB TOTAL RS ${subTotalAmount.toStringAsFixed(2)}',
+              strongPrintStyle,
+            ),
+            if (cgstAmount > 0.0001)
+              _rightLine(
+                'CGST RS ${cgstAmount.toStringAsFixed(2)}',
+                strongPrintStyle,
+              ),
+            if (sgstAmount > 0.0001)
+              _rightLine(
+                'SGST RS ${sgstAmount.toStringAsFixed(2)}',
+                strongPrintStyle,
+              ),
+            const SizedBox(height: 4),
+            _separator('-', fadedPrintStyle),
+            const SizedBox(height: 4),
+            _rightLine(
+              'Round off $roundOffSign${roundOffAmount.abs().toStringAsFixed(2)}',
+              strongPrintStyle,
+            ),
+            const SizedBox(height: 2),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'PAID BY: $paymentMethod',
+                    style: strongPrintStyle.copyWith(fontSize: 13.2),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerRight,
                     child: Text(
-                      "GRAND TOTAL",
+                      'GRAND TOTAL RS ${_formatReceiptMoney(roundedGrandTotal)}',
+                      maxLines: 1,
+                      softWrap: false,
+                      textAlign: TextAlign.right,
                       style: strongPrintStyle.copyWith(
-                        fontSize: 15.2,
-                        letterSpacing: 1.1,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
                   ),
-                  Text(
-                    "RS ${grandTotal.toStringAsFixed(2)}",
-                    style: strongPrintStyle.copyWith(
-                      fontSize: 16.8,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 0.8,
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-            const SizedBox(height: 14),
-            const _ReceiptRule(),
-            const SizedBox(height: 12),
-            Text(
-              "THANK YOU. VISIT AGAIN.",
-              textAlign: TextAlign.center,
-              style: strongPrintStyle.copyWith(
-                fontSize: 12.4,
-                letterSpacing: 1.1,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              "PRINTED FROM CUSTOMER HISTORY",
-              textAlign: TextAlign.center,
-              style: captionPrintStyle.copyWith(fontSize: 10.2),
-            ),
+            const SizedBox(height: 5),
+            _separator('=', fadedPrintStyle),
+            if (customerName.isNotEmpty || customerPhone.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              if (customerName.isNotEmpty)
+                Text('Customer: $customerName', style: strongPrintStyle),
+              if (customerPhone.isNotEmpty)
+                Text('Phone: $customerPhone', style: strongPrintStyle),
+            ],
           ],
         ),
       ),

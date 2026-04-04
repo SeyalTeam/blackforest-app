@@ -11,6 +11,7 @@ import 'package:blackforest_app/table_customer_details_visibility_service.dart';
 import 'package:blackforest_app/table.dart';
 import 'package:blackforest_app/app_http.dart' as http;
 import 'package:blackforest_app/kot_auto_print_service.dart';
+import 'package:blackforest_app/printer/thermal_print_prefs.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:flutter/services.dart';
@@ -403,6 +404,59 @@ class _CartPageState extends State<CartPage> {
       _customerDetailsVisibilityLoadFuture = null;
     });
     await _customerDetailsVisibilityLoadFuture;
+  }
+
+  Future<void> _openCustomerHistoryFromTableCart(
+    CartProvider cartProvider,
+  ) async {
+    await _ensureCustomerDetailsVisibilityConfigLoaded();
+    if (!mounted) return;
+
+    final showCustomerHistoryByCms =
+        _customerDetailsVisibilityConfig.showCustomerHistoryForTableOrders;
+    if (!showCustomerHistoryByCms) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Customer history is disabled for table orders'),
+        ),
+      );
+      return;
+    }
+
+    final customerPhone = (cartProvider.customerPhone ?? '').trim();
+    final normalizedPhone = customerPhone.replaceAll(RegExp(r'\D'), '');
+    if (normalizedPhone.length < 10) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Enter customer phone in customer details to view history',
+          ),
+        ),
+      );
+      return;
+    }
+
+    await showCustomerHistoryDialog(context, phoneNumber: customerPhone);
+  }
+
+  Future<void> _openCustomerHistoryFromBillingCart(
+    CartProvider cartProvider,
+  ) async {
+    if (!mounted) return;
+    final customerPhone = (cartProvider.customerPhone ?? '').trim();
+    final normalizedPhone = customerPhone.replaceAll(RegExp(r'\D'), '');
+    if (normalizedPhone.length < 10) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Enter customer phone in customer details to view history',
+          ),
+        ),
+      );
+      return;
+    }
+
+    await showCustomerHistoryDialog(context, phoneNumber: customerPhone);
   }
 
   Future<void> _fetchKitchensForMapping() async {
@@ -3035,8 +3089,22 @@ class _CartPageState extends State<CartPage> {
                 RegExp(r'\D'),
                 '',
               );
-              final canOpenHistoryFromHeader =
+              final lookupTotalBills =
+                  (customerLookupData?['totalBills'] as num?)?.toInt() ?? 0;
+              final lookupTotalAmount = readMoney(
+                customerLookupData?['totalAmount'],
+              );
+              final lookupCustomerName =
+                  customerLookupData?['name']?.toString().trim() ?? '';
+              final isExistingCustomerForHistory =
+                  customerLookupData != null &&
+                  customerLookupData?['isNewCustomer'] != true &&
+                  (lookupTotalBills > 0 ||
+                      lookupTotalAmount > 0 ||
+                      lookupCustomerName.isNotEmpty);
+              final canOpenCustomerHistory =
                   showCustomerHistoryByCms &&
+                  isExistingCustomerForHistory &&
                   !isDialogSubmitting &&
                   normalizedPhoneForHistory.length >= 10;
               Map<String, dynamic> buildDialogSubmitPayload(
@@ -3121,30 +3189,6 @@ class _CartPageState extends State<CartPage> {
                             children: [
                               Row(
                                 children: [
-                                  SizedBox(
-                                    width: 40,
-                                    height: 40,
-                                    child: IconButton(
-                                      tooltip: showCustomerHistoryByCms
-                                          ? 'Customer History'
-                                          : 'Customer History disabled',
-                                      padding: EdgeInsets.zero,
-                                      icon: Icon(
-                                        Icons.history_rounded,
-                                        color: canOpenHistoryFromHeader
-                                            ? const Color(0xFF4ADE80)
-                                            : Colors.white30,
-                                      ),
-                                      onPressed: canOpenHistoryFromHeader
-                                          ? () async {
-                                              await showCustomerHistoryDialog(
-                                                context,
-                                                phoneNumber: phoneCtrl.text,
-                                              );
-                                            }
-                                          : null,
-                                    ),
-                                  ),
                                   const Expanded(
                                     child: Center(
                                       child: Text(
@@ -3157,7 +3201,6 @@ class _CartPageState extends State<CartPage> {
                                       ),
                                     ),
                                   ),
-                                  const SizedBox(width: 40, height: 40),
                                 ],
                               ),
                               const SizedBox(height: 20),
@@ -3311,100 +3354,47 @@ class _CartPageState extends State<CartPage> {
                                   ),
                                 ),
                               ),
-                              if (phoneCtrl.text
-                                          .replaceAll(RegExp(r'\D'), '')
-                                          .length >=
-                                      10 &&
-                                  customerLookupData != null &&
-                                  (((customerLookupData!['totalBills'] as num?)
-                                                  ?.toInt() ??
-                                              0) >
-                                          0 ||
-                                      readMoney(
-                                            customerLookupData!['totalAmount'],
-                                          ) >
-                                          0)) ...[
+                              if (showCustomerHistoryByCms &&
+                                  isExistingCustomerForHistory &&
+                                  normalizedPhoneForHistory.length >= 10) ...[
                                 const SizedBox(height: 14),
-                                Container(
+                                SizedBox(
                                   width: double.infinity,
-                                  padding: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF121212),
-                                    borderRadius: BorderRadius.circular(10),
-                                    border: Border.all(
-                                      color: Colors.white.withValues(
-                                        alpha: 0.12,
+                                  child: ElevatedButton.icon(
+                                    onPressed: canOpenCustomerHistory
+                                        ? () async {
+                                            await showCustomerHistoryDialog(
+                                              context,
+                                              phoneNumber: phoneCtrl.text,
+                                            );
+                                          }
+                                        : null,
+                                    icon: const Icon(
+                                      Icons.history_rounded,
+                                      color: Colors.white,
+                                    ),
+                                    label: const Text(
+                                      'CUSTOMER HISTORY',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w800,
+                                        letterSpacing: 0.3,
                                       ),
                                     ),
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Customer: ${(() {
-                                          final lookupName = customerLookupData!['name']?.toString().trim() ?? '';
-                                          if (lookupName.isNotEmpty) {
-                                            return lookupName;
-                                          }
-                                          if (customerLookupData!['isNewCustomer'] == true) {
-                                            return 'New customer';
-                                          }
-                                          return 'N/A';
-                                        })()}',
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w600,
-                                        ),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF16A34A),
+                                      foregroundColor: Colors.white,
+                                      disabledBackgroundColor: const Color(
+                                        0xFF2C3A2F,
                                       ),
-                                      const SizedBox(height: 6),
-                                      Text.rich(
-                                        TextSpan(
-                                          children: [
-                                            const TextSpan(
-                                              text: 'History: ',
-                                              style: TextStyle(
-                                                color: Color(0xFF7DD3FC),
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                            TextSpan(
-                                              text:
-                                                  '${customerLookupData!['totalBills'] ?? 0} bills',
-                                              style: const TextStyle(
-                                                color: Color(0xFFFDE047),
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                            const TextSpan(
-                                              text: ' | ',
-                                              style: TextStyle(
-                                                color: Colors.white54,
-                                              ),
-                                            ),
-                                            TextSpan(
-                                              text:
-                                                  '₹${readMoney(customerLookupData!['totalAmount']).toStringAsFixed(2)}',
-                                              style: const TextStyle(
-                                                color: Color(0xFF4ADE80),
-                                                fontWeight: FontWeight.w700,
-                                              ),
-                                            ),
-                                            const TextSpan(
-                                              text: ' spent',
-                                              style: TextStyle(
-                                                color: Colors.white70,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        softWrap: false,
-                                        style: const TextStyle(fontSize: 16),
+                                      disabledForegroundColor: Colors.white54,
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 13,
                                       ),
-                                    ],
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ],
@@ -5119,8 +5109,9 @@ class _CartPageState extends State<CartPage> {
         final gstScale = grossAmount > 0.0001 && totalAmount < grossAmount
             ? (totalAmount / grossAmount).clamp(0.0, 1.0)
             : 1.0;
-        final cgstSgstBreakdown = <double, double>{};
-        double receiptTaxableSubtotalAccumulator = 0.0;
+        final cgstBreakdownPaise = <double, int>{};
+        final sgstBreakdownPaise = <double, int>{};
+        int receiptTaxableSubtotalPaise = 0;
         printer.row([
           PosColumn(
             text: 'Item',
@@ -5180,22 +5171,30 @@ class _CartPageState extends State<CartPage> {
             0.0,
             double.infinity,
           );
-          receiptTaxableSubtotalAccumulator += taxableAmount;
-          final lineTaxAmount = item.gstPercent > 0
-              ? taxableAmount * item.gstPercent / 100
-              : 0.0;
+          final taxablePaise = (taxableAmount * 100).round();
+          receiptTaxableSubtotalPaise += taxablePaise;
+          final lineTaxPaise = item.gstPercent > 0
+              ? ((taxablePaise * item.gstPercent) / 100).round()
+              : 0;
+          final lineTaxAmount = lineTaxPaise / 100.0;
           if (!item.isOfferFreeItem &&
               !item.isRandomCustomerOfferItem &&
               item.gstPercent > 0 &&
-              lineTaxAmount > 0.0001) {
+              lineTaxPaise > 0) {
             final halfRate = double.parse(
               (item.gstPercent / 2).toStringAsFixed(2),
             );
-            final halfTaxAmount = lineTaxAmount / 2;
-            cgstSgstBreakdown.update(
+            final cgstPaise = lineTaxPaise ~/ 2;
+            final sgstPaise = lineTaxPaise - cgstPaise;
+            cgstBreakdownPaise.update(
               halfRate,
-              (current) => current + halfTaxAmount,
-              ifAbsent: () => halfTaxAmount,
+              (current) => current + cgstPaise,
+              ifAbsent: () => cgstPaise,
+            );
+            sgstBreakdownPaise.update(
+              halfRate,
+              (current) => current + sgstPaise,
+              ifAbsent: () => sgstPaise,
             );
           }
           printer.row([
@@ -5240,34 +5239,26 @@ class _CartPageState extends State<CartPage> {
         final billDiscount = (grossAmount - totalAmount)
             .clamp(0.0, double.infinity)
             .toDouble();
-        final sortedHalfRates = cgstSgstBreakdown.keys.toList()..sort();
-        final receiptTaxableSubtotal = double.parse(
-          receiptTaxableSubtotalAccumulator.toStringAsFixed(2),
+        final totalCgstPaise = cgstBreakdownPaise.values.fold<int>(
+          0,
+          (sum, taxPart) => sum + taxPart,
         );
-        final receiptGstAmount = double.parse(
-          cgstSgstBreakdown.values
-              .fold<double>(0.0, (sum, taxPart) => sum + (taxPart * 2))
-              .toStringAsFixed(2),
+        final totalSgstPaise = sgstBreakdownPaise.values.fold<int>(
+          0,
+          (sum, taxPart) => sum + taxPart,
         );
-        final hasReceiptGst = receiptGstAmount > 0.0001;
-        final receiptSubTotalAmount = double.parse(
-          ((hasReceiptGst ? receiptTaxableSubtotal : totalAmount).clamp(
-            0.0,
-            double.infinity,
-          )).toStringAsFixed(2),
-        );
-        final receiptTotalAmount = double.parse(
-          ((receiptSubTotalAmount + receiptGstAmount).clamp(
-            0.0,
-            double.infinity,
-          )).toStringAsFixed(2),
-        );
-        final roundedGrandTotal = double.parse(
-          receiptTotalAmount.ceilToDouble().toStringAsFixed(2),
-        );
-        final roundOffAmount = double.parse(
-          (roundedGrandTotal - receiptTotalAmount).toStringAsFixed(2),
-        );
+        final receiptGstPaise = totalCgstPaise + totalSgstPaise;
+        final hasReceiptGst = receiptGstPaise > 0;
+        final receiptSubTotalPaise = hasReceiptGst
+            ? receiptTaxableSubtotalPaise
+            : (totalAmount * 100).round();
+        final receiptTotalPaise = receiptSubTotalPaise + receiptGstPaise;
+        final roundedGrandTotalPaise = ((receiptTotalPaise + 99) ~/ 100) * 100;
+        final roundOffPaise = roundedGrandTotalPaise - receiptTotalPaise;
+        final receiptGstAmount = receiptGstPaise / 100.0;
+        final receiptSubTotalAmount = receiptSubTotalPaise / 100.0;
+        final roundedGrandTotal = roundedGrandTotalPaise / 100.0;
+        final roundOffAmount = roundOffPaise / 100.0;
         final explainedBillDiscount =
             customerOfferDiscountFromServer +
             totalPercentageOfferDiscountFromServer +
@@ -5339,23 +5330,19 @@ class _CartPageState extends State<CartPage> {
               ),
             ),
           ]);
-          for (final halfRate in sortedHalfRates) {
-            final taxPartAmount = double.parse(
-              (cgstSgstBreakdown[halfRate] ?? 0.0).toStringAsFixed(2),
-            );
-            if (taxPartAmount <= 0.0001) continue;
+          if (totalCgstPaise > 0) {
             printer.row([
               PosColumn(
-                text:
-                    'CGST ${halfRate.toStringAsFixed(2)}% RS ${formatReceiptMoney(taxPartAmount)}',
+                text: 'CGST RS ${formatReceiptMoney(totalCgstPaise / 100.0)}',
                 width: 12,
                 styles: const PosStyles(align: PosAlign.right),
               ),
             ]);
+          }
+          if (totalSgstPaise > 0) {
             printer.row([
               PosColumn(
-                text:
-                    'SGST ${halfRate.toStringAsFixed(2)}% RS ${formatReceiptMoney(taxPartAmount)}',
+                text: 'SGST RS ${formatReceiptMoney(totalSgstPaise / 100.0)}',
                 width: 12,
                 styles: const PosStyles(align: PosAlign.right),
               ),
@@ -5450,6 +5437,8 @@ class _CartPageState extends State<CartPage> {
           );
           return dept != null && dept.isNotEmpty && dept != 'others';
         });
+        shouldShowFeedback =
+            shouldShowFeedback && isThermalReviewPrintEnabled(prefs);
         print('🧐 shouldShowFeedback: $shouldShowFeedback');
 
         if (shouldShowFeedback) {
@@ -6391,13 +6380,19 @@ class _CartPageState extends State<CartPage> {
                     if (tableName.isNotEmpty)
                       _KotMetaChip(
                         icon: Icons.table_restaurant_rounded,
-                        label: 'Table $tableName',
-                      ),
-                    if (sectionName.isNotEmpty)
+                        label: sectionName.isNotEmpty
+                            ? 'Table $tableName ($sectionName)'
+                            : 'Table $tableName',
+                      )
+                    else if (sectionName.isNotEmpty)
                       _KotMetaChip(
                         icon: Icons.place_outlined,
                         label: sectionName,
                       ),
+                    _KotHistoryButton(
+                      onPressed: () =>
+                          _openCustomerHistoryFromTableCart(cartProvider),
+                    ),
                     if (totalQuantity > 0)
                       _KotMetaChip(
                         icon: Icons.shopping_bag_outlined,
@@ -6819,6 +6814,11 @@ class _CartPageState extends State<CartPage> {
               0.0,
               double.infinity,
             );
+            final hasCustomerHistoryPhoneInBilling =
+                (cartProvider.customerPhone ?? '')
+                    .replaceAll(RegExp(r'\D'), '')
+                    .length >=
+                10;
 
             if (cartProvider.currentType == CartType.table) {
               return SafeArea(
@@ -6904,14 +6904,63 @@ class _CartPageState extends State<CartPage> {
                                     bottom: 12,
                                     top: 4,
                                   ),
-                                  child: Text(
-                                    "NEW ITEMS",
-                                    style: TextStyle(
-                                      color: _accent,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 12,
-                                      letterSpacing: 1.2,
-                                    ),
+                                  child: Row(
+                                    children: [
+                                      Text(
+                                        "NEW ITEMS",
+                                        style: TextStyle(
+                                          color: _accent,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                          letterSpacing: 1.2,
+                                        ),
+                                      ),
+                                      if (hasCustomerHistoryPhoneInBilling) ...[
+                                        const Spacer(),
+                                        Material(
+                                          color: const Color(0xFF16A34A),
+                                          borderRadius: BorderRadius.circular(
+                                            10,
+                                          ),
+                                          child: InkWell(
+                                            onTap: () =>
+                                                _openCustomerHistoryFromBillingCart(
+                                                  cartProvider,
+                                                ),
+                                            borderRadius: BorderRadius.circular(
+                                              10,
+                                            ),
+                                            child: const Padding(
+                                              padding: EdgeInsets.symmetric(
+                                                horizontal: 10,
+                                                vertical: 7,
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(
+                                                    Icons.history_rounded,
+                                                    size: 14,
+                                                    color: Colors.white,
+                                                  ),
+                                                  SizedBox(width: 6),
+                                                  Text(
+                                                    'CUSTOMER HISTORY',
+                                                    style: TextStyle(
+                                                      color: Colors.white,
+                                                      fontSize: 10.5,
+                                                      fontWeight:
+                                                          FontWeight.w800,
+                                                      letterSpacing: 0.2,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ],
                                   ),
                                 ),
                                 ...items.asMap().entries.map((entry) {
@@ -8142,6 +8191,43 @@ class _KotMetaChip extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _KotHistoryButton extends StatelessWidget {
+  final VoidCallback onPressed;
+
+  const _KotHistoryButton({required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFF16A34A),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(14),
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.history_rounded, size: 16, color: Colors.white),
+              SizedBox(width: 8),
+              Text(
+                'CUSTOMER HISTORY',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.3,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

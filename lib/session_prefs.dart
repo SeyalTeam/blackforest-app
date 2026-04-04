@@ -1,6 +1,7 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/table_customer_details_visibility_service.dart';
 import 'package:blackforest_app/printer/bluetooth_printer_prefs.dart';
+import 'package:blackforest_app/printer/thermal_print_prefs.dart';
 
 const String _favoriteCategoryPrefix = 'favorite_category_ids_';
 
@@ -13,7 +14,9 @@ Future<void> clearSessionPreservingFavorites(SharedPreferences prefs) async {
         key == btPrinterNameKey ||
         key == btPrinterUseBillingKey ||
         key == btPrinterUseKotKey ||
+        key == thermalReviewPrintEnabledKey ||
         key == 'printerPort' ||
+        key == 'branchIp' ||
         key == 'printerIp') {
       backup[key] = prefs.get(key);
     }

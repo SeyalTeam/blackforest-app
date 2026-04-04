@@ -835,6 +835,9 @@ class _LoginPageState extends State<LoginPage> {
         await prefs.setString("email", finalEmail);
         if (branchId != null) await prefs.setString("branchId", branchId);
         if (branchName != null) await prefs.setString("branchName", branchName);
+        if (branchIpRange != null) {
+          await prefs.setString("branchIp", branchIpRange);
+        }
         if (deviceIp != null) await prefs.setString("lastLoginIp", deviceIp);
         if (printerIp != null) await prefs.setString("printerIp", printerIp);
         if (user['id'] != null) {

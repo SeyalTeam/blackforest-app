@@ -11,6 +11,7 @@ import 'package:intl/intl.dart';
 import 'package:qr/qr.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/printer/unified_printer.dart';
+import 'package:blackforest_app/printer/thermal_print_prefs.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 
 @pragma('vm:entry-point')
@@ -40,6 +41,8 @@ class KotAutoPrintService {
   static const String _apiBase = 'https://blackforest.vseyal.com/api';
   static const Duration _configCacheTtl = Duration(minutes: 2);
   static const int _maxRememberedItems = 1200;
+  static const String _autoCompletedReceiptPrefKey =
+      'auto_completed_bill_receipt_enabled';
 
   static bool _isSyncing = false;
   static _KotPrintConfig? _cachedConfig;
@@ -425,6 +428,8 @@ class KotAutoPrintService {
     }
 
     final config = await _loadConfig(token: token, branchId: branchId);
+    final shouldAutoPrintCompletedReceipt =
+        prefs.getBool(_autoCompletedReceiptPrefKey) ?? false;
     var didPersist = false;
     for (final bill in completedBills) {
       final billId = _toText(bill['id']);
@@ -444,13 +449,15 @@ class KotAutoPrintService {
           isSuccess: true,
         ),
       );
-      alerts.add(
-        await _printCompletedBillReceipt(
-          prefs: prefs,
-          config: config,
-          bill: bill,
-        ),
-      );
+      if (shouldAutoPrintCompletedReceipt) {
+        alerts.add(
+          await _printCompletedBillReceipt(
+            prefs: prefs,
+            config: config,
+            bill: bill,
+          ),
+        );
+      }
     }
 
     if (didPersist) {
@@ -902,6 +909,8 @@ class KotAutoPrintService {
         dept = dept.trim().toLowerCase();
         return dept.isNotEmpty && dept != 'others';
       });
+      shouldShowFeedback =
+          shouldShowFeedback && isThermalReviewPrintEnabled(prefs);
 
       if (shouldShowFeedback) {
         try {

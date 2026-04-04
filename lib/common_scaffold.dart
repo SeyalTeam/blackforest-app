@@ -406,6 +406,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
         'email',
         'branchId',
         'branchName',
+        'branchIp',
         'lastLoginIp',
         'printerIp',
         'user_id',

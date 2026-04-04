@@ -160,17 +160,11 @@ class _CategoriesPageState extends State<CategoriesPage> {
     bool isDialogSubmitting = false;
     bool didCloseDialog = false;
     int lookupSequence = 0;
-    Map<String, dynamic>? customerLookupData;
     bool isLookupInProgress = false;
     String? lookupError;
+    Map<String, dynamic>? customerLookupData;
 
     String normalizePhone(String value) => value.replaceAll(RegExp(r'\D'), '');
-
-    double readMoney(dynamic value) {
-      if (value is num) return value.toDouble();
-      if (value is String) return double.tryParse(value) ?? 0.0;
-      return 0.0;
-    }
 
     Future<void> lookupCustomerPreview(
       String normalizedPhone,
@@ -263,15 +257,14 @@ class _CategoriesPageState extends State<CategoriesPage> {
             }
 
             final normalizedPhoneForHistory = normalizePhone(phoneCtrl.text);
-            final canOpenHistoryFromHeader =
+            final isExistingCustomerForHistory =
+                customerLookupData != null &&
+                customerLookupData?['isNewCustomer'] != true;
+            final canOpenCustomerHistory =
                 showHistory &&
+                isExistingCustomerForHistory &&
                 !isDialogSubmitting &&
                 normalizedPhoneForHistory.length >= 10;
-            final lookupName =
-                customerLookupData?['name']?.toString().trim() ?? '';
-            final historyBills =
-                (customerLookupData?['totalBills'] as num?)?.toInt() ?? 0;
-            final historyAmount = readMoney(customerLookupData?['totalAmount']);
 
             return Dialog(
               backgroundColor: const Color(0xFF1E1E1E),
@@ -291,30 +284,6 @@ class _CategoriesPageState extends State<CategoriesPage> {
                     children: [
                       Row(
                         children: [
-                          SizedBox(
-                            width: 40,
-                            height: 40,
-                            child: IconButton(
-                              tooltip: showHistory
-                                  ? 'Customer History'
-                                  : 'Customer History disabled',
-                              padding: EdgeInsets.zero,
-                              icon: Icon(
-                                Icons.history_rounded,
-                                color: canOpenHistoryFromHeader
-                                    ? const Color(0xFF4ADE80)
-                                    : Colors.white30,
-                              ),
-                              onPressed: canOpenHistoryFromHeader
-                                  ? () async {
-                                      await showCustomerHistoryDialog(
-                                        dialogContext,
-                                        phoneNumber: phoneCtrl.text,
-                                      );
-                                    }
-                                  : null,
-                            ),
-                          ),
                           const Expanded(
                             child: Center(
                               child: Text(
@@ -327,7 +296,6 @@ class _CategoriesPageState extends State<CategoriesPage> {
                               ),
                             ),
                           ),
-                          const SizedBox(width: 40, height: 40),
                         ],
                       ),
                       const SizedBox(height: 20),
@@ -459,81 +427,42 @@ class _CategoriesPageState extends State<CategoriesPage> {
                           ),
                         ),
                       ),
-                      if (normalizedPhoneForHistory.length >= 10 &&
-                          customerLookupData != null) ...[
+                      if (showHistory &&
+                          isExistingCustomerForHistory &&
+                          normalizedPhoneForHistory.length >= 10) ...[
                         const SizedBox(height: 14),
-                        GestureDetector(
-                          onTap: (!showHistory || isDialogSubmitting)
-                              ? null
-                              : () async {
-                                  await showCustomerHistoryDialog(
-                                    dialogContext,
-                                    phoneNumber: phoneCtrl.text,
-                                  );
-                                },
-                          child: Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF121212),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(
-                                color: Colors.white.withValues(alpha: 0.12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: canOpenCustomerHistory
+                                ? () async {
+                                    await showCustomerHistoryDialog(
+                                      dialogContext,
+                                      phoneNumber: phoneCtrl.text,
+                                    );
+                                  }
+                                : null,
+                            icon: const Icon(
+                              Icons.history_rounded,
+                              color: Colors.white,
+                            ),
+                            label: const Text(
+                              'CUSTOMER HISTORY',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                                letterSpacing: 0.3,
                               ),
                             ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Customer: ${lookupName.isNotEmpty ? lookupName : (customerLookupData!['isNewCustomer'] == true ? 'New customer' : 'N/A')}',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Text.rich(
-                                  TextSpan(
-                                    children: [
-                                      const TextSpan(
-                                        text: 'History: ',
-                                        style: TextStyle(
-                                          color: Color(0xFF7DD3FC),
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                      TextSpan(
-                                        text: '$historyBills bills',
-                                        style: const TextStyle(
-                                          color: Color(0xFFFDE047),
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                      const TextSpan(
-                                        text: ' | ',
-                                        style: TextStyle(color: Colors.white54),
-                                      ),
-                                      TextSpan(
-                                        text:
-                                            '₹${historyAmount.toStringAsFixed(2)}',
-                                        style: const TextStyle(
-                                          color: Color(0xFF4ADE80),
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                      const TextSpan(
-                                        text: ' spent',
-                                        style: TextStyle(color: Colors.white70),
-                                      ),
-                                    ],
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  softWrap: false,
-                                  style: const TextStyle(fontSize: 16),
-                                ),
-                              ],
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF16A34A),
+                              foregroundColor: Colors.white,
+                              disabledBackgroundColor: const Color(0xFF2C3A2F),
+                              disabledForegroundColor: Colors.white54,
+                              padding: const EdgeInsets.symmetric(vertical: 13),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
                             ),
                           ),
                         ),

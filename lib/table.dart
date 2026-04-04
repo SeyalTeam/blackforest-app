@@ -1246,8 +1246,22 @@ class _TablePageState extends State<TablePage> {
                 ),
             ];
             final normalizedPhoneForHistory = normalizePhone(phoneCtrl.text);
-            final canOpenHistoryFromHeader =
+            final lookupTotalBills =
+                (customerLookupData?['totalBills'] as num?)?.toInt() ?? 0;
+            final lookupTotalAmount = readMoney(
+              customerLookupData?['totalAmount'],
+            );
+            final lookupCustomerName =
+                customerLookupData?['name']?.toString().trim() ?? '';
+            final isExistingCustomerForHistory =
+                customerLookupData != null &&
+                customerLookupData?['isNewCustomer'] != true &&
+                (lookupTotalBills > 0 ||
+                    lookupTotalAmount > 0 ||
+                    lookupCustomerName.isNotEmpty);
+            final canOpenCustomerHistory =
                 showHistory &&
+                isExistingCustomerForHistory &&
                 !isDialogSubmitting &&
                 normalizedPhoneForHistory.length >= 10;
 
@@ -1273,30 +1287,6 @@ class _TablePageState extends State<TablePage> {
                         children: [
                           Row(
                             children: [
-                              SizedBox(
-                                width: 40,
-                                height: 40,
-                                child: IconButton(
-                                  tooltip: showHistory
-                                      ? 'Customer History'
-                                      : 'Customer History disabled',
-                                  padding: EdgeInsets.zero,
-                                  icon: Icon(
-                                    Icons.history_rounded,
-                                    color: canOpenHistoryFromHeader
-                                        ? const Color(0xFF4ADE80)
-                                        : Colors.white30,
-                                  ),
-                                  onPressed: canOpenHistoryFromHeader
-                                      ? () async {
-                                          await showCustomerHistoryDialog(
-                                            dialogContext,
-                                            phoneNumber: phoneCtrl.text,
-                                          );
-                                        }
-                                      : null,
-                                ),
-                              ),
                               const Expanded(
                                 child: Center(
                                   child: Text(
@@ -1309,7 +1299,6 @@ class _TablePageState extends State<TablePage> {
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: 40, height: 40),
                             ],
                           ),
                           const SizedBox(height: 20),
@@ -1604,7 +1593,7 @@ class _TablePageState extends State<TablePage> {
                               ),
                             ),
                           ),
-                          if (enableCustomerLookup && isLookupInProgress) ...[
+                          if (isLookupInProgress) ...[
                             const SizedBox(height: 10),
                             const Center(
                               child: SizedBox(
@@ -1667,76 +1656,47 @@ class _TablePageState extends State<TablePage> {
                               ),
                             ),
                           ),
-                          if (normalizePhone(phoneCtrl.text).length >= 10 &&
-                              customerLookupData != null &&
-                              (((customerLookupData!['totalBills'] as num?)
-                                              ?.toInt() ??
-                                          0) >
-                                      0 ||
-                                  readMoney(
-                                        customerLookupData!['totalAmount'],
-                                      ) >
-                                      0)) ...[
+                          if (showHistory &&
+                              isExistingCustomerForHistory &&
+                              normalizedPhoneForHistory.length >= 10) ...[
                             const SizedBox(height: 14),
-                            Container(
+                            SizedBox(
                               width: double.infinity,
-                              padding: const EdgeInsets.all(12),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF121212),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.12),
+                              child: ElevatedButton.icon(
+                                onPressed: canOpenCustomerHistory
+                                    ? () async {
+                                        await showCustomerHistoryDialog(
+                                          dialogContext,
+                                          phoneNumber: phoneCtrl.text,
+                                        );
+                                      }
+                                    : null,
+                                icon: const Icon(
+                                  Icons.history_rounded,
+                                  color: Colors.white,
                                 ),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text.rich(
-                                    TextSpan(
-                                      children: [
-                                        const TextSpan(
-                                          text: 'History: ',
-                                          style: TextStyle(
-                                            color: Color(0xFF7DD3FC),
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                        TextSpan(
-                                          text:
-                                              '${customerLookupData!['totalBills'] ?? 0} bills',
-                                          style: const TextStyle(
-                                            color: Color(0xFFFDE047),
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                        const TextSpan(
-                                          text: ' | ',
-                                          style: TextStyle(
-                                            color: Colors.white54,
-                                          ),
-                                        ),
-                                        TextSpan(
-                                          text:
-                                              '₹${readMoney(customerLookupData!['totalAmount']).toStringAsFixed(2)}',
-                                          style: const TextStyle(
-                                            color: Color(0xFF4ADE80),
-                                            fontWeight: FontWeight.w700,
-                                          ),
-                                        ),
-                                        const TextSpan(
-                                          text: ' spent',
-                                          style: TextStyle(
-                                            color: Colors.white70,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    softWrap: false,
-                                    style: const TextStyle(fontSize: 16),
+                                label: const Text(
+                                  'CUSTOMER HISTORY',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 0.3,
                                   ),
-                                ],
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF16A34A),
+                                  foregroundColor: Colors.white,
+                                  disabledBackgroundColor: const Color(
+                                    0xFF2C3A2F,
+                                  ),
+                                  disabledForegroundColor: Colors.white54,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 13,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
                               ),
                             ),
                           ],
