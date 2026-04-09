@@ -5176,7 +5176,9 @@ class _CartPageState extends State<CartPage> {
           final lineTaxPaise = item.gstPercent > 0
               ? ((taxablePaise * item.gstPercent) / 100).round()
               : 0;
-          final lineTaxAmount = lineTaxPaise / 100.0;
+          final taxPercentToPrint = item.gstPercent > 0
+              ? '${formatReceiptMoney(item.gstPercent)}%'
+              : '-';
           if (!item.isOfferFreeItem &&
               !item.isRandomCustomerOfferItem &&
               item.gstPercent > 0 &&
@@ -5206,7 +5208,7 @@ class _CartPageState extends State<CartPage> {
               styles: itemRowRightStyles,
             ),
             PosColumn(
-              text: formatReceiptMoney(lineTaxAmount),
+              text: taxPercentToPrint,
               width: 2,
               styles: itemRowRightStyles,
             ),
