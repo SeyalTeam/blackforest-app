@@ -62,6 +62,7 @@ class CartItem {
     double quantity, {
     double? branchPrice,
     String? branchId,
+    String? tableSection,
   }) {
     String? imageUrl;
     if (product['images'] != null &&
@@ -76,7 +77,11 @@ class CartItem {
 
     double price =
         branchPrice ??
-        (product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0);
+        resolveProductPrice(
+          product,
+          branchId: branchId,
+          tableSection: tableSection,
+        );
     final gstPercent = extractEffectiveGstPercent(product, branchId: branchId);
 
     // ✅ read unit from product (default to 'pcs' if missing)
@@ -322,6 +327,206 @@ class CartItem {
       final id = map['id'] ?? map['_id'] ?? map[r'$oid'];
       if (id is String) return id.trim().isEmpty ? null : id.trim();
       if (id is num) return id.toString();
+    }
+    return null;
+  }
+
+  static double resolveProductPrice(
+    dynamic product, {
+    String? branchId,
+    String? tableSection,
+  }) {
+    if (product is! Map) return 0.0;
+    final productMap = Map<String, dynamic>.from(product);
+    final normalizedBranchId = branchId?.trim();
+    final defaultPriceDetails = _toDynamicMap(
+      productMap['defaultPriceDetails'],
+    );
+    final branchPriceDetails = _extractBranchOverridePriceDetails(
+      productMap,
+      branchId: normalizedBranchId,
+    );
+
+    final sectionSpecificPrice = _resolveSectionSpecificPrice(
+      sectionName: tableSection,
+      branchPriceDetails: branchPriceDetails,
+      defaultPriceDetails: defaultPriceDetails,
+    );
+    if (sectionSpecificPrice != null) {
+      return sectionSpecificPrice;
+    }
+
+    final branchBasePrice = _readFirstNonNegativePrice(
+      branchPriceDetails,
+      const <String>['price', 'rate'],
+    );
+    if (branchBasePrice != null) {
+      return branchBasePrice;
+    }
+
+    final defaultBasePrice = _readFirstNonNegativePrice(
+      defaultPriceDetails,
+      const <String>['price', 'rate'],
+    );
+    if (defaultBasePrice != null) {
+      return defaultBasePrice;
+    }
+
+    return _toNonNegativeDouble(productMap['price']);
+  }
+
+  static double? _resolveSectionSpecificPrice({
+    required String? sectionName,
+    required Map<String, dynamic>? branchPriceDetails,
+    required Map<String, dynamic>? defaultPriceDetails,
+  }) {
+    final sectionPriceMode = _sectionPriceMode(sectionName);
+    if (sectionPriceMode == null) {
+      return null;
+    }
+
+    final candidatePriceDetails = <Map<String, dynamic>?>[
+      branchPriceDetails,
+      defaultPriceDetails,
+    ];
+    for (final details in candidatePriceDetails) {
+      final sectionPrice = _sectionPriceFromDetails(
+        details,
+        sectionPriceMode: sectionPriceMode,
+      );
+      if (sectionPrice != null) {
+        return sectionPrice;
+      }
+    }
+    return null;
+  }
+
+  static String? _sectionPriceMode(String? sectionName) {
+    final raw = sectionName?.trim().toLowerCase() ?? '';
+    if (raw.isEmpty) return null;
+
+    final compact = raw.replaceAll(RegExp(r'[^a-z0-9]'), '');
+    if (compact.contains('nonac') || compact.contains('nonaircondition')) {
+      return 'non_ac';
+    }
+    if (RegExp(r'\bnon[\s\-/]*a/?c\b').hasMatch(raw)) {
+      return 'non_ac';
+    }
+
+    if (compact == 'ac' ||
+        raw.contains('air conditioned') ||
+        raw.contains('airconditioned') ||
+        RegExp(r'\ba/?c\b').hasMatch(raw)) {
+      return 'ac';
+    }
+
+    return null;
+  }
+
+  static double? _sectionPriceFromDetails(
+    Map<String, dynamic>? details, {
+    required String sectionPriceMode,
+  }) {
+    if (details == null) return null;
+
+    final enableKeys = sectionPriceMode == 'ac'
+        ? const <String>['enableAC', 'enableAc']
+        : const <String>['enableNonAC', 'enableNonAc'];
+    final priceKeys = sectionPriceMode == 'ac'
+        ? const <String>['acPrice', 'ac_rate', 'acRate']
+        : const <String>['nonACPrice', 'nonAcPrice', 'non_ac_price'];
+
+    final enabled = _readFirstBool(details, enableKeys);
+    if (enabled == false) {
+      return null;
+    }
+
+    return _readFirstNonNegativePrice(details, priceKeys);
+  }
+
+  static Map<String, dynamic>? _extractBranchOverridePriceDetails(
+    Map<String, dynamic> productMap, {
+    String? branchId,
+  }) {
+    if (branchId == null || branchId.isEmpty) {
+      return null;
+    }
+    final branchOverrides = productMap['branchOverrides'];
+    if (branchOverrides is! List) {
+      return null;
+    }
+
+    for (final rawOverride in branchOverrides) {
+      final override = _toDynamicMap(rawOverride);
+      if (override == null) continue;
+      final overrideBranchId = extractRefId(override['branch']);
+      if (overrideBranchId == branchId) {
+        return override;
+      }
+    }
+    return null;
+  }
+
+  static Map<String, dynamic>? _toDynamicMap(dynamic value) {
+    if (value is! Map) return null;
+    return Map<String, dynamic>.from(value);
+  }
+
+  static bool? _readFirstBool(Map<String, dynamic> map, List<String> keys) {
+    for (final key in keys) {
+      if (!map.containsKey(key)) continue;
+      return _toBool(map[key]);
+    }
+    return null;
+  }
+
+  static bool? _toBool(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final normalized = value.trim().toLowerCase();
+      if (normalized == 'true' ||
+          normalized == '1' ||
+          normalized == 'yes' ||
+          normalized == 'y') {
+        return true;
+      }
+      if (normalized == 'false' ||
+          normalized == '0' ||
+          normalized == 'no' ||
+          normalized == 'n') {
+        return false;
+      }
+    }
+    return null;
+  }
+
+  static double? _readFirstNonNegativePrice(
+    Map<String, dynamic>? map,
+    List<String> keys,
+  ) {
+    if (map == null) return null;
+    for (final key in keys) {
+      if (!map.containsKey(key)) continue;
+      final parsed = _toNullableDouble(map[key]);
+      if (parsed == null || parsed < 0) continue;
+      return parsed;
+    }
+    return null;
+  }
+
+  static double _toNonNegativeDouble(dynamic value) {
+    final parsed = _toNullableDouble(value);
+    if (parsed == null || parsed < 0) return 0;
+    return parsed;
+  }
+
+  static double? _toNullableDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    if (value is String) {
+      final normalized = value.trim();
+      if (normalized.isEmpty) return null;
+      return double.tryParse(normalized);
     }
     return null;
   }
@@ -1164,6 +1369,22 @@ class CartProvider extends ChangeNotifier {
           return 0.0;
         }
 
+        double? readOptionalMoney(dynamic source, List<String> keys) {
+          if (source is! Map) return null;
+          final map = Map<String, dynamic>.from(source);
+          for (final key in keys) {
+            if (!map.containsKey(key)) continue;
+            final value = map[key];
+            if (value == null) continue;
+            if (value is num) return value.toDouble();
+            if (value is String) {
+              final parsed = double.tryParse(value);
+              if (parsed != null) return parsed;
+            }
+          }
+          return null;
+        }
+
         bool changed = false;
         final Set<int> matchedIndices = {};
 
@@ -1204,12 +1425,6 @@ class CartProvider extends ChangeNotifier {
                     ? 0.0
                     : toSafeDouble(sItem['effectiveUnitPrice']))
               : null;
-          final hasSubtotal = sItem is Map && sItem.containsKey('subtotal');
-          final sSubtotal = sIsRandomCustomerOfferItem
-              ? 0.0
-              : hasSubtotal
-              ? toSafeDouble(sItem['subtotal'])
-              : null;
           final sQuantity = sIsRandomCustomerOfferItem
               ? 1.0
               : toSafeDouble(sItem['quantity']);
@@ -1220,6 +1435,42 @@ class CartProvider extends ChangeNotifier {
                       sItem['unitPrice'] ??
                       sItem['price'],
                 );
+          final hasSubtotal = sItem is Map && sItem.containsKey('subtotal');
+          final sExpectedLineTotalFromPrice = (sPrice * sQuantity) < 0
+              ? 0.0
+              : (sPrice * sQuantity);
+          final sExplicitLineTotal = readOptionalMoney(sItem, [
+            'finalLineTotal',
+            'lineTotalInclusive',
+            'lineTotal',
+            'finalAmount',
+            'amount',
+          ]);
+          final sSubtotalValue = hasSubtotal
+              ? toSafeDouble(sItem['subtotal'])
+              : null;
+          final sTaxableValue = readOptionalMoney(sItem, [
+            'taxableAmount',
+            'taxable',
+            'subTotal',
+            'sub_total',
+          ]);
+          final sGstValue = readOptionalMoney(sItem, [
+            'gstAmount',
+            'taxAmount',
+            'tax',
+          ]);
+          final sSubtotal = sIsRandomCustomerOfferItem
+              ? 0.0
+              : sExplicitLineTotal != null && sExplicitLineTotal > 0
+              ? sExplicitLineTotal
+              : sTaxableValue != null && sGstValue != null
+              ? sTaxableValue + sGstValue
+              : sSubtotalValue != null &&
+                    sExpectedLineTotalFromPrice > 0 &&
+                    sSubtotalValue > sExpectedLineTotalFromPrice + 0.009
+              ? sExpectedLineTotalFromPrice
+              : sSubtotalValue;
           final sGstPercent = CartItem.extractEffectiveGstPercent(
             sItem['product'],
             branchId: _branchId,
@@ -1486,6 +1737,23 @@ class CartProvider extends ChangeNotifier {
         return 0.0;
       }
 
+      double? readOptionalMoney(
+        Map<String, dynamic> source,
+        List<String> keys,
+      ) {
+        for (final key in keys) {
+          if (!source.containsKey(key)) continue;
+          final value = source[key];
+          if (value == null) continue;
+          if (value is num) return value.toDouble();
+          if (value is String) {
+            final parsed = double.tryParse(value);
+            if (parsed != null) return parsed;
+          }
+        }
+        return null;
+      }
+
       List<CartItem> recalledItems = (bill['items'] as List)
           .where((item) => item['status']?.toString() != 'cancelled')
           .map((item) {
@@ -1535,11 +1803,6 @@ class CartProvider extends ChangeNotifier {
             final isReadOnlyOfferItem =
                 isOfferFreeItem || isRandomCustomerOfferItem;
             final hasSubtotal = itemMap.containsKey('subtotal');
-            final lineSubtotal = isRandomCustomerOfferItem
-                ? 0.0
-                : hasSubtotal
-                ? toSafeDouble(itemMap['subtotal'])
-                : null;
             final productGstPercent = CartItem.extractEffectiveGstPercent(
               prod,
               branchId: _branchId,
@@ -1555,23 +1818,60 @@ class CartProvider extends ChangeNotifier {
                       ? 0.0
                       : toSafeDouble(itemMap['effectiveUnitPrice']))
                 : null;
+            final quantity = isRandomCustomerOfferItem
+                ? 1.0
+                : toSafeDouble(item['quantity']);
+            final unitPrice = isReadOnlyOfferItem
+                ? 0.0
+                : toSafeDouble(
+                    itemMap['effectiveUnitPrice'] ??
+                        itemMap['unitPrice'] ??
+                        itemMap['price'],
+                  );
+            final expectedLineTotalFromPrice = (unitPrice * quantity) < 0
+                ? 0.0
+                : (unitPrice * quantity);
+            final explicitLineTotal = readOptionalMoney(itemMap, [
+              'finalLineTotal',
+              'lineTotalInclusive',
+              'lineTotal',
+              'finalAmount',
+              'amount',
+            ]);
+            final subtotalValue = hasSubtotal
+                ? toSafeDouble(itemMap['subtotal'])
+                : null;
+            final taxableValue = readOptionalMoney(itemMap, [
+              'taxableAmount',
+              'taxable',
+              'subTotal',
+              'sub_total',
+            ]);
+            final gstValue = readOptionalMoney(itemMap, [
+              'gstAmount',
+              'taxAmount',
+              'tax',
+            ]);
+            final lineSubtotal = isRandomCustomerOfferItem
+                ? 0.0
+                : explicitLineTotal != null && explicitLineTotal > 0
+                ? explicitLineTotal
+                : taxableValue != null && gstValue != null
+                ? taxableValue + gstValue
+                : subtotalValue != null &&
+                      expectedLineTotalFromPrice > 0 &&
+                      subtotalValue > expectedLineTotalFromPrice + 0.009
+                ? expectedLineTotalFromPrice
+                : subtotalValue;
 
             return CartItem(
               id: pid,
               billingItemId: item['id']?.toString(),
               name: item['name'] ?? 'Unknown',
-              price: isReadOnlyOfferItem
-                  ? 0.0
-                  : toSafeDouble(
-                      itemMap['effectiveUnitPrice'] ??
-                          itemMap['unitPrice'] ??
-                          itemMap['price'],
-                    ),
+              price: unitPrice,
               gstPercent: gstPercent,
               imageUrl: imageUrl,
-              quantity: isRandomCustomerOfferItem
-                  ? 1.0
-                  : toSafeDouble(item['quantity']),
+              quantity: quantity,
               unit: item['unit']?.toString(),
               department: dept,
               categoryId: cid,
@@ -1638,6 +1938,9 @@ class CartProvider extends ChangeNotifier {
           isTableOrder ??
           (hasRequestTableDetails ||
               (_currentType == CartType.table && hasLocalTableDetails));
+      final effectiveTableSectionForPricing = effectiveIsTableOrder
+          ? (normalizedSection.isNotEmpty ? normalizedSection : selectedSection)
+          : null;
 
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
@@ -2249,28 +2552,11 @@ class CartProvider extends ChangeNotifier {
 
       double relationPrice(dynamic value) {
         if (value is! Map) return 0;
-        final map = Map<String, dynamic>.from(value);
-
-        final defaultPrice = map['defaultPriceDetails'];
-        if (defaultPrice is Map) {
-          final parsed = toNonNegativeDouble(defaultPrice['price']);
-          if (parsed > 0) return parsed;
-        }
-
-        final branchOverrides = map['branchOverrides'];
-        if (branchOverrides is List) {
-          for (final raw in branchOverrides) {
-            if (raw is! Map) continue;
-            final override = Map<String, dynamic>.from(raw);
-            final branchId = relationId(override['branch']);
-            if (_branchId != null && branchId == _branchId) {
-              final branchPrice = toNonNegativeDouble(override['price']);
-              if (branchPrice > 0) return branchPrice;
-            }
-          }
-        }
-
-        return 0;
+        return CartItem.resolveProductPrice(
+          Map<String, dynamic>.from(value),
+          branchId: _branchId,
+          tableSection: effectiveTableSectionForPricing,
+        );
       }
 
       DateTime? parseDateValue(dynamic value) {

@@ -3167,6 +3167,12 @@ class _ReceiptContentState extends State<ReceiptContent> {
           bill['round_off'] ??
           bill['roundingOff'],
     );
+    final storedPreRoundTotal = _moneyOrNull(
+      bill['totalAmountBeforeRoundOff'] ??
+          bill['totalBeforeRoundOff'] ??
+          bill['preRoundTotal'] ??
+          bill['preRoundAmount'],
+    );
     final storedRoundedGrandTotal = _moneyOrNull(
       bill['roundedGrandTotal'] ??
           bill['roundedTotal'] ??
@@ -3174,29 +3180,25 @@ class _ReceiptContentState extends State<ReceiptContent> {
           bill['finalGrandTotal'],
     );
 
-    final computedPreRoundTotal = () {
-      final summedTax = (cgstAmount + sgstAmount);
-      if (subTotalAmount > 0 && summedTax > 0) {
-        return subTotalAmount + summedTax;
-      }
-      if (subTotalAmount > 0 && gstAmount > 0) {
-        return subTotalAmount + gstAmount;
-      }
-      return totalAmount;
-    }();
+    final computedPreRoundTotal =
+        storedPreRoundTotal ??
+        (() {
+          final summedTax = (cgstAmount + sgstAmount);
+          if (subTotalAmount > 0 && summedTax > 0) {
+            return subTotalAmount + summedTax;
+          }
+          if (subTotalAmount > 0 && gstAmount > 0) {
+            return subTotalAmount + gstAmount;
+          }
+          return totalAmount;
+        })();
 
-    final derivedRoundOff =
-        (computedPreRoundTotal.ceilToDouble() - computedPreRoundTotal)
-            .clamp(0.0, double.infinity)
-            .toDouble();
+    final derivedRoundOff = totalAmount - computedPreRoundTotal;
 
     final rawRoundOff = storedRoundOff ?? derivedRoundOff;
     final roundOffAmount = double.parse(rawRoundOff.toStringAsFixed(2));
     final roundedGrandTotal =
-        storedRoundedGrandTotal ??
-        double.parse(
-          (computedPreRoundTotal + roundOffAmount).toStringAsFixed(2),
-        );
+        storedRoundedGrandTotal ?? double.parse(totalAmount.toStringAsFixed(2));
     final roundOffSign = roundOffAmount >= 0 ? '+' : '-';
 
     const printInk = Color(0xFF1F1B17);

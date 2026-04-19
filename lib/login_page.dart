@@ -568,7 +568,7 @@ class _LoginPageState extends State<LoginPage> {
                     }
                     debugPrint("Auto-identified branch via IP: $branchId");
                   }
-                }
+                } 
 
                 // 2. Try GPS Identification (Fallback for Mobile/Other only)
                 if (branchId == null && !isWifi) {

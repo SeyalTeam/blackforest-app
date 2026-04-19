@@ -1183,27 +1183,21 @@ class _CartPageState extends State<CartPage> {
             context,
             listen: false,
           );
-          double price =
-              product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
-
-          if (_branchId != null && product['branchOverrides'] != null) {
-            for (var override in product['branchOverrides']) {
-              var branch = override['branch'];
-              String branchOid = branch is Map
-                  ? branch[r'$oid'] ?? branch['id'] ?? ''
-                  : branch ?? '';
-              if (branchOid == _branchId) {
-                price = override['price']?.toDouble() ?? price;
-                break;
-              }
-            }
-          }
+          final tableSection = cartProvider.currentType == CartType.table
+              ? cartProvider.selectedSection
+              : null;
+          final price = CartItem.resolveProductPrice(
+            product,
+            branchId: _branchId,
+            tableSection: tableSection,
+          );
 
           final item = CartItem.fromProduct(
             product,
             1,
             branchPrice: price,
             branchId: _branchId,
+            tableSection: tableSection,
           );
           cartProvider.addOrUpdateItem(item);
           final newQty = cartProvider.cartItems
@@ -4214,6 +4208,15 @@ class _CartPageState extends State<CartPage> {
         return map.containsKey(key);
       }
 
+      double? readServerItemMoney(Map<String, dynamic> map, List<String> keys) {
+        for (final key in keys) {
+          if (!map.containsKey(key)) continue;
+          final parsed = readServerMoney(map[key]);
+          if (parsed != null) return parsed;
+        }
+        return null;
+      }
+
       final responseMap = billingResponse is Map
           ? Map<String, dynamic>.from(billingResponse)
           : <String, dynamic>{};
@@ -4377,11 +4380,49 @@ class _CartPageState extends State<CartPage> {
               : (readServerQuantity(item['quantity']) ??
                     fallback?.quantity ??
                     0.0);
-          final lineSubtotal = isRandomCustomerOfferItem
-              ? 0.0
-              : hasServerKey(item, 'subtotal')
-              ? readServerMoney(item['subtotal']) ?? 0.0
-              : fallback?.lineSubtotal;
+          final fallbackLineTotal = fallback?.lineSubtotal;
+          final expectedLineTotalFromPrice = max(0.0, unitPrice * quantity);
+          final explicitLineTotal = readServerItemMoney(item, [
+            'finalLineTotal',
+            'lineTotalInclusive',
+            'lineTotal',
+            'finalAmount',
+            'amount',
+          ]);
+          final subtotalValue = hasServerKey(item, 'subtotal')
+              ? readServerMoney(item['subtotal'])
+              : null;
+          final taxableValue = readServerItemMoney(item, [
+            'taxableAmount',
+            'taxable',
+            'subTotal',
+            'sub_total',
+          ]);
+          final gstValue = readServerItemMoney(item, [
+            'gstAmount',
+            'taxAmount',
+            'tax',
+          ]);
+          double? lineSubtotal;
+          if (isRandomCustomerOfferItem) {
+            lineSubtotal = 0.0;
+          } else if (explicitLineTotal != null && explicitLineTotal > 0) {
+            lineSubtotal = explicitLineTotal;
+          } else if (taxableValue != null && gstValue != null) {
+            lineSubtotal = taxableValue + gstValue;
+          } else if (subtotalValue != null) {
+            if (expectedLineTotalFromPrice > 0 &&
+                subtotalValue > expectedLineTotalFromPrice + 0.009) {
+              // Guard against legacy payloads where GST was added on top.
+              lineSubtotal = expectedLineTotalFromPrice;
+            } else {
+              lineSubtotal = subtotalValue;
+            }
+          } else if (expectedLineTotalFromPrice > 0) {
+            lineSubtotal = expectedLineTotalFromPrice;
+          } else {
+            lineSubtotal = fallbackLineTotal;
+          }
           final effectiveUnitPrice = hasServerKey(item, 'effectiveUnitPrice')
               ? readServerMoney(item['effectiveUnitPrice'])
               : fallback?.effectiveUnitPrice;
@@ -4844,6 +4885,46 @@ class _CartPageState extends State<CartPage> {
       return 0.0;
     }
 
+    double? toMoneyOrNull(dynamic value, {bool allowNegative = false}) {
+      if (value is num) {
+        final parsed = value.toDouble();
+        if (!allowNegative && parsed < 0) return 0.0;
+        return parsed;
+      }
+      if (value is String) {
+        final parsed = double.tryParse(value);
+        if (parsed == null) return null;
+        if (!allowNegative && parsed < 0) return 0.0;
+        return parsed;
+      }
+      return null;
+    }
+
+    dynamic readBillingValue(List<String> keys) {
+      for (final key in keys) {
+        if (billingResponse.containsKey(key)) {
+          return billingResponse[key];
+        }
+      }
+      final nestedDoc = billingResponse['doc'];
+      if (nestedDoc is Map) {
+        final doc = Map<String, dynamic>.from(nestedDoc);
+        for (final key in keys) {
+          if (doc.containsKey(key)) {
+            return doc[key];
+          }
+        }
+      }
+      return null;
+    }
+
+    double? readBillingMoney(List<String> keys, {bool allowNegative = false}) {
+      return toMoneyOrNull(
+        readBillingValue(keys),
+        allowNegative: allowNegative,
+      );
+    }
+
     String formatReceiptMoney(double value) {
       final rounded = double.parse(value.toStringAsFixed(2));
       if ((rounded - rounded.truncateToDouble()).abs() < 0.001) {
@@ -5111,7 +5192,7 @@ class _CartPageState extends State<CartPage> {
             : 1.0;
         final cgstBreakdownPaise = <double, int>{};
         final sgstBreakdownPaise = <double, int>{};
-        int receiptTaxableSubtotalPaise = 0;
+        int receiptItemsTotalPaise = 0;
         printer.row([
           PosColumn(
             text: 'Item',
@@ -5167,15 +5248,19 @@ class _CartPageState extends State<CartPage> {
               : item.quantity.toStringAsFixed(2);
           final unitPriceToPrint = item.effectiveUnitPrice ?? item.price;
           final lineAmount = item.lineTotal;
-          final taxableAmount = (lineAmount * gstScale).clamp(
+          final effectiveLineAmount = (lineAmount * gstScale).clamp(
             0.0,
             double.infinity,
           );
-          final taxablePaise = (taxableAmount * 100).round();
-          receiptTaxableSubtotalPaise += taxablePaise;
-          final lineTaxPaise = item.gstPercent > 0
-              ? ((taxablePaise * item.gstPercent) / 100).round()
-              : 0;
+          final effectiveLinePaise = (effectiveLineAmount * 100).round();
+          receiptItemsTotalPaise += effectiveLinePaise;
+          int taxablePaise = effectiveLinePaise;
+          int lineTaxPaise = 0;
+          if (item.gstPercent > 0 && effectiveLinePaise > 0) {
+            taxablePaise =
+                ((effectiveLinePaise * 100) / (100 + item.gstPercent)).round();
+            lineTaxPaise = effectiveLinePaise - taxablePaise;
+          }
           final taxPercentToPrint = item.gstPercent > 0
               ? '${formatReceiptMoney(item.gstPercent)}%'
               : '-';
@@ -5213,7 +5298,7 @@ class _CartPageState extends State<CartPage> {
               styles: itemRowRightStyles,
             ),
             PosColumn(
-              text: formatReceiptMoney(lineAmount),
+              text: formatReceiptMoney(effectiveLinePaise / 100.0),
               width: 2,
               styles: itemRowRightStyles,
             ),
@@ -5250,16 +5335,50 @@ class _CartPageState extends State<CartPage> {
           (sum, taxPart) => sum + taxPart,
         );
         final receiptGstPaise = totalCgstPaise + totalSgstPaise;
+        final backendFinalTotalAmount =
+            readBillingMoney(['totalAmount', 'finalAmount', 'payableAmount']) ??
+            totalAmount;
+        final backendPreRoundTotalAmount = readBillingMoney([
+          'totalAmountBeforeRoundOff',
+          'totalBeforeRoundOff',
+          'preRoundTotal',
+          'preRoundAmount',
+        ]);
+        final backendRoundOffAmount = readBillingMoney([
+          'roundOffAmount',
+          'roundOff',
+          'roundoff',
+          'round_off',
+          'roundingOff',
+        ], allowNegative: true);
+        final receiptGrandTotalPaise = max(
+          0,
+          (backendFinalTotalAmount * 100).round(),
+        );
+        final backendPreRoundPaise = backendPreRoundTotalAmount != null
+            ? (backendPreRoundTotalAmount * 100).round()
+            : null;
+        final backendRoundOffPaise = backendRoundOffAmount != null
+            ? (backendRoundOffAmount * 100).round()
+            : null;
+        int receiptPreRoundPaise;
+        if (backendPreRoundPaise != null) {
+          receiptPreRoundPaise = backendPreRoundPaise;
+        } else if (backendRoundOffPaise != null) {
+          receiptPreRoundPaise = receiptGrandTotalPaise - backendRoundOffPaise;
+        } else if (receiptItemsTotalPaise > 0) {
+          receiptPreRoundPaise = receiptItemsTotalPaise;
+        } else {
+          receiptPreRoundPaise = receiptGrandTotalPaise;
+        }
+        receiptPreRoundPaise = max(0, receiptPreRoundPaise);
+        final roundOffPaise =
+            backendRoundOffPaise ??
+            (receiptGrandTotalPaise - receiptPreRoundPaise);
         final hasReceiptGst = receiptGstPaise > 0;
-        final receiptSubTotalPaise = hasReceiptGst
-            ? receiptTaxableSubtotalPaise
-            : (totalAmount * 100).round();
-        final receiptTotalPaise = receiptSubTotalPaise + receiptGstPaise;
-        final roundedGrandTotalPaise = ((receiptTotalPaise + 99) ~/ 100) * 100;
-        final roundOffPaise = roundedGrandTotalPaise - receiptTotalPaise;
-        final receiptGstAmount = receiptGstPaise / 100.0;
+        final receiptSubTotalPaise = receiptPreRoundPaise;
         final receiptSubTotalAmount = receiptSubTotalPaise / 100.0;
-        final roundedGrandTotal = roundedGrandTotalPaise / 100.0;
+        final roundedGrandTotal = receiptGrandTotalPaise / 100.0;
         final roundOffAmount = roundOffPaise / 100.0;
         final explainedBillDiscount =
             customerOfferDiscountFromServer +
@@ -5319,7 +5438,7 @@ class _CartPageState extends State<CartPage> {
             ]);
           }
         }
-        if (receiptGstAmount > 0.0001) {
+        if (hasReceiptGst) {
           printer.row([
             PosColumn(
               text: 'SUB TOTAL RS ${formatReceiptMoney(receiptSubTotalAmount)}',
@@ -6288,20 +6407,18 @@ class _CartPageState extends State<CartPage> {
     );
     final overallItemsDisplay = _formatCartQuantityValue(overallItemQuantity);
     final overallItemLabel = overallItemQuantity == 1 ? 'item' : 'items';
-    final overallSubtotalWithoutGst = allVisibleItems.fold<double>(
+    final overallTotalWithGst = allVisibleItems.fold<double>(
       0,
-      (sum, item) => sum + item.lineTotal,
+      (sum, item) => sum + _cartItemInclusiveLineTotal(item),
     );
     final overallGstAmount = allVisibleItems.fold<double>(
       0,
       (sum, item) => sum + _cartItemTaxAmount(item),
     );
-    final overallTotalWithGst = overallSubtotalWithoutGst + overallGstAmount;
-    final overallGrandTotal = overallTotalWithGst.ceilToDouble();
-    final overallRoundOff = (overallGrandTotal - overallTotalWithGst).clamp(
-      0.0,
-      double.infinity,
-    );
+    final overallSubtotalWithoutGst = (overallTotalWithGst - overallGstAmount)
+        .clamp(0.0, double.infinity);
+    final overallGrandTotal = overallTotalWithGst.roundToDouble();
+    final overallRoundOff = overallGrandTotal - overallTotalWithGst;
     final totalQuantity = cartProvider.cartItems.fold<double>(
       0,
       (sum, item) => sum + item.quantity,
@@ -6665,7 +6782,7 @@ class _CartPageState extends State<CartPage> {
                             ),
                             const SizedBox(height: 3),
                             Text(
-                              'Grand Total: ₹${_formatCartMoneyCompact(overallGrandTotal)} (Rof +₹${_formatCartMoneyCompact(overallRoundOff)})',
+                              'Grand Total: ₹${_formatCartMoneyCompact(overallGrandTotal)} (Rof ${_formatCartSignedMoney(overallRoundOff)})',
                               style: const TextStyle(
                                 color: Color(0xFF1BA672),
                                 fontSize: 17,
@@ -6710,7 +6827,7 @@ class _CartPageState extends State<CartPage> {
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'Grand Total: ₹${_formatCartMoneyCompact(overallGrandTotal)} (Rof +₹${_formatCartMoneyCompact(overallRoundOff)})',
+                      'Grand Total: ₹${_formatCartMoneyCompact(overallGrandTotal)} (Rof ${_formatCartSignedMoney(overallRoundOff)})',
                       style: const TextStyle(
                         color: Color(0xFF1BA672),
                         fontSize: 17,
@@ -6802,20 +6919,20 @@ class _CartPageState extends State<CartPage> {
             );
             final totalItemsDisplay = _formatCartQuantityValue(totalQuantity);
             final totalItemLabel = totalQuantity == 1 ? 'item' : 'items';
-            final subtotalWithoutGst = allVisibleItems.fold<double>(
+            final totalWithGst = allVisibleItems.fold<double>(
               0,
-              (sum, item) => sum + item.lineTotal,
+              (sum, item) => sum + _cartItemInclusiveLineTotal(item),
             );
             final totalGstAmount = allVisibleItems.fold<double>(
               0,
               (sum, item) => sum + _cartItemTaxAmount(item),
             );
-            final totalWithGst = subtotalWithoutGst + totalGstAmount;
-            final roundedGrandTotal = totalWithGst.ceilToDouble();
-            final roundOffAmount = (roundedGrandTotal - totalWithGst).clamp(
+            final subtotalWithoutGst = (totalWithGst - totalGstAmount).clamp(
               0.0,
               double.infinity,
             );
+            final roundedGrandTotal = totalWithGst.roundToDouble();
+            final roundOffAmount = roundedGrandTotal - totalWithGst;
             final hasCustomerHistoryPhoneInBilling =
                 (cartProvider.customerPhone ?? '')
                     .replaceAll(RegExp(r'\D'), '')
@@ -7362,7 +7479,7 @@ class _CartPageState extends State<CartPage> {
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
-                                        'Grand Total: ₹${_formatCartMoneyCompact(roundedGrandTotal)} (Rof +₹${_formatCartMoneyCompact(roundOffAmount)})',
+                                        'Grand Total: ₹${_formatCartMoneyCompact(roundedGrandTotal)} (Rof ${_formatCartSignedMoney(roundOffAmount)})',
                                         style: const TextStyle(
                                           color: Color(0xFFA7F3D0),
                                           fontSize: 17,
@@ -7705,9 +7822,12 @@ class _CartItemCardState extends State<_CartItemCard> {
     final isPriceOfferItem = widget.item.isPriceOfferApplied;
     final unitPriceDisplay =
         widget.item.effectiveUnitPrice ?? widget.item.price;
-    final lineSubtotal = widget.item.lineTotal.clamp(0.0, double.infinity);
+    final lineTotalWithGst = _cartItemInclusiveLineTotal(widget.item);
     final lineTaxAmount = _cartItemTaxAmount(widget.item);
-    final lineTotalWithGst = lineSubtotal + lineTaxAmount;
+    final lineSubtotal = (lineTotalWithGst - lineTaxAmount).clamp(
+      0.0,
+      double.infinity,
+    );
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 8),
@@ -8112,6 +8232,11 @@ String _formatCartMoneyCompact(double value) {
   return rounded.toStringAsFixed(2);
 }
 
+String _formatCartSignedMoney(double value) {
+  final sign = value >= 0 ? '+' : '-';
+  return '$sign₹${_formatCartMoneyCompact(value.abs())}';
+}
+
 double _cartItemTaxAmount(CartItem item) {
   if (item.isOfferFreeItem || item.isRandomCustomerOfferItem) {
     return 0.0;
@@ -8119,8 +8244,30 @@ double _cartItemTaxAmount(CartItem item) {
   if (item.gstPercent <= 0) {
     return 0.0;
   }
-  final taxableAmount = item.lineTotal.clamp(0.0, double.infinity);
-  return taxableAmount * item.gstPercent / 100;
+  final lineTotalWithGst = _cartItemInclusiveLineTotal(item);
+  if (lineTotalWithGst <= 0.0) return 0.0;
+  final taxableAmount = (lineTotalWithGst * 100) / (100 + item.gstPercent);
+  return (lineTotalWithGst - taxableAmount).clamp(0.0, double.infinity);
+}
+
+double _cartItemInclusiveLineTotal(CartItem item) {
+  if (item.isOfferFreeItem || item.isRandomCustomerOfferItem) {
+    return 0.0;
+  }
+  final rawLineTotal = item.lineTotal.clamp(0.0, double.infinity);
+  final quantity = item.quantity <= 0 ? 0.0 : item.quantity;
+  final unitPrice = (item.effectiveUnitPrice ?? item.price).clamp(
+    0.0,
+    double.infinity,
+  );
+  final expectedLineTotal = unitPrice * quantity;
+  if (item.lineSubtotal != null &&
+      expectedLineTotal > 0 &&
+      rawLineTotal > expectedLineTotal + 0.009) {
+    // Legacy payloads may carry subtotal with GST added on top; keep line total inclusive.
+    return expectedLineTotal;
+  }
+  return rawLineTotal;
 }
 
 double _cartQuantityStep(double qty) {
@@ -8324,10 +8471,13 @@ class _KotEditableItemRow extends StatelessWidget {
     final isPriceOfferItem = item.isPriceOfferApplied;
     final qty = item.quantity;
     final step = _cartQuantityStep(qty);
-    final currentLineTotal = item.lineTotal;
-    final lineSubtotal = currentLineTotal.clamp(0.0, double.infinity);
+    final currentLineTotal = _cartItemInclusiveLineTotal(item);
+    final lineTotalWithGst = currentLineTotal;
     final lineTaxAmount = _cartItemTaxAmount(item);
-    final lineTotalWithGst = lineSubtotal + lineTaxAmount;
+    final lineSubtotal = (lineTotalWithGst - lineTaxAmount).clamp(
+      0.0,
+      double.infinity,
+    );
     final originalLineTotal = item.price * qty;
     final showOldLineTotal =
         !isReadOnlyOfferItem && originalLineTotal > currentLineTotal + 0.001;
@@ -8552,9 +8702,12 @@ class _KotReadOnlyItemRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final note = item.specialNote?.trim() ?? '';
     final displayName = _kotDisplayName(item.name);
-    final lineSubtotal = item.lineTotal.clamp(0.0, double.infinity);
+    final lineTotalWithGst = _cartItemInclusiveLineTotal(item);
     final lineTaxAmount = _cartItemTaxAmount(item);
-    final lineTotalWithGst = lineSubtotal + lineTaxAmount;
+    final lineSubtotal = (lineTotalWithGst - lineTaxAmount).clamp(
+      0.0,
+      double.infinity,
+    );
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),

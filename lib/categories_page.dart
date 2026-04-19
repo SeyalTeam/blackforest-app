@@ -1818,20 +1818,20 @@ class _CategoriesPageState extends State<CategoriesPage> {
           );
           final prefs = await SharedPreferences.getInstance();
           final branchId = prefs.getString('branchId')?.trim();
-          // Get branch-specific price if available (similar to ProductsPage)
-          double price =
-              product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
-          if (_userRole == 'branch') {
-            // Reuse _fetchUserData logic or store globally
-            if (product['branchOverrides'] != null) {
-              // Removed unused branchId/branchOid loop logic
-            }
-          }
+          final tableSection = cartProvider.currentType == CartType.table
+              ? cartProvider.selectedSection
+              : null;
+          final price = CartItem.resolveProductPrice(
+            product,
+            branchId: branchId,
+            tableSection: tableSection,
+          );
           final item = CartItem.fromProduct(
             product,
             1,
             branchPrice: price,
             branchId: branchId,
+            tableSection: tableSection,
           );
           cartProvider.addOrUpdateItem(item);
           final newQty = cartProvider.cartItems

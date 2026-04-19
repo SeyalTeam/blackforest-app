@@ -1,9 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io; // For Platform check
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:blackforest_app/app_http.dart' as http;
+import 'package:http/http.dart' as raw_http;
 import 'package:esc_pos_printer/esc_pos_printer.dart';
 import 'package:esc_pos_utils/esc_pos_utils.dart' hide Barcode;
 import 'package:provider/provider.dart'; // For cart badge
@@ -19,9 +22,11 @@ import 'package:blackforest_app/table.dart'; // Import TablePage
 import 'package:blackforest_app/home_page.dart';
 import 'package:blackforest_app/kitchen_notifications_page.dart'; // Import HomePage
 import 'package:blackforest_app/kot_auto_print_service.dart';
+import 'package:blackforest_app/notification_service.dart';
 import 'package:blackforest_app/auth_flags.dart';
 import 'package:blackforest_app/session_prefs.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:intl/intl.dart';
 
 enum PageType {
   home,
@@ -80,6 +85,8 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   bool _isPrinterTestRunning = false;
   bool _isDrainingWebsiteAlertQueue = false;
   final List<AutoSyncAlert> _websiteAlertQueue = [];
+  final Set<String> _pendingWaiterEventKeys = <String>{};
+  final AudioPlayer _waiterCallPlayer = AudioPlayer();
 
   @override
   void initState() {
@@ -105,6 +112,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     _inactivityTimer?.cancel();
     _kitchenSyncTimer?.cancel();
     _sessionCheckTimer?.cancel();
+    unawaited(_waiterCallPlayer.dispose());
     super.dispose();
   }
 
@@ -133,16 +141,29 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   }
 
   Future<void> _syncWebsiteOrderSignals() async {
-    if (io.Platform.isAndroid && await FlutterForegroundTask.isRunningService) {
-      return;
-    }
-
-    final alerts = await KotAutoPrintService.syncPendingWebsiteKots();
+    final isForegroundServiceRunning =
+        io.Platform.isAndroid && await FlutterForegroundTask.isRunningService;
+    final alerts = isForegroundServiceRunning
+        ? await KotAutoPrintService.syncWaiterCallAlertsOnly()
+        : await KotAutoPrintService.syncPendingWebsiteKots();
     if (!mounted || alerts.isEmpty) {
       return;
     }
 
-    _websiteAlertQueue.addAll(alerts);
+    for (final alert in alerts) {
+      if (alert.isWaiterCall) {
+        final eventKey = alert.waiterCall!.eventKey;
+        if (_pendingWaiterEventKeys.contains(eventKey)) {
+          continue;
+        }
+        _pendingWaiterEventKeys.add(eventKey);
+      }
+      _websiteAlertQueue.add(alert);
+    }
+    if (_websiteAlertQueue.isEmpty) {
+      return;
+    }
+
     if (_isDrainingWebsiteAlertQueue) {
       return;
     }
@@ -152,6 +173,16 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     try {
       while (mounted && _websiteAlertQueue.isNotEmpty) {
         final alert = _websiteAlertQueue.removeAt(0);
+        if (alert.isWaiterCall) {
+          final payload = alert.waiterCall!;
+          try {
+            await _showWaiterCallDialog(payload);
+          } finally {
+            _pendingWaiterEventKeys.remove(payload.eventKey);
+          }
+          continue;
+        }
+
         messenger.hideCurrentSnackBar();
         messenger.showSnackBar(
           SnackBar(
@@ -165,6 +196,472 @@ class _CommonScaffoldState extends State<CommonScaffold> {
       }
     } finally {
       _isDrainingWebsiteAlertQueue = false;
+    }
+  }
+
+  String _formatWaiterTimestamp(String rawTimestamp) {
+    final parsed = DateTime.tryParse(rawTimestamp);
+    if (parsed == null) {
+      return rawTimestamp;
+    }
+    return DateFormat('hh:mm a').format(parsed.toLocal());
+  }
+
+  String _formatKotLabel(String rawKotNumber) {
+    final raw = rawKotNumber.trim();
+    if (raw.isEmpty) return 'KOT00';
+    final upper = raw.toUpperCase();
+
+    String compactToken;
+    if (upper.contains('-')) {
+      final segments = upper.split('-').where((segment) => segment.isNotEmpty);
+      compactToken = segments.isNotEmpty ? segments.last.trim() : upper;
+    } else {
+      compactToken = upper.trim();
+    }
+
+    final tokenWithoutKot = compactToken.replaceAll('KOT', '');
+    final digits = tokenWithoutKot.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.isEmpty) {
+      return 'KOT00';
+    }
+    final shortDigits = digits.length > 2
+        ? digits.substring(digits.length - 2)
+        : digits.padLeft(2, '0');
+    return 'KOT$shortDigits';
+  }
+
+  Future<void> _startWaiterRingtone() async {
+    try {
+      await _waiterCallPlayer.stop();
+      await _waiterCallPlayer.setReleaseMode(ReleaseMode.loop);
+      await _waiterCallPlayer.play(AssetSource('sounds/table.mp3'));
+    } catch (error) {
+      debugPrint('Waiter ringtone play failed: $error');
+    }
+  }
+
+  Future<void> _stopWaiterRingtone() async {
+    try {
+      await _waiterCallPlayer.stop();
+    } catch (_) {}
+  }
+
+  Future<void> _showWaiterCallDialog(WaiterCallAlertPayload payload) async {
+    // Keep feedback loud and tactile for SOS requests.
+    final callTitle = 'CALL FROM TABLE ${payload.tableNumber}';
+    await NotificationService().showWaiterCallNotification(
+      id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      title: callTitle,
+      body:
+          'Table ${payload.tableNumber} Customer: ${payload.customerName} Calling',
+      payload: payload.billId,
+    );
+    unawaited(HapticFeedback.heavyImpact());
+    unawaited(HapticFeedback.vibrate());
+
+    if (!mounted) return;
+    final sectionLabel = payload.section.trim().isEmpty ? '-' : payload.section;
+    final customerName = payload.customerName.trim().isEmpty
+        ? 'Guest'
+        : payload.customerName;
+    final kotLabel = _formatKotLabel(payload.kotNumber);
+    var isSubmitting = false;
+    String? statusMessage;
+    Color statusColor = const Color(0xFF9095A7);
+
+    await _startWaiterRingtone();
+    if (!mounted) return;
+    try {
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (stateContext, setDialogState) {
+              Future<void> handleAcceptTap() async {
+                if (isSubmitting) return;
+                setDialogState(() {
+                  isSubmitting = true;
+                  statusMessage = null;
+                });
+
+                final result = await _acknowledgeWaiterCall(payload);
+                if (!dialogContext.mounted) return;
+
+                final isHandledConfirmation =
+                    result.ok || result.alreadyAcknowledged;
+                if (!isHandledConfirmation) {
+                  setDialogState(() {
+                    isSubmitting = false;
+                    statusMessage = result.message;
+                    statusColor = const Color(0xFFC92A2A);
+                  });
+                  return;
+                }
+
+                await KotAutoPrintService.markWaiterCallHandled(
+                  eventKey: payload.eventKey,
+                );
+
+                final acknowledgedBy = result.acknowledgedBy.trim().isEmpty
+                    ? 'Staff'
+                    : result.acknowledgedBy.trim();
+                final acceptedText = 'Accepted by $acknowledgedBy';
+                setDialogState(() {
+                  isSubmitting = false;
+                  statusMessage = acceptedText;
+                  statusColor = const Color(0xFF1E8E3E);
+                });
+
+                if (mounted) {
+                  final messenger = ScaffoldMessenger.of(context);
+                  messenger.hideCurrentSnackBar();
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text(acceptedText),
+                      backgroundColor: const Color(0xFF1E8E3E),
+                      behavior: SnackBarBehavior.floating,
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                }
+
+                await Future<void>.delayed(const Duration(milliseconds: 650));
+                if (!dialogContext.mounted) return;
+                Navigator.of(dialogContext).pop();
+              }
+
+              return PopScope(
+                canPop: false,
+                child: Dialog(
+                  backgroundColor: Colors.transparent,
+                  insetPadding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 20,
+                  ),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(30),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x42000000),
+                          blurRadius: 32,
+                          offset: Offset(0, 16),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFE32127),
+                            borderRadius: BorderRadius.only(
+                              topLeft: Radius.circular(30),
+                              topRight: Radius.circular(30),
+                            ),
+                          ),
+                          child: Column(
+                            children: [
+                              Container(
+                                width: 56,
+                                height: 56,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withValues(alpha: 0.18),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.notifications_active_rounded,
+                                  color: Colors.white,
+                                  size: 30,
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              const Text(
+                                'REAL-TIME ALERT',
+                                style: TextStyle(
+                                  color: Color(0xFFFFF5F5),
+                                  fontSize: 13,
+                                  letterSpacing: 3,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'Table ${payload.tableNumber}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 50,
+                                  fontWeight: FontWeight.w800,
+                                  height: 1,
+                                ),
+                              ),
+                              const SizedBox(height: 8),
+                              Text(
+                                'SECTION $sectionLabel',
+                                style: const TextStyle(
+                                  color: Color(0xFFFFE7E7),
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0.8,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Customer: $customerName   $kotLabel',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  color: Color(0xFFFFE7E7),
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              const Text(
+                                'Waiter Called',
+                                style: TextStyle(
+                                  color: Color(0xFF1E2430),
+                                  fontSize: 44 / 2,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 14),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 8,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFE9EAF8),
+                                  borderRadius: BorderRadius.circular(22),
+                                ),
+                                child: const Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      Icons.qr_code_2_rounded,
+                                      color: Color(0xFF3C4EDC),
+                                      size: 18,
+                                    ),
+                                    SizedBox(width: 8),
+                                    Text(
+                                      'Digital QR Request',
+                                      style: TextStyle(
+                                        color: Color(0xFF434A5A),
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 18),
+                              RichText(
+                                text: TextSpan(
+                                  style: const TextStyle(
+                                    color: Color(0xFF9095A7),
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  children: [
+                                    TextSpan(
+                                      text: _formatWaiterTimestamp(
+                                        payload.timestampIso,
+                                      ),
+                                      style: const TextStyle(
+                                        color: Color(0xFF2A56F6),
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                height: 20,
+                                child: statusMessage == null
+                                    ? null
+                                    : Text(
+                                        statusMessage!,
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          color: statusColor,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                              ),
+                              const SizedBox(height: 12),
+                              SizedBox(
+                                width: double.infinity,
+                                child: DecoratedBox(
+                                  decoration: BoxDecoration(
+                                    gradient: const LinearGradient(
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                      colors: [
+                                        Color(0xFF144AE6),
+                                        Color(0xFF2D5EFF),
+                                      ],
+                                    ),
+                                    borderRadius: BorderRadius.circular(16),
+                                    boxShadow: const [
+                                      BoxShadow(
+                                        color: Color(0x442D5EFF),
+                                        blurRadius: 18,
+                                        offset: Offset(0, 8),
+                                      ),
+                                    ],
+                                  ),
+                                  child: ElevatedButton(
+                                    onPressed: isSubmitting
+                                        ? null
+                                        : handleAcceptTap,
+                                    style: ElevatedButton.styleFrom(
+                                      elevation: 0,
+                                      backgroundColor: Colors.transparent,
+                                      foregroundColor: Colors.white,
+                                      disabledBackgroundColor:
+                                          Colors.transparent,
+                                      disabledForegroundColor: Colors.white70,
+                                      shadowColor: Colors.transparent,
+                                      minimumSize: const Size.fromHeight(66),
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(16),
+                                      ),
+                                    ),
+                                    child: isSubmitting
+                                        ? const SizedBox(
+                                            width: 22,
+                                            height: 22,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2.4,
+                                              color: Colors.white,
+                                            ),
+                                          )
+                                        : const Text(
+                                            'Accept Request',
+                                            style: TextStyle(
+                                              fontSize: 33 / 2,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      await _stopWaiterRingtone();
+    }
+  }
+
+  Future<_WaiterAckResult> _acknowledgeWaiterCall(
+    WaiterCallAlertPayload payload,
+  ) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token')?.trim() ?? '';
+      final branchId = prefs.getString('branchId')?.trim() ?? '';
+      final lastLoginIp = prefs.getString('lastLoginIp')?.trim() ?? '';
+      final deviceId = prefs.getString('deviceId')?.trim() ?? '';
+      if (token.isEmpty || branchId.isEmpty) {
+        return const _WaiterAckResult(
+          ok: false,
+          alreadyAcknowledged: false,
+          acknowledgedBy: '',
+          message: 'Session missing. Please login again.',
+        );
+      }
+
+      final response = await raw_http
+          .post(
+            Uri.parse('https://blackforest.vseyal.com/api/call-waiter/ack'),
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+              'x-branch-id': branchId,
+              'x-branch': branchId,
+              if (lastLoginIp.isNotEmpty) 'x-private-ip': lastLoginIp,
+              if (deviceId.isNotEmpty) 'x-device-id': deviceId,
+            },
+            body: jsonEncode({
+              'branchId': branchId,
+              'branch': branchId,
+              'selectedBranchId': branchId,
+              'billId': payload.billId,
+              'callTimestamp': payload.timestampIso,
+            }),
+          )
+          .timeout(const Duration(seconds: 12));
+
+      Map<String, dynamic> body = const <String, dynamic>{};
+      try {
+        final decoded = jsonDecode(response.body);
+        if (decoded is Map) {
+          body = Map<String, dynamic>.from(decoded);
+        }
+      } catch (_) {
+        body = const <String, dynamic>{};
+      }
+
+      final ok = body['ok'] == true;
+      final alreadyAcknowledged = body['alreadyAcknowledged'] == true;
+      final acknowledgedBy = (body['acknowledgedBy'] ?? '').toString().trim();
+      final backendError =
+          body['errors'] is List && (body['errors'] as List).isNotEmpty
+          ? (body['errors'] as List).first.toString()
+          : '';
+      final defaultMessage = ok || alreadyAcknowledged
+          ? 'Waiter call acknowledged'
+          : 'Unable to acknowledge waiter call';
+      final message = (body['message'] ?? backendError).toString().trim();
+
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        return _WaiterAckResult(
+          ok: false,
+          alreadyAcknowledged: false,
+          acknowledgedBy: acknowledgedBy,
+          message: message.isEmpty
+              ? 'Not authorized to acknowledge this call.'
+              : message,
+        );
+      }
+
+      return _WaiterAckResult(
+        ok: ok,
+        alreadyAcknowledged: alreadyAcknowledged,
+        acknowledgedBy: acknowledgedBy,
+        message: message.isEmpty ? defaultMessage : message,
+      );
+    } catch (_) {
+      return const _WaiterAckResult(
+        ok: false,
+        alreadyAcknowledged: false,
+        acknowledgedBy: '',
+        message: 'Network error. Please try again.',
+      );
     }
   }
 
@@ -1302,6 +1799,20 @@ class _PrinterTarget {
     required this.label,
     required this.ip,
     required this.port,
+  });
+}
+
+class _WaiterAckResult {
+  final bool ok;
+  final bool alreadyAcknowledged;
+  final String acknowledgedBy;
+  final String message;
+
+  const _WaiterAckResult({
+    required this.ok,
+    required this.alreadyAcknowledged,
+    required this.acknowledgedBy,
+    required this.message,
   });
 }
 

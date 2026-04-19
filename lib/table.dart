@@ -1944,6 +1944,23 @@ class _TablePageState extends State<TablePage> {
             return 0.0;
           }
 
+          double? readOptionalMoney(
+            Map<String, dynamic> source,
+            List<String> keys,
+          ) {
+            for (final key in keys) {
+              if (!source.containsKey(key)) continue;
+              final value = source[key];
+              if (value == null) continue;
+              if (value is num) return value.toDouble();
+              if (value is String) {
+                final parsed = double.tryParse(value);
+                if (parsed != null) return parsed;
+              }
+            }
+            return null;
+          }
+
           final itemMap = item;
           final prod = item['product'];
           String? cid;
@@ -2002,11 +2019,51 @@ class _TablePageState extends State<TablePage> {
                     : toSafeDouble(itemMap['effectiveUnitPrice']))
               : null;
           final hasSubtotal = itemMap.containsKey('subtotal');
-          final lineSubtotal = isRandomCustomerOfferItem
+          final quantity = isRandomCustomerOfferItem
+              ? 1.0
+              : toSafeDouble(item['quantity']);
+          final unitPrice = isReadOnlyOfferItem
               ? 0.0
-              : hasSubtotal
+              : toSafeDouble(
+                  itemMap['effectiveUnitPrice'] ??
+                      itemMap['unitPrice'] ??
+                      itemMap['price'],
+                );
+          final expectedLineTotalFromPrice = (unitPrice * quantity) < 0
+              ? 0.0
+              : (unitPrice * quantity);
+          final explicitLineTotal = readOptionalMoney(itemMap, [
+            'finalLineTotal',
+            'lineTotalInclusive',
+            'lineTotal',
+            'finalAmount',
+            'amount',
+          ]);
+          final subtotalValue = hasSubtotal
               ? toSafeDouble(itemMap['subtotal'])
               : null;
+          final taxableValue = readOptionalMoney(itemMap, [
+            'taxableAmount',
+            'taxable',
+            'subTotal',
+            'sub_total',
+          ]);
+          final gstValue = readOptionalMoney(itemMap, [
+            'gstAmount',
+            'taxAmount',
+            'tax',
+          ]);
+          final lineSubtotal = isRandomCustomerOfferItem
+              ? 0.0
+              : explicitLineTotal != null && explicitLineTotal > 0
+              ? explicitLineTotal
+              : taxableValue != null && gstValue != null
+              ? taxableValue + gstValue
+              : subtotalValue != null &&
+                    expectedLineTotalFromPrice > 0 &&
+                    subtotalValue > expectedLineTotalFromPrice + 0.009
+              ? expectedLineTotalFromPrice
+              : subtotalValue;
           final productGstPercent = CartItem.extractEffectiveGstPercent(
             prod,
             branchId: _branchId,
@@ -2019,18 +2076,10 @@ class _TablePageState extends State<TablePage> {
             id: pid,
             billingItemId: item['id']?.toString(),
             name: item['name'] ?? 'Unknown',
-            price: isReadOnlyOfferItem
-                ? 0.0
-                : toSafeDouble(
-                    itemMap['effectiveUnitPrice'] ??
-                        itemMap['unitPrice'] ??
-                        itemMap['price'],
-                  ),
+            price: isReadOnlyOfferItem ? 0.0 : unitPrice,
             gstPercent: gstPercent,
             imageUrl: imageUrl,
-            quantity: isRandomCustomerOfferItem
-                ? 1.0
-                : toSafeDouble(item['quantity']),
+            quantity: quantity,
             unit: item['unit']?.toString(),
             department: dept,
             categoryId: cid,

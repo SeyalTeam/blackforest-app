@@ -85,4 +85,38 @@ class NotificationService {
       payload: payload,
     );
   }
+
+  Future<void> showWaiterCallNotification({
+    required int id,
+    required String title,
+    required String body,
+    String? payload,
+  }) async {
+    const AndroidNotificationDetails androidNotificationDetails =
+        AndroidNotificationDetails(
+          'waiter_call_sos',
+          'Waiter SOS Alerts',
+          channelDescription: 'High priority alerts when customer calls waiter',
+          importance: Importance.max,
+          priority: Priority.max,
+          ticker: 'Waiter Call SOS',
+          playSound: true,
+          enableVibration: true,
+          category: AndroidNotificationCategory.alarm,
+        );
+
+    const NotificationDetails notificationDetails = NotificationDetails(
+      android: androidNotificationDetails,
+      iOS: DarwinNotificationDetails(presentSound: true),
+      macOS: DarwinNotificationDetails(presentSound: true),
+    );
+
+    await flutterLocalNotificationsPlugin.show(
+      id: id,
+      title: title,
+      body: body,
+      notificationDetails: notificationDetails,
+      payload: payload,
+    );
+  }
 }

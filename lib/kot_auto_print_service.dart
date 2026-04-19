@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'dart:math';
-import 'dart:typed_data';
 import 'package:blackforest_app/app_http.dart' as http;
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:esc_pos_utils/esc_pos_utils.dart';
@@ -43,8 +42,17 @@ class KotAutoPrintService {
   static const int _maxRememberedItems = 1200;
   static const String _autoCompletedReceiptPrefKey =
       'auto_completed_bill_receipt_enabled';
+  static final RegExp _waiterCallRegex = RegExp(
+    r'WAITER_CALL_SOS\s+([0-9T:\.\+\-Z]+)\s+TABLE-([^\s|]+)\s+SECTION-([^|\n]+)',
+    caseSensitive: false,
+  );
+  static final RegExp _waiterAckRegex = RegExp(
+    r'WAITER_CALL_ACK\s+[0-9T:\.\+\-Z]+\s+FOR-([0-9T:\.\+\-Z]+)\s+TABLE-([^\s|]+)\s+SECTION-([^|\n]+?)(?=\s+BY-|\||\n|$)',
+    caseSensitive: false,
+  );
 
   static bool _isSyncing = false;
+  static bool _isWaiterAlertSyncing = false;
   static _KotPrintConfig? _cachedConfig;
   static DateTime? _cachedConfigAt;
   static String? _cachedConfigBranchId;
@@ -63,6 +71,30 @@ class KotAutoPrintService {
     await FlutterForegroundTask.stopService();
   }
 
+  static Future<List<AutoSyncAlert>> syncWaiterCallAlertsOnly() async {
+    final alerts = <AutoSyncAlert>[];
+    if (_isWaiterAlertSyncing) return alerts;
+    _isWaiterAlertSyncing = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token')?.trim() ?? '';
+      final branchId = prefs.getString('branchId')?.trim() ?? '';
+      if (token.isEmpty || branchId.isEmpty) {
+        return alerts;
+      }
+      return _collectWaiterCallAlerts(
+        prefs: prefs,
+        token: token,
+        branchId: branchId,
+      );
+    } catch (error) {
+      debugPrint('🛎️ Waiter alert sync error: $error');
+      return alerts;
+    } finally {
+      _isWaiterAlertSyncing = false;
+    }
+  }
+
   static Future<List<AutoSyncAlert>> syncPendingWebsiteKots({
     bool isBackground = false,
   }) async {
@@ -78,6 +110,16 @@ class KotAutoPrintService {
 
       if (token.isEmpty || userId.isEmpty || branchId.isEmpty) {
         return alerts;
+      }
+
+      if (!isBackground) {
+        alerts.addAll(
+          await _collectWaiterCallAlerts(
+            prefs: prefs,
+            token: token,
+            branchId: branchId,
+          ),
+        );
       }
 
       final bills = await _fetchCandidateBills(
@@ -392,6 +434,257 @@ class KotAutoPrintService {
         .whereType<Map>()
         .map((raw) => Map<String, dynamic>.from(raw))
         .toList(growable: false);
+  }
+
+  static Future<List<Map<String, dynamic>>>
+  _fetchActiveBranchBillsForWaiterAlerts({
+    required String token,
+    required String branchId,
+  }) async {
+    final now = DateTime.now();
+    final todayStart = DateTime(
+      now.year,
+      now.month,
+      now.day,
+    ).toUtc().toIso8601String();
+
+    final url = Uri.parse(
+      '$_apiBase/billings'
+      '?where[status][in]=pending,ordered,confirmed,prepared,delivered'
+      '&where[branch][equals]=$branchId'
+      '&where[updatedAt][greater_than_equal]=$todayStart'
+      '&limit=150'
+      '&sort=-updatedAt'
+      '&depth=1',
+    );
+
+    final response = await http.get(
+      url,
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      },
+    );
+
+    if (response.statusCode != 200) {
+      debugPrint(
+        '🛎️ Waiter alert fetch skipped: ${response.statusCode} ${response.body}',
+      );
+      return const <Map<String, dynamic>>[];
+    }
+
+    final decoded = jsonDecode(response.body);
+    final docs = decoded is Map<String, dynamic> ? decoded['docs'] : null;
+    if (docs is! List) {
+      return const <Map<String, dynamic>>[];
+    }
+
+    return docs
+        .whereType<Map>()
+        .map((raw) => Map<String, dynamic>.from(raw))
+        .toList(growable: false);
+  }
+
+  static Future<List<AutoSyncAlert>> _collectWaiterCallAlerts({
+    required SharedPreferences prefs,
+    required String token,
+    required String branchId,
+  }) async {
+    final alerts = <AutoSyncAlert>[];
+    final activeBills = await _fetchActiveBranchBillsForWaiterAlerts(
+      token: token,
+      branchId: branchId,
+    );
+    if (activeBills.isEmpty) {
+      return alerts;
+    }
+
+    final idsKey = _waiterCallHandledKey(branchId);
+    final seededKey = _waiterCallAlertsSeededKey(branchId);
+    final handledEventKeys = prefs.getStringList(idsKey)?.toSet() ?? <String>{};
+    final isSeeded = prefs.getBool(seededKey) ?? false;
+    var didPersist = false;
+
+    for (final bill in activeBills) {
+      final billId = _toText(bill['id']);
+      if (billId.isEmpty) continue;
+
+      final notes = _toText(bill['notes']);
+      if (notes.isEmpty || !notes.toUpperCase().contains('WAITER_CALL_SOS')) {
+        continue;
+      }
+
+      final acknowledgedByNotes = _extractWaiterAckEventKeys(
+        billId: billId,
+        notes: notes,
+      );
+      for (final acknowledgedEventKey in acknowledgedByNotes) {
+        if (handledEventKeys.contains(acknowledgedEventKey)) continue;
+        handledEventKeys.add(acknowledgedEventKey);
+        didPersist = true;
+      }
+
+      final parsedEntries = _extractWaiterCallEntries(
+        bill: bill,
+        billId: billId,
+        notes: notes,
+      );
+      if (parsedEntries.isEmpty) {
+        continue;
+      }
+
+      for (final entry in parsedEntries) {
+        if (handledEventKeys.contains(entry.eventKey)) {
+          continue;
+        }
+
+        if (!isSeeded) {
+          // Initial seed should not alert for historical SOS entries.
+          handledEventKeys.add(entry.eventKey);
+          didPersist = true;
+          continue;
+        }
+
+        alerts.add(AutoSyncAlert.waiterCall(entry));
+      }
+    }
+
+    if (didPersist) {
+      await _persistRememberedIds(
+        prefs: prefs,
+        key: idsKey,
+        ids: handledEventKeys,
+      );
+    }
+    if (!isSeeded) {
+      await prefs.setBool(seededKey, true);
+    }
+
+    return alerts;
+  }
+
+  static List<WaiterCallAlertPayload> _extractWaiterCallEntries({
+    required Map<String, dynamic> bill,
+    required String billId,
+    required String notes,
+  }) {
+    final tableDetails = bill['tableDetails'] is Map
+        ? Map<String, dynamic>.from(bill['tableDetails'])
+        : const <String, dynamic>{};
+    final fallbackTable = _toText(tableDetails['tableNumber']);
+    final fallbackSection = _toText(tableDetails['section']);
+    final customerName = _extractBillCustomerName(bill);
+    final kotNumber = _toText(bill['kotNumber']);
+    final entries = <WaiterCallAlertPayload>[];
+
+    for (final match in _waiterCallRegex.allMatches(notes)) {
+      final timestampIso = _toText(match.group(1));
+      final tableFromNote = _toText(match.group(2));
+      final sectionFromNote = _toText(
+        match.group(3),
+      ).replaceAll(RegExp(r'\s+'), ' ');
+      final tableNumber = tableFromNote.isNotEmpty
+          ? tableFromNote
+          : fallbackTable;
+      final section = sectionFromNote.isNotEmpty
+          ? sectionFromNote
+          : fallbackSection;
+
+      if (timestampIso.isEmpty || tableNumber.isEmpty) {
+        continue;
+      }
+
+      entries.add(
+        WaiterCallAlertPayload(
+          eventKey: '$billId|$timestampIso|$tableNumber|$section',
+          billId: billId,
+          timestampIso: timestampIso,
+          tableNumber: tableNumber,
+          section: section,
+          customerName: customerName,
+          kotNumber: kotNumber,
+        ),
+      );
+    }
+
+    return entries;
+  }
+
+  static Set<String> _extractWaiterAckEventKeys({
+    required String billId,
+    required String notes,
+  }) {
+    final keys = <String>{};
+    for (final match in _waiterAckRegex.allMatches(notes)) {
+      final timestampIso = _toText(match.group(1));
+      final table = _toText(match.group(2));
+      final section = _toText(match.group(3)).replaceAll(RegExp(r'\s+'), ' ');
+      if (timestampIso.isEmpty || table.isEmpty) continue;
+      keys.add('$billId|$timestampIso|$table|$section');
+    }
+    return keys;
+  }
+
+  static Future<void> markWaiterCallHandled({required String eventKey}) async {
+    final trimmedEventKey = eventKey.trim();
+    if (trimmedEventKey.isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final branchId = prefs.getString('branchId')?.trim() ?? '';
+    if (branchId.isEmpty) return;
+
+    final idsKey = _waiterCallHandledKey(branchId);
+    final handledEventKeys = prefs.getStringList(idsKey)?.toSet() ?? <String>{};
+    if (handledEventKeys.contains(trimmedEventKey)) {
+      return;
+    }
+    handledEventKeys.add(trimmedEventKey);
+    await _persistRememberedIds(
+      prefs: prefs,
+      key: idsKey,
+      ids: handledEventKeys,
+    );
+    await prefs.setBool(_waiterCallAlertsSeededKey(branchId), true);
+  }
+
+  static String _extractBillCustomerName(Map<String, dynamic> bill) {
+    final prioritizedCandidates = <dynamic>[
+      bill['customerDetails'],
+      bill['customer'],
+      bill['customerName'],
+      bill['customerDetailsName'],
+      bill['createdBy'],
+    ];
+    for (final candidate in prioritizedCandidates) {
+      final name = _extractNameFromAny(candidate);
+      if (name.isNotEmpty) {
+        return name;
+      }
+    }
+    return 'Guest';
+  }
+
+  static String _extractNameFromAny(dynamic value) {
+    if (value == null) return '';
+    if (value is String) return value.trim();
+    if (value is Map) {
+      final map = Map<String, dynamic>.from(value);
+      const keys = <String>[
+        'name',
+        'customerName',
+        'fullName',
+        'displayName',
+        'username',
+      ];
+      for (final key in keys) {
+        final candidate = _toText(map[key]);
+        if (candidate.isNotEmpty) {
+          return candidate;
+        }
+      }
+      return '';
+    }
+    return _toText(value);
   }
 
   static Future<List<AutoSyncAlert>> _collectCompletedBillAlerts({
@@ -1698,13 +1991,60 @@ class KotAutoPrintService {
 
   static String _completedBillAlertsSeededKey(String userId, String branchId) =>
       'auto_kot_completed_bill_alerts_seeded_v1_${userId}_$branchId';
+
+  static String _waiterCallHandledKey(String branchId) =>
+      'auto_waiter_call_handled_v1_$branchId';
+
+  static String _waiterCallAlertsSeededKey(String branchId) =>
+      'auto_waiter_call_alerts_seeded_v1_$branchId';
 }
 
+enum AutoSyncAlertType { general, waiterCall }
+
 class AutoSyncAlert {
-  const AutoSyncAlert({required this.message, required this.isSuccess});
+  const AutoSyncAlert({
+    required this.message,
+    required this.isSuccess,
+    this.type = AutoSyncAlertType.general,
+    this.waiterCall,
+  });
+
+  AutoSyncAlert.waiterCall(WaiterCallAlertPayload payload)
+    : this(
+        message:
+            'Table ${payload.tableNumber} Customer: ${payload.customerName} Calling',
+        isSuccess: false,
+        type: AutoSyncAlertType.waiterCall,
+        waiterCall: payload,
+      );
 
   final String message;
   final bool isSuccess;
+  final AutoSyncAlertType type;
+  final WaiterCallAlertPayload? waiterCall;
+
+  bool get isWaiterCall =>
+      type == AutoSyncAlertType.waiterCall && waiterCall != null;
+}
+
+class WaiterCallAlertPayload {
+  const WaiterCallAlertPayload({
+    required this.eventKey,
+    required this.billId,
+    required this.timestampIso,
+    required this.tableNumber,
+    required this.section,
+    required this.customerName,
+    required this.kotNumber,
+  });
+
+  final String eventKey;
+  final String billId;
+  final String timestampIso;
+  final String tableNumber;
+  final String section;
+  final String customerName;
+  final String kotNumber;
 }
 
 class _KotPrintConfig {

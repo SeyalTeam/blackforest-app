@@ -1157,22 +1157,20 @@ class _ProductsPageState extends State<ProductsPage> {
     return 0.0;
   }
 
-  double _readProductPrice(Map<String, dynamic> product) {
-    var price = _toDouble(product['defaultPriceDetails']?['price']);
-    if (_branchId != null && product['branchOverrides'] is List) {
-      for (final rawOverride in product['branchOverrides']) {
-        if (rawOverride is! Map) continue;
-        final branch = rawOverride['branch'];
-        final branchId = branch is Map
-            ? (branch[r'$oid'] ?? branch['id'] ?? '').toString()
-            : (branch ?? '').toString();
-        if (branchId == _branchId) {
-          price = _toDouble(rawOverride['price']);
-          break;
-        }
-      }
-    }
-    return price;
+  double _readProductPrice(
+    Map<String, dynamic> product, {
+    CartProvider? cartProvider,
+  }) {
+    final provider =
+        cartProvider ?? Provider.of<CartProvider>(context, listen: false);
+    final tableSection = provider.currentType == CartType.table
+        ? provider.selectedSection
+        : null;
+    return CartItem.resolveProductPrice(
+      product,
+      branchId: _branchId,
+      tableSection: tableSection,
+    );
   }
 
   bool? _readIsVegStatus(Map<String, dynamic> product) {
@@ -1487,7 +1485,7 @@ class _ProductsPageState extends State<ProductsPage> {
     }
 
     // Step 1: Get product price
-    final price = _readProductPrice(product);
+    final price = _readProductPrice(product, cartProvider: cartProvider);
 
     // Step 2: Detect if the product is weight-based
     final isWeightBased = _isWeightBasedProduct(product);
@@ -1553,6 +1551,7 @@ class _ProductsPageState extends State<ProductsPage> {
       quantity,
       branchPrice: price,
       branchId: _branchId,
+      tableSection: cartProvider.selectedSection,
     );
     if (isWeightBased) {
       if (existingItem.id.isNotEmpty) {
@@ -2102,7 +2101,6 @@ class _ProductsPageState extends State<ProductsPage> {
     final productId = _productId(product);
     final productName = (product['name'] ?? 'Unknown').toString().trim();
     final imageUrl = _resolveProductImage(product);
-    final price = _readProductPrice(product);
     final isVeg = _readIsVegStatus(product);
     final badgeInfo = _readProductBadgeInfo(product);
     final hasMetaRow = isVeg != null || badgeInfo != null;
@@ -2112,6 +2110,7 @@ class _ProductsPageState extends State<ProductsPage> {
 
     return Consumer<CartProvider>(
       builder: (context, cartProvider, child) {
+        final price = _readProductPrice(product, cartProvider: cartProvider);
         final qty = _qtyInCart(cartProvider, productId);
         final isFavorite = _favoriteProductIds.contains(productId);
         final showFocusHighlight =
@@ -2348,27 +2347,15 @@ class _ProductsPageState extends State<ProductsPage> {
                     imageUrl ??=
                         'https://via.placeholder.com/150?text=No+Image';
 
-                    dynamic priceDetails = product['defaultPriceDetails'];
-                    if (_branchId != null &&
-                        product['branchOverrides'] != null) {
-                      for (var override in product['branchOverrides']) {
-                        var branch = override['branch'];
-                        String branchOid = branch is Map
-                            ? branch[r'$oid'] ?? branch['id'] ?? ''
-                            : branch ?? '';
-                        if (branchOid == _branchId) {
-                          priceDetails = override;
-                          break;
-                        }
-                      }
-                    }
-                    final price = priceDetails != null
-                        ? '₹${priceDetails['price'] ?? 0}'
-                        : '₹0';
                     return GestureDetector(
                       onTap: () => _toggleProductSelection(index),
                       child: Consumer<CartProvider>(
                         builder: (context, cartProvider, child) {
+                          final resolvedPrice = _readProductPrice(
+                            Map<String, dynamic>.from(product),
+                            cartProvider: cartProvider,
+                          );
+                          final price = _formatCompactPrice(resolvedPrice);
                           final isSelected = cartProvider.cartItems.any(
                             (i) => i.id == product['id'],
                           );

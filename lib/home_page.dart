@@ -2430,7 +2430,10 @@ class _HomePageState extends State<HomePage> {
     return 0.0;
   }
 
-  double _readProductPrice(Map<String, dynamic> product) {
+  double _readProductPrice(
+    Map<String, dynamic> product, {
+    CartProvider? cartProvider,
+  }) {
     final directPrice = _toDouble(product['price']);
     if (directPrice > 0) return directPrice;
 
@@ -2439,7 +2442,16 @@ class _HomePageState extends State<HomePage> {
     );
     if (labelPrice > 0) return labelPrice;
 
-    return _toDouble(product['defaultPriceDetails']?['price']);
+    final provider =
+        cartProvider ?? Provider.of<CartProvider>(context, listen: false);
+    final tableSection = provider.currentType == CartType.table
+        ? provider.selectedSection
+        : null;
+    return CartItem.resolveProductPrice(
+      product,
+      branchId: _branchId,
+      tableSection: tableSection,
+    );
   }
 
   bool? _readIsVegStatus(Map<String, dynamic> product) {
@@ -2583,8 +2595,9 @@ class _HomePageState extends State<HomePage> {
     final item = CartItem.fromProduct(
       product,
       1,
-      branchPrice: _readProductPrice(product),
+      branchPrice: _readProductPrice(product, cartProvider: cartProvider),
       branchId: _branchId,
+      tableSection: cartProvider.selectedSection,
     );
     cartProvider.addOrUpdateItem(item);
   }
@@ -3545,6 +3558,7 @@ class _HomePageState extends State<HomePage> {
                                 ),
                                 child: _buildRecommendedProductCard(
                                   product: product,
+                                  cartProvider: cartProvider,
                                   qty: qty,
                                   isFavorite: isFavorite,
                                 ),
@@ -3567,6 +3581,7 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildRecommendedProductCard({
     required Map<String, dynamic> product,
+    required CartProvider cartProvider,
     required double qty,
     required bool isFavorite,
   }) {
@@ -3575,7 +3590,9 @@ class _HomePageState extends State<HomePage> {
     final productName = (product['name'] ?? 'Product').toString();
     final isVeg = _readIsVegStatus(product);
     final badgeInfo = _readProductBadgeInfo(product);
-    final priceText = _formatPrice(_readProductPrice(product));
+    final priceText = _formatPrice(
+      _readProductPrice(product, cartProvider: cartProvider),
+    );
     final hasMetaRow = isVeg != null || badgeInfo != null;
     final topGap = hasMetaRow ? 8.0 : 10.0;
     final nameHeight = hasMetaRow ? 34.0 : 40.0;
