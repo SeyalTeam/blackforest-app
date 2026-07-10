@@ -7,6 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/app_http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:blackforest_app/session_prefs.dart';
+import 'package:blackforest_app/cart_provider.dart';
+import 'package:provider/provider.dart';
 
 class EmployeePage extends StatefulWidget {
   const EmployeePage({super.key});
@@ -90,7 +92,7 @@ class _EmployeePageState extends State<EmployeePage> {
   Future<String?> _fetchBranchName(String token, String branchId) async {
     try {
       final response = await http.get(
-        Uri.parse('https://blackforest.vseyal.com/api/branches/$branchId'),
+        Uri.parse('https://blackforest3.vseyal.com/api/branches/$branchId'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
@@ -133,7 +135,7 @@ class _EmployeePageState extends State<EmployeePage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest.vseyal.com/api/attendance?where[user][equals]=$userId&where[date][greater_than_equal]=$queryDate&sort=-date&limit=10',
+          'https://blackforest3.vseyal.com/api/attendance?where[user][equals]=$userId&where[date][greater_than_equal]=$queryDate&sort=-date&limit=10',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -304,7 +306,7 @@ class _EmployeePageState extends State<EmployeePage> {
         try {
           final now = DateTime.now();
           final searchUrl =
-              'https://blackforest.vseyal.com/api/attendance?where[user][equals]=$userId&where[activities.status][equals]=active&limit=1';
+              'https://blackforest3.vseyal.com/api/attendance?where[user][equals]=$userId&where[activities.status][equals]=active&limit=1';
           final searchResp = await http
               .get(
                 Uri.parse(searchUrl),
@@ -339,7 +341,7 @@ class _EmployeePageState extends State<EmployeePage> {
                 final updateResp = await http
                     .patch(
                       Uri.parse(
-                        'https://blackforest.vseyal.com/api/attendance/$sessionId',
+                        'https://blackforest3.vseyal.com/api/attendance/$sessionId',
                       ),
                       headers: {
                         'Authorization': 'Bearer $token',
@@ -362,6 +364,12 @@ class _EmployeePageState extends State<EmployeePage> {
         }
       }
 
+      if (mounted) {
+        await Provider.of<CartProvider>(
+          context,
+          listen: false,
+        ).clearAllDrafts(notify: false);
+      }
       await clearSessionPreservingFavorites(prefs);
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/login');

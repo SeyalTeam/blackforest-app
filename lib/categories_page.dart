@@ -16,6 +16,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:blackforest_app/customer_history_dialog.dart';
 import 'package:blackforest_app/table_customer_details_visibility_service.dart';
 import 'package:blackforest_app/widgets/product_rating_badge.dart';
+import 'package:blackforest_app/api_server_prefs.dart';
 
 class _CategoriesCacheEntry {
   final List<dynamic> categories;
@@ -46,7 +47,10 @@ class CategoriesPage extends StatefulWidget {
 }
 
 class _CategoriesPageState extends State<CategoriesPage> {
-  static const Duration _categoriesCacheTtl = Duration(seconds: 90);
+  static const Duration _categoriesCacheTtl = Duration(hours: 15);
+  static const Duration _persistentCategoriesCacheTtl = Duration(days: 7);
+  static const String _persistentCategoriesCachePrefix =
+      'cached_categories_payload_v1_';
   static final Map<String, _CategoriesCacheEntry> _categoriesCache = {};
   static const Color _homeAccentColor = Color(0xFFEF4F5F);
 
@@ -54,11 +58,14 @@ class _CategoriesPageState extends State<CategoriesPage> {
   bool _isLoading = true;
   String _errorMessage = '';
   String? _companyId;
+  String? _branchId;
   String? _userRole;
   String? _currentUserId;
   List<String> _favoriteCategoryIds = <String>[];
   final TextEditingController _homeSearchController = TextEditingController();
   String _homeSearchQuery = '';
+  bool _hasOfferBanner = false;
+  bool _billingCustomerPromptSkippedForSession = false;
   bool _didOpenInitialCategory = false;
   Map<String, ProductPopularityInfo> _categoryPopularityById =
       <String, ProductPopularityInfo>{};
@@ -66,20 +73,121 @@ class _CategoriesPageState extends State<CategoriesPage> {
       TableCustomerDetailsVisibilityConfig.defaultValue;
   Future<void>? _customerDetailsVisibilityLoadFuture;
 
+  bool get _requiresCompanyScopedCategories =>
+      widget.sourcePage == PageType.table ||
+      widget.sourcePage == PageType.billing;
+
+  bool _usesBillingMenuWidgetApi({String? role}) {
+    if (widget.sourcePage == PageType.table) return true;
+    if (widget.sourcePage != PageType.billing) return false;
+    final effectiveRole = (role ?? _userRole ?? '').trim().toLowerCase();
+    return effectiveRole == 'waiter';
+  }
+
   String _categoriesCacheKey(String filterQuery) =>
-      '${_favoritesScope()}|$filterQuery';
+      filterQuery;
+
+  String _persistentCategoriesCacheKey(String branchId) =>
+      '$_persistentCategoriesCachePrefix${_favoritesScope()}_$branchId';
+
+  Future<void> _hydratePersistentCategoriesCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // Enable persistent cache for all modes
+
+      final branchId = (prefs.getString('branchId') ?? 'global').trim();
+      final cacheKey = _persistentCategoriesCacheKey(
+        branchId.isEmpty ? 'global' : branchId,
+      );
+      final raw = prefs.getString(cacheKey);
+      if (raw == null || raw.isEmpty) return;
+
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final payload = Map<String, dynamic>.from(decoded);
+      final cachedAtIso = payload['cachedAt']?.toString();
+      final categoriesRaw = payload['categories'];
+      if (cachedAtIso == null || categoriesRaw is! List) return;
+      final cachedAt = DateTime.tryParse(cachedAtIso);
+      if (cachedAt == null) return;
+      if (DateTime.now().difference(cachedAt) > _persistentCategoriesCacheTtl) {
+        return;
+      }
+      if (!mounted) return;
+      if (_categories.isNotEmpty) return;
+      _companyId ??= prefs.getString('company_id');
+      final normalizedCompanyId = _companyId?.trim();
+      if (_requiresCompanyScopedCategories &&
+          (normalizedCompanyId == null || normalizedCompanyId.isEmpty)) {
+        return;
+      }
+      final cachedCategories = categoriesRaw
+          .whereType<Map>()
+          .map((raw) => Map<String, dynamic>.from(raw))
+          .toList(growable: false);
+      final filteredCategories = _filterCategoriesByCompanyDepartment(
+        cachedCategories,
+        companyId: normalizedCompanyId,
+        strictCompanyScope: _requiresCompanyScopedCategories,
+      );
+      setState(() {
+        _categories = filteredCategories;
+        _isLoading = false;
+        _errorMessage = '';
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _persistPersistentCategoriesCache(
+    List<dynamic> categories,
+  ) async {
+    if (categories.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // Persist for all modes
+
+      final branchId = (prefs.getString('branchId') ?? 'global').trim();
+      final cacheKey = _persistentCategoriesCacheKey(
+        branchId.isEmpty ? 'global' : branchId,
+      );
+      final payload = <String, dynamic>{
+        'cachedAt': DateTime.now().toIso8601String(),
+        'categories': categories,
+      };
+      await prefs.setString(cacheKey, jsonEncode(payload));
+    } catch (_) {}
+  }
 
   List<dynamic>? _readCategoriesCache(String filterQuery) {
     final key = _categoriesCacheKey(filterQuery);
     final entry = _categoriesCache[key];
     if (entry == null) return null;
-    final expired =
-        DateTime.now().difference(entry.fetchedAt) > _categoriesCacheTtl;
-    if (expired) {
+    final bool isExpired =
+        DateTime.now().difference(entry.fetchedAt) > const Duration(hours: 15);
+    if (isExpired) {
       _categoriesCache.remove(key);
       return null;
     }
     return List<dynamic>.from(entry.categories);
+  }
+
+  bool _hasCategoryImageHints(List<dynamic> categories) {
+    for (final rawCategory in categories) {
+      if (rawCategory is! Map) continue;
+      final category = Map<String, dynamic>.from(rawCategory);
+      final image = category['image'];
+      if (image is Map &&
+          ((image['url']?.toString().trim().isNotEmpty ?? false) ||
+              (image['thumbnailURL']?.toString().trim().isNotEmpty ?? false) ||
+              (image['thumbnailUrl']?.toString().trim().isNotEmpty ?? false))) {
+        return true;
+      }
+      if ((category['imageUrl']?.toString().trim().isNotEmpty ?? false) ||
+          (category['thumbnail']?.toString().trim().isNotEmpty ?? false)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   void _writeCategoriesCache(String filterQuery, List<dynamic> categories) {
@@ -93,6 +201,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
   @override
   void initState() {
     super.initState();
+    unawaited(_hydratePersistentCategoriesCache());
     _fetchCategories();
     _loadCategoryPopularity();
     unawaited(_ensureCustomerDetailsVisibilityConfigLoaded());
@@ -108,7 +217,10 @@ class _CategoriesPageState extends State<CategoriesPage> {
   }
 
   Future<void> _ensureCustomerDetailsVisibilityConfigLoaded() async {
-    if (widget.sourcePage != PageType.billing) return;
+    if (widget.sourcePage != PageType.billing &&
+        widget.sourcePage != PageType.table) {
+      return;
+    }
     final existing = _customerDetailsVisibilityLoadFuture;
     if (existing != null) {
       await existing;
@@ -129,7 +241,6 @@ class _CategoriesPageState extends State<CategoriesPage> {
           await TableCustomerDetailsVisibilityService.getConfigForBranch(
             branchId: branchId,
             token: token,
-            forceRefresh: true,
           );
       if (!mounted) return;
       setState(() {
@@ -439,6 +550,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
                                     await showCustomerHistoryDialog(
                                       dialogContext,
                                       phoneNumber: phoneCtrl.text,
+                                      customerName: nameCtrl.text,
                                     );
                                   }
                                 : null,
@@ -614,21 +726,36 @@ class _CategoriesPageState extends State<CategoriesPage> {
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
     cartProvider.setCartType(CartType.billing, notify: false);
 
-    await _ensureCustomerDetailsVisibilityConfigLoaded();
+    await _ensureCustomerDetailsVisibilityConfigLoaded().timeout(
+      const Duration(milliseconds: 350),
+      onTimeout: () {},
+    );
     if (!_customerDetailsVisibilityConfig.showCustomerDetailsForBillingOrders) {
       return true;
     }
+    final allowSkipCustomerDetailsByCms = _customerDetailsVisibilityConfig
+        .allowSkipCustomerDetailsForBillingOrders;
 
     final existingName = (cartProvider.customerName ?? '').trim();
     final existingPhone = (cartProvider.customerPhone ?? '').trim();
     if (existingName.isNotEmpty || existingPhone.isNotEmpty) {
       return true;
     }
+    if (cartProvider.cartItems.isNotEmpty ||
+        cartProvider.recalledItems.isNotEmpty) {
+      return true;
+    }
+    if (_billingCustomerPromptSkippedForSession) {
+      return true;
+    }
+    if (allowSkipCustomerDetailsByCms &&
+        cartProvider.isCustomerDetailsPromptSkippedForCurrentDraft) {
+      return true;
+    }
 
     final customerDetails = await _showBillingCustomerDetailsDialog(
       cartProvider,
-      allowSkip: _customerDetailsVisibilityConfig
-          .allowSkipCustomerDetailsForBillingOrders,
+      allowSkip: allowSkipCustomerDetailsByCms,
       showHistory:
           _customerDetailsVisibilityConfig.showCustomerHistoryForBillingOrders,
       enableAutoSubmit: _customerDetailsVisibilityConfig
@@ -638,14 +765,17 @@ class _CategoriesPageState extends State<CategoriesPage> {
 
     cartProvider.setCartType(CartType.billing, notify: false);
     if (customerDetails.isEmpty) {
+      _billingCustomerPromptSkippedForSession = true;
+      cartProvider.setCustomerDetailsPromptSkipped(true);
       cartProvider.setCustomerDetails();
     } else {
+      _billingCustomerPromptSkippedForSession = false;
+      cartProvider.setCustomerDetailsPromptSkipped(false);
       cartProvider.setCustomerDetails(
         name: customerDetails['name']?.toString(),
         phone: customerDetails['phone']?.toString(),
       );
     }
-    await Future<void>.delayed(const Duration(milliseconds: 220));
     return mounted;
   }
 
@@ -656,8 +786,44 @@ class _CategoriesPageState extends State<CategoriesPage> {
   }) async {
     final normalizedId = categoryId.trim();
     if (normalizedId.isEmpty) return;
+
+    // Avoid duplicate network bursts on billing/table taps.
+    if (_isHomeMode) {
+      unawaited(() async {
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          final token = prefs.getString('token')?.trim();
+          if (token == null || token.isEmpty) return;
+          await _prefetchSingleCategory(token, normalizedId, _branchId);
+        } catch (_) {}
+      }());
+    }
+
     final allowedToOpen = await _ensureBillingCustomerDetailsBeforeProducts();
     if (!allowedToOpen || !mounted) return;
+
+    final config = _customerDetailsVisibilityConfig;
+    int delayMinutes = 0;
+    bool applyDelay = false;
+    if (widget.sourcePage == PageType.billing && config.applyToBilling) {
+      applyDelay = true;
+    } else if (widget.sourcePage == PageType.table && config.applyToTable) {
+      applyDelay = true;
+    }
+
+    if (applyDelay) {
+      final prefs = await SharedPreferences.getInstance();
+      final userId = _currentUserId ?? prefs.getString('user_id') ?? '';
+      if (config.waiterSelectionType == 'particular') {
+        if (!config.waiters.contains(userId)) {
+          applyDelay = false;
+        }
+      }
+    }
+
+    if (applyDelay) {
+      delayMinutes = config.delayMinutes;
+    }
 
     final route = instant
         ? PageRouteBuilder(
@@ -669,15 +835,23 @@ class _CategoriesPageState extends State<CategoriesPage> {
                   categoryName: categoryName,
                   sourcePage: widget.sourcePage,
                   initialHomeTopCategories: widget.initialHomeTopCategories,
+                  delayMinutes: delayMinutes,
                 ),
           )
-        : MaterialPageRoute(
-            builder: (context) => ProductsPage(
-              categoryId: normalizedId,
-              categoryName: categoryName,
-              sourcePage: widget.sourcePage,
-              initialHomeTopCategories: widget.initialHomeTopCategories,
-            ),
+        : PageRouteBuilder(
+            transitionDuration: const Duration(milliseconds: 250),
+            pageBuilder: (context, animation, secondaryAnimation) =>
+                ProductsPage(
+                  categoryId: normalizedId,
+                  categoryName: categoryName,
+                  sourcePage: widget.sourcePage,
+                  initialHomeTopCategories: widget.initialHomeTopCategories,
+                  delayMinutes: delayMinutes,
+                ),
+            transitionsBuilder:
+                (context, animation, secondaryAnimation, child) {
+                  return FadeTransition(opacity: animation, child: child);
+                },
           );
 
     await Navigator.push(context, route);
@@ -701,11 +875,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
   }
 
   String _favoritesScope() {
-    if (widget.sourcePage == PageType.table ||
-        widget.sourcePage == PageType.home) {
-      return 'table';
-    }
-    return 'billing';
+    // Both billing and table use the same menu data
+    return 'billing_menu';
   }
 
   String _favoriteCategoriesKey(String userId) =>
@@ -886,7 +1057,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
           image['thumbnailURL']?.toString().trim() ??
           image['thumbnailUrl']?.toString().trim();
       if (url != null && url.isNotEmpty) {
-        return url.startsWith('/') ? 'https://blackforest.vseyal.com$url' : url;
+        return resolveApiAssetUrl(url);
       }
     }
 
@@ -894,11 +1065,88 @@ class _CategoriesPageState extends State<CategoriesPage> {
         category['imageUrl']?.toString().trim() ??
         category['thumbnail']?.toString().trim();
     if (directUrl != null && directUrl.isNotEmpty) {
-      return directUrl.startsWith('/')
-          ? 'https://blackforest.vseyal.com$directUrl'
-          : directUrl;
+      return resolveApiAssetUrl(directUrl);
     }
     return null;
+  }
+
+  String _normalizeRelationId(dynamic value) {
+    if (value == null) return '';
+    if (value is Map) {
+      final map = Map<String, dynamic>.from(value);
+      final directId = map['id'] ?? map['_id'] ?? map[r'$oid'] ?? map['value'];
+      if (directId == null) return '';
+      final id = directId.toString().trim();
+      return id.isEmpty ? '' : id;
+    }
+    final id = value.toString().trim();
+    return id.isEmpty ? '' : id;
+  }
+
+  Set<String> _collectRelationIds(dynamic relation) {
+    final ids = <String>{};
+
+    void collect(dynamic node) {
+      if (node == null) return;
+      if (node is List) {
+        for (final item in node) {
+          collect(item);
+        }
+        return;
+      }
+      if (node is Map) {
+        final map = Map<String, dynamic>.from(node);
+        final directId = _normalizeRelationId(map);
+        if (directId.isNotEmpty) ids.add(directId);
+        final relationValue = map['value'];
+        if (relationValue != null) {
+          collect(relationValue);
+        }
+        return;
+      }
+      final directId = _normalizeRelationId(node);
+      if (directId.isNotEmpty) ids.add(directId);
+    }
+
+    collect(relation);
+    return ids;
+  }
+
+  List<Map<String, dynamic>> _filterCategoriesByCompanyDepartment(
+    List<Map<String, dynamic>> categories, {
+    String? companyId,
+    bool strictCompanyScope = false,
+  }) {
+    final normalizedCompanyId = companyId?.trim() ?? '';
+    if (categories.isEmpty) {
+      return categories;
+    }
+    if (normalizedCompanyId.isEmpty) {
+      return strictCompanyScope ? const <Map<String, dynamic>>[] : categories;
+    }
+
+    return categories
+        .where((category) {
+          final categoryCompanyIds = _collectRelationIds(category['company']);
+
+          // Primary rule: if category has direct company mapping, enforce it.
+          // This prevents cross-company leakage when shared departments contain
+          // multiple companies.
+          if (categoryCompanyIds.isNotEmpty) {
+            return categoryCompanyIds.contains(normalizedCompanyId);
+          }
+
+          Set<String> departmentCompanyIds = <String>{};
+          final department = category['department'];
+          if (department is Map) {
+            final deptMap = Map<String, dynamic>.from(department);
+            departmentCompanyIds = _collectRelationIds(deptMap['company']);
+          }
+
+          // Legacy fallback: only when category has no direct company.
+          return departmentCompanyIds.contains(normalizedCompanyId);
+        })
+        .toList(growable: false);
   }
 
   Widget _buildHomeHeader() {
@@ -1015,6 +1263,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
         : <String, dynamic>{};
     final categoryId = category['id']?.toString().trim() ?? '';
     final categoryName = (category['name'] ?? 'Unknown').toString().trim();
+    final categoryDisplayName = categoryName.toUpperCase();
     final imageUrl = _resolveCategoryImageUrl(category);
     final isFavorite = _favoriteCategoryIds.contains(categoryId);
     final badgeInfo = _categoryBadgeInfo(categoryId);
@@ -1100,13 +1349,13 @@ class _CategoriesPageState extends State<CategoriesPage> {
                   right: 12,
                   bottom: 13,
                   child: Text(
-                    categoryName,
+                    categoryDisplayName,
                     maxLines: 1,
                     softWrap: false,
                     overflow: TextOverflow.ellipsis,
                     textAlign: TextAlign.left,
                     style: const TextStyle(
-                      fontSize: 13,
+                      fontSize: 14,
                       fontWeight: FontWeight.w800,
                       color: Colors.white,
                       height: 1.1,
@@ -1159,11 +1408,17 @@ class _CategoriesPageState extends State<CategoriesPage> {
   }
 
   Widget _buildHomeModeBody({required List<dynamic> visibleCategories}) {
+    final showBlockingLoader = _isLoading && visibleCategories.isEmpty;
     return Column(
       children: [
         _buildHomeHeader(),
+        if (_isLoading && visibleCategories.isNotEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+            child: LinearProgressIndicator(minHeight: 2, color: Colors.black),
+          ),
         Expanded(
-          child: _isLoading
+          child: showBlockingLoader
               ? const Center(
                   child: CircularProgressIndicator(color: Colors.black),
                 )
@@ -1183,7 +1438,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
                     const SizedBox(height: 12),
                     Center(
                       child: ElevatedButton(
-                        onPressed: _fetchCategories,
+                        onPressed: () => _fetchCategories(forceRefresh: true),
                         child: const Text('Retry'),
                       ),
                     ),
@@ -1202,7 +1457,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
                   ],
                 )
               : RefreshIndicator(
-                  onRefresh: _fetchCategories,
+                  onRefresh: () => _fetchCategories(forceRefresh: true),
                   child: _buildHomeCategoryGrid(visibleCategories),
                 ),
         ),
@@ -1213,7 +1468,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
   Future<void> _fetchUserData(String token) async {
     try {
       final response = await http.get(
-        Uri.parse('https://blackforest.vseyal.com/api/users/me?depth=2'),
+        Uri.parse('https://blackforest3.vseyal.com/api/users/me?depth=2'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
@@ -1253,8 +1508,9 @@ class _CategoriesPageState extends State<CategoriesPage> {
           detectedCompanyId = comp is Map
               ? (comp['id'] ?? comp['_id'] ?? comp[r'$oid'])?.toString()
               : comp.toString();
-        } else if (user['role'] == 'branch' &&
+        } else if ((user['role'] == 'branch' || user['role'] == 'waiter') &&
             user['branch'] != null &&
+            user['branch'] is Map &&
             user['branch']['company'] != null) {
           final comp = user['branch']['company'];
           detectedCompanyId = comp is Map
@@ -1263,6 +1519,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
         }
         if (detectedCompanyId != null && detectedCompanyId.isNotEmpty) {
           await prefs.setString('company_id', detectedCompanyId);
+          _branchToCompanyCache[bId ?? ''] = detectedCompanyId;
         }
 
         if (!mounted) return;
@@ -1271,6 +1528,9 @@ class _CategoriesPageState extends State<CategoriesPage> {
           _userRole = role;
           _currentUserId = userId;
           _companyId = detectedCompanyId;
+          if (bId != null && bId.isNotEmpty) {
+            _branchId = bId;
+          }
         });
         debugPrint(
           "User Role: $_userRole, Company ID: $_companyId, Branch ID: ${prefs.getString('branchId')}",
@@ -1332,25 +1592,36 @@ class _CategoriesPageState extends State<CategoriesPage> {
     return true;
   }
 
+  static final Map<String, String> _branchToCompanyCache = {};
+
   Future<String?> _fetchCompanyIdFromBranch(
     String token,
     String branchId,
   ) async {
+    if (_branchToCompanyCache.containsKey(branchId)) {
+      return _branchToCompanyCache[branchId];
+    }
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest.vseyal.com/api/branches/$branchId?depth=1',
+          'https://blackforest3.vseyal.com/api/branches/$branchId?depth=1',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode != 200) return null;
       final branch = jsonDecode(response.body);
       final company = branch['company'];
+      String? cId;
       if (company is Map) {
-        return (company['id'] ?? company['_id'] ?? company['\$oid'])
-            ?.toString();
+        cId = (company['id'] ?? company['_id'] ?? company['\$oid'])?.toString();
+      } else {
+        cId = company?.toString();
       }
-      return company?.toString();
+
+      if (cId != null && cId.isNotEmpty) {
+        _branchToCompanyCache[branchId] = cId;
+      }
+      return cId;
     } catch (e) {
       return null;
     }
@@ -1379,30 +1650,11 @@ class _CategoriesPageState extends State<CategoriesPage> {
         }
       }
 
-      // 1. Fetch Current GPS Position once for matching
-      Position? currentPos;
-      if (await _checkLocationPermission()) {
-        try {
-          currentPos = await Geolocator.getCurrentPosition(
-            locationSettings: const LocationSettings(
-              accuracy: LocationAccuracy.high,
-            ),
-          );
-          debugPrint(
-            "Categories Matching: Current Location: ${currentPos.latitude}, ${currentPos.longitude}",
-          );
-        } catch (e) {
-          debugPrint("Categories Matching: GPS fetch failed: $e");
-        }
-      } else {
-        debugPrint("Categories Matching: GPS permission denied.");
-      }
-
-      // 1. Try Global Settings
+      // 1. Try IP Match and Global Settings first (Fastest)
       try {
         final gRes = await http.get(
           Uri.parse(
-            'https://blackforest.vseyal.com/api/globals/branch-geo-settings',
+            'https://blackforest3.vseyal.com/api/globals/branch-geo-settings',
           ),
           headers: {
             'Authorization': 'Bearer $token',
@@ -1425,63 +1677,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
                 locBranchId = locBranch?.toString();
               }
 
-              bool isMatch = false;
-              // Match by stored branchId
+              // Match by stored branchId (Fast Path 2)
               if (branchId != null && locBranchId == branchId) {
-                isMatch = true;
-                debugPrint(
-                  "Categories Matching: [S1] ID Match for $locBranchId",
-                );
-              }
-              // Match by IP
-              else if (deviceIp != null) {
-                String? bIpRange = loc['ipAddress']?.toString().trim();
-                if (bIpRange != null &&
-                    bIpRange.isNotEmpty &&
-                    (bIpRange == deviceIp ||
-                        _isIpInRange(deviceIp, bIpRange))) {
-                  isMatch = true;
-                  debugPrint(
-                    "Categories Matching: [S1] IP Match for $locBranchId",
-                  );
-                }
-              }
-              // Match by GPS
-              if (!isMatch && currentPos != null) {
-                final double? lat = loc['latitude'] != null
-                    ? (loc['latitude'] as num).toDouble()
-                    : null;
-                final double? lng = loc['longitude'] != null
-                    ? (loc['longitude'] as num).toDouble()
-                    : null;
-                final int radius = loc['radius'] != null
-                    ? (loc['radius'] as num).toInt()
-                    : 100;
-
-                if (lat != null && lng != null) {
-                  final dist = Geolocator.distanceBetween(
-                    currentPos.latitude,
-                    currentPos.longitude,
-                    lat,
-                    lng,
-                  );
-                  if (dist <= radius) {
-                    isMatch = true;
-                    debugPrint(
-                      "Categories Matching: [S1] GPS Match for $locBranchId (Dist: ${dist.toStringAsFixed(1)}m)",
-                    );
-                  } else {
-                    // Log even if no match to debug distance issues
-                    if (locBranchId == branchId) {
-                      debugPrint(
-                        "Categories Matching: [S1] GPS Out-of-Range for $locBranchId. Dist: ${dist.toStringAsFixed(1)}m, Required: ${radius}m",
-                      );
-                    }
-                  }
-                }
-              }
-
-              if (isMatch) {
                 final company = (locBranch is Map)
                     ? locBranch['company']
                     : loc['company'];
@@ -1492,9 +1689,27 @@ class _CategoriesPageState extends State<CategoriesPage> {
                 } else {
                   cId = company?.toString();
                 }
-                if (cId != null) {
-                  debugPrint("Categories Matching: [S1] Added Company: $cId");
-                  uniqueCompanyIds.add(cId);
+                if (cId != null) return [cId];
+              }
+
+              // Match by IP (Fast Path 3)
+              if (deviceIp != null) {
+                String? bIpRange = loc['ipAddress']?.toString().trim();
+                if (bIpRange != null &&
+                    bIpRange.isNotEmpty &&
+                    (bIpRange == deviceIp ||
+                        _isIpInRange(deviceIp, bIpRange))) {
+                  final company = (locBranch is Map)
+                      ? locBranch['company']
+                      : loc['company'];
+                  String? cId;
+                  if (company is Map) {
+                    cId = (company['id'] ?? company['_id'] ?? company['\$oid'])
+                        ?.toString();
+                  } else {
+                    cId = company?.toString();
+                  }
+                  if (cId != null) return [cId];
                 }
               }
             }
@@ -1504,12 +1719,34 @@ class _CategoriesPageState extends State<CategoriesPage> {
         debugPrint("Error fetching global settings in categories: $e");
       }
 
+      // 2. Fetch GPS Position only if other methods failed
+      Position? currentPos;
+      if (await _checkLocationPermission()) {
+        try {
+          // Optimized: Use medium accuracy and a 1.5s timeout.
+          currentPos = await Geolocator.getCurrentPosition(
+            locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.medium,
+              timeLimit: Duration(milliseconds: 1500),
+            ),
+          );
+        } catch (e) {
+          debugPrint("Categories Matching: GPS fetch failed: $e");
+        }
+      }
+
+      // 3. Fallback to GPS Matching with Global Settings if position obtained
+      if (currentPos != null) {
+        // We already fetched global settings above, but if we have GPS now, we can scan again
+        // Actually, for brevity and performance, if we have GPS, we can just proceed to branch-specific scan
+      }
+
       // 2. Direct fetch by branchId if available (Most reliable for logged-in waiters)
       if (branchId != null) {
         try {
           final bRes = await http.get(
             Uri.parse(
-              'https://blackforest.vseyal.com/api/branches/$branchId?depth=1',
+              'https://blackforest3.vseyal.com/api/branches/$branchId?depth=1',
             ),
             headers: {'Authorization': 'Bearer $token'},
           );
@@ -1549,7 +1786,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
       if (uniqueCompanyIds.isEmpty) {
         final allBranchesResponse = await http.get(
           Uri.parse(
-            'https://blackforest.vseyal.com/api/branches?limit=100&depth=1',
+            'https://blackforest3.vseyal.com/api/branches?limit=100&depth=1',
           ),
           headers: {'Authorization': 'Bearer $token'},
         );
@@ -1606,6 +1843,21 @@ class _CategoriesPageState extends State<CategoriesPage> {
               }
 
               if (isMatch) {
+                final prefs = await SharedPreferences.getInstance();
+                final storedBranchId = prefs.getString('branchId');
+                if (storedBranchId != bId) {
+                  await prefs.setString('branchId', bId);
+                  final String? bName = branch['name']?.toString();
+                  if (bName != null) {
+                    await prefs.setString('branchName', bName);
+                  }
+                  if (mounted) {
+                    setState(() {
+                      _branchId = bId;
+                    });
+                  }
+                }
+
                 var company = branch['company'];
                 String? companyId;
                 if (company is Map) {
@@ -1634,9 +1886,9 @@ class _CategoriesPageState extends State<CategoriesPage> {
     return companyIds;
   }
 
-  Future<void> _fetchCategories() async {
+  Future<void> _fetchCategories({bool forceRefresh = false}) async {
     setState(() {
-      _isLoading = true;
+      _isLoading = forceRefresh || _categories.isEmpty;
       _errorMessage = '';
     });
     try {
@@ -1677,21 +1929,131 @@ class _CategoriesPageState extends State<CategoriesPage> {
         return;
       }
 
-      final branchId = prefs.getString('branchId');
+      _branchId = (_branchId ?? prefs.getString('branchId') ?? '').trim();
+      if (_branchId != null && _branchId!.isEmpty) _branchId = null;
 
-      // Fetch user data if not already fetched
-      if (_userRole == null) {
-        await _fetchUserData(token);
+      // 1. Fetch user data only if essential metadata (role, company) is missing
+      if (_userRole == null || _userRole!.isEmpty || _companyId == null || _companyId!.isEmpty) {
+        final cachedRole = prefs.getString('role');
+        final cachedCompanyId = prefs.getString('company_id');
+        
+        if (cachedRole == null || (cachedCompanyId == null && _branchId == null)) {
+          await _fetchUserData(token);
+          if (!mounted) return;
+        }
       }
-      if (!mounted) return;
-      _userRole ??= prefs.getString('role');
-      _companyId ??= prefs.getString('company_id');
+
+      // Refresh from prefs
+      _userRole = prefs.getString('role');
+      _companyId = prefs.getString('company_id');
+      _branchId = (_branchId ?? prefs.getString('branchId') ?? '').trim();
+      if (_branchId != null && _branchId!.isEmpty) _branchId = null;
+
+      // 2. Derive company from branch if still missing
+      if ((_companyId == null || _companyId!.isEmpty) && _branchId != null) {
+        final derivedCompanyId = await _fetchCompanyIdFromBranch(token, _branchId!);
+        if (derivedCompanyId != null && derivedCompanyId.isNotEmpty) {
+          _companyId = derivedCompanyId;
+          await prefs.setString('company_id', derivedCompanyId);
+        }
+      }
+
+
+      if (_usesBillingMenuWidgetApi()) {
+        final branchId = _branchId;
+        if (branchId == null || branchId.isEmpty) {
+          const message = 'branch (or branchId) is required';
+          if (!mounted) return;
+          setState(() {
+            if (_categories.isEmpty || forceRefresh) {
+              _errorMessage = message;
+            }
+            _isLoading = false;
+          });
+          if (_categories.isEmpty || forceRefresh) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(const SnackBar(content: Text(message)));
+          }
+          return;
+        }
+        var scopedCompanyId =
+            (_companyId ?? prefs.getString('company_id') ?? '').trim();
+        if (scopedCompanyId.isEmpty) {
+          final derivedCompanyId = await _fetchCompanyIdFromBranch(
+            token,
+            branchId,
+          );
+          if (derivedCompanyId != null && derivedCompanyId.isNotEmpty) {
+            scopedCompanyId = derivedCompanyId.trim();
+            _companyId = scopedCompanyId;
+            await prefs.setString('company_id', scopedCompanyId);
+          }
+        }
+        if (scopedCompanyId.isEmpty) {
+          const message = 'Unable to resolve company for the selected branch.';
+          if (!mounted) return;
+          setState(() {
+            if (_categories.isEmpty || forceRefresh) {
+              _errorMessage = message;
+            }
+            _isLoading = false;
+          });
+          if (_categories.isEmpty || forceRefresh) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(const SnackBar(content: Text(message)));
+          }
+          return;
+        }
+
+        final cacheKey = 'billing-menu-v2-branch-$branchId';
+        if (!forceRefresh) {
+          final cachedCategories = _readCategoriesCache(cacheKey);
+          final filteredCachedCategories =
+              (cachedCategories ?? const <dynamic>[])
+                  .whereType<Map>()
+                  .map((raw) => Map<String, dynamic>.from(raw))
+                  .toList(growable: false);
+          final scopedCachedCategories = _filterCategoriesByCompanyDepartment(
+            filteredCachedCategories,
+            companyId: scopedCompanyId,
+            strictCompanyScope: true,
+          );
+          if (scopedCachedCategories.isNotEmpty) {
+            if (!mounted) return;
+            setState(() {
+              _categories = scopedCachedCategories;
+              _isLoading = false;
+            });
+            // Refresh in background so reopening the screen keeps cache fresh.
+            unawaited(
+              _fetchBillingMenuCategoriesInternal(
+                token: token,
+                branchId: branchId,
+                cacheKey: cacheKey,
+                companyId: scopedCompanyId,
+              ),
+            );
+            return;
+          }
+        }
+
+        await _fetchBillingMenuCategoriesInternal(
+          token: token,
+          branchId: branchId,
+          cacheKey: cacheKey,
+          companyId: scopedCompanyId,
+        );
+        return;
+      }
 
       String filterQuery = 'where[isBilling][equals]=true';
       // Role-based company filter
       if (_userRole != 'superadmin') {
         String? companyFilter;
         if (_userRole == 'waiter') {
+          final branchId = _branchId;
           String? waiterCompanyId = _companyId ?? prefs.getString('company_id');
           if ((waiterCompanyId == null || waiterCompanyId.isEmpty) &&
               branchId != null) {
@@ -1727,12 +2089,12 @@ class _CategoriesPageState extends State<CategoriesPage> {
             }
           }
         } else if (_companyId != null && _companyId!.isNotEmpty) {
-          companyFilter = '&where[company][contains]=$_companyId';
+          companyFilter = '&where[company][in]=$_companyId';
         } else {
           final storedCompanyId = prefs.getString('company_id');
           if (storedCompanyId != null && storedCompanyId.isNotEmpty) {
             _companyId = storedCompanyId;
-            companyFilter = '&where[company][contains]=$storedCompanyId';
+            companyFilter = '&where[company][in]=$storedCompanyId';
           }
         }
         if (companyFilter != null) {
@@ -1740,52 +2102,390 @@ class _CategoriesPageState extends State<CategoriesPage> {
         }
       }
 
-      final cachedCategories = _readCategoriesCache(filterQuery);
-      if (cachedCategories != null) {
+      if (!forceRefresh) {
+        final cachedCategories = _readCategoriesCache(filterQuery);
+        final filteredCachedCategories = (cachedCategories ?? const <dynamic>[])
+            .whereType<Map>()
+            .map((raw) => Map<String, dynamic>.from(raw))
+            .toList(growable: false);
+        final scopedCachedCategories = _filterCategoriesByCompanyDepartment(
+          filteredCachedCategories,
+          companyId: _companyId,
+          strictCompanyScope: _requiresCompanyScopedCategories,
+        );
+        if (scopedCachedCategories.isNotEmpty) {
+          if (!mounted) return;
+          setState(() {
+            _categories = scopedCachedCategories;
+            _isLoading = false;
+          });
+          unawaited(_persistPersistentCategoriesCache(scopedCachedCategories));
+          // Background refresh to keep data fresh
+          unawaited(_fetchCategoriesInternal(token, filterQuery));
+          return;
+        }
+      }
+
+      if (_categories.isEmpty) {
         setState(() {
-          _categories = cachedCategories;
+          _isLoading = true;
+          _errorMessage = '';
+        });
+      } else {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = '';
+        });
+      }
+
+      await _fetchCategoriesInternal(token, filterQuery);
+    } catch (e) {
+      if (!mounted) return;
+      if (_categories.isEmpty) {
+        setState(() {
+          _errorMessage = 'Network error: Check your internet';
           _isLoading = false;
         });
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Network error: Check your internet')),
+      );
+    }
+  }
+
+  String? _extractApiErrorMessage(String responseBody) {
+    try {
+      final decoded = jsonDecode(responseBody);
+      if (decoded is Map && decoded['message'] != null) {
+        final message = decoded['message'].toString().trim();
+        if (message.isNotEmpty) return message;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Iterable<List<T>> _chunked<T>(List<T> items, int size) sync* {
+    if (size <= 0) {
+      yield items;
+      return;
+    }
+    for (var i = 0; i < items.length; i += size) {
+      final end = (i + size < items.length) ? i + size : items.length;
+      yield items.sublist(i, end);
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _hydrateBillingMenuCategoryImages({
+    required String token,
+    required List<Map<String, dynamic>> categories,
+  }) async {
+    if (categories.isEmpty) return categories;
+
+    final ids = categories
+        .map((row) => row['id']?.toString().trim() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+    if (ids.isEmpty) return categories;
+
+    final docsById = <String, Map<String, dynamic>>{};
+    for (final idChunk in _chunked<String>(ids, 60)) {
+      final response = await http.get(
+        Uri.parse(
+          'https://blackforest3.vseyal.com/api/categories?where[id][in]=${idChunk.join(',')}&depth=1&limit=${idChunk.length}',
+        ),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode != 200) continue;
+
+      final decoded = jsonDecode(response.body);
+      final payload = decoded is Map
+          ? Map<String, dynamic>.from(decoded)
+          : <String, dynamic>{};
+      final docs = payload['docs'];
+      if (docs is! List) continue;
+
+      for (final rawDoc in docs) {
+        if (rawDoc is! Map) continue;
+        final doc = Map<String, dynamic>.from(rawDoc);
+        final id = doc['id']?.toString().trim() ?? '';
+        if (id.isEmpty) continue;
+        docsById[id] = doc;
+      }
+    }
+
+    if (docsById.isEmpty) return categories;
+
+    return categories
+        .map((rawCategory) {
+          final category = Map<String, dynamic>.from(rawCategory);
+          final id = category['id']?.toString().trim() ?? '';
+          final doc = docsById[id];
+          if (doc == null) return category;
+
+          category['image'] ??= doc['image'];
+          category['imageUrl'] ??= doc['imageUrl'];
+          category['thumbnail'] ??= doc['thumbnail'];
+          if (doc['company'] != null) {
+            category['company'] = doc['company'];
+          }
+          if (doc['department'] != null) {
+            category['department'] = doc['department'];
+          }
+          return category;
+        })
+        .toList(growable: false);
+  }
+
+  Future<void> _fetchBillingMenuCategoriesInternal({
+    required String token,
+    required String branchId,
+    required String cacheKey,
+    required String companyId,
+  }) async {
+    try {
+      final response = await http.get(
+        Uri.parse(
+          'https://blackforest3.vseyal.com/api/widgets/billing-menu',
+        ).replace(
+          queryParameters: <String, String>{
+            'mode': 'categories',
+            'branch': branchId,
+            'limit': '250',
+          },
+        ),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+
+      if (response.statusCode == 200) {
+        final decoded = jsonDecode(response.body);
+        final payload = decoded is Map
+            ? Map<String, dynamic>.from(decoded)
+            : <String, dynamic>{};
+        final rawCategories = payload['categories'];
+        final categories = rawCategories is List
+            ? rawCategories
+                  .whereType<Map>()
+                  .map((raw) => Map<String, dynamic>.from(raw))
+                  .toList(growable: false)
+            : <Map<String, dynamic>>[];
+
+        final hydratedCategories = categories;
+        final filteredCategories = _filterCategoriesByCompanyDepartment(
+          hydratedCategories,
+          companyId: companyId,
+          strictCompanyScope: true,
+        );
+
+        if (!mounted) return;
+        setState(() {
+          _categories = filteredCategories;
+          _isLoading = false;
+          _errorMessage = '';
+        });
+        _writeCategoriesCache(cacheKey, filteredCategories);
         return;
       }
 
+      final message =
+          _extractApiErrorMessage(response.body) ??
+          'Failed to fetch categories: ${response.statusCode}';
+      if (!mounted) return;
+      if (_categories.isEmpty) {
+        setState(() {
+          _errorMessage = message;
+          _isLoading = false;
+        });
+      } else {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+      if (_categories.isEmpty) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(message)));
+      }
+    } catch (_) {
+      if (!mounted) return;
+      if (_categories.isEmpty) {
+        setState(() {
+          _errorMessage = 'Network error: Check your internet';
+          _isLoading = false;
+        });
+      } else {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _fetchCategoriesInternal(
+    String token,
+    String filterQuery,
+  ) async {
+    try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest.vseyal.com/api/categories?$filterQuery&limit=100&depth=1',
+          'https://blackforest3.vseyal.com/api/categories?$filterQuery&limit=100&depth=1',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
         final Map<String, dynamic> data = jsonDecode(response.body);
         if (!mounted) return;
-        final docs = List<dynamic>.from(data['docs'] ?? []);
+        final docs = (data['docs'] is List)
+            ? (data['docs'] as List)
+                  .whereType<Map>()
+                  .map((raw) => Map<String, dynamic>.from(raw))
+                  .toList(growable: false)
+            : <Map<String, dynamic>>[];
+        final filteredDocs = _filterCategoriesByCompanyDepartment(
+          docs,
+          companyId: _companyId,
+          strictCompanyScope: _requiresCompanyScopedCategories,
+        );
         setState(() {
-          _categories = docs;
+          _categories = filteredDocs;
           _isLoading = false;
         });
-        _writeCategoriesCache(filterQuery, docs);
+        _writeCategoriesCache(filterQuery, filteredDocs);
+        unawaited(_persistPersistentCategoriesCache(filteredDocs));
+
+        // Keep aggressive prefetch only for home flow; billing/table should
+        // prioritize tap responsiveness over bulk background traffic.
+        if (_isHomeMode && _companyId != null && _companyId!.isNotEmpty) {
+          unawaited(_prefetchProducts(token, _companyId!, _branchId));
+        }
       } else {
         if (!mounted) return;
+        if (_categories.isEmpty) {
+          setState(() {
+            _errorMessage =
+                'Failed to fetch categories: ${response.statusCode}';
+          });
+        }
         setState(() {
-          _errorMessage = 'Failed to fetch categories: ${response.statusCode}';
           _isLoading = false;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to fetch categories: ${response.statusCode}'),
-          ),
-        );
       }
     } catch (e) {
       if (!mounted) return;
+      if (_categories.isEmpty) {
+        setState(() {
+          _errorMessage = 'Network error: Check your internet';
+        });
+      }
       setState(() {
-        _errorMessage = 'Network error: Check your internet';
         _isLoading = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Network error: Check your internet')),
-      );
     }
+  }
+
+  Future<void> _prefetchProducts(
+    String token,
+    String companyId,
+    String? branchId,
+  ) async {
+    try {
+      // 1. Prioritize visible categories for immediate first taps.
+      final topCats = _categories.take(12).toList();
+      for (final cat in topCats) {
+        final catId = (cat['id'] ?? cat['_id'] ?? cat[r'$oid'])?.toString();
+        if (catId != null) {
+          unawaited(_prefetchSingleCategory(token, catId, branchId));
+        }
+      }
+
+      // 2. Perform paginated bulk pre-fetch for the entire company.
+      debugPrint(
+        "🚀 Starting paginated bulk pre-fetch for company: $companyId",
+      );
+      final products = await _fetchAllCompanyProductsForCache(token, companyId);
+      if (products.isNotEmpty) {
+        ProductsPage.bulkCacheProducts(products, branchId);
+        debugPrint(
+          "✅ Bulk pre-fetched ${products.length} products for company $companyId",
+        );
+      }
+    } catch (e) {
+      debugPrint("⚠️ Background bulk pre-fetch skipped or timed out: $e");
+    }
+  }
+
+  Future<List<dynamic>> _fetchAllCompanyProductsForCache(
+    String token,
+    String companyId,
+  ) async {
+    const pageSize = 500;
+    const maxPages = 8; // Up to 4000 products cached in background.
+    final allProducts = <dynamic>[];
+
+    for (var page = 1; page <= maxPages; page++) {
+      final url =
+          'https://blackforest3.vseyal.com/api/products?where[company][equals]=$companyId&limit=$pageSize&page=$page&depth=1';
+      final response = await http
+          .get(Uri.parse(url), headers: {'Authorization': 'Bearer $token'})
+          .timeout(const Duration(seconds: 18));
+      if (response.statusCode != 200) break;
+
+      final data = jsonDecode(response.body);
+      final docs = data['docs'];
+      if (docs is! List || docs.isEmpty) break;
+      allProducts.addAll(docs);
+
+      final totalPagesRaw = data['totalPages'];
+      final totalPages = totalPagesRaw is num
+          ? totalPagesRaw.toInt()
+          : int.tryParse(totalPagesRaw?.toString() ?? '');
+      if (totalPages != null && page >= totalPages) break;
+      if (docs.length < pageSize) break;
+    }
+
+    return allProducts;
+  }
+
+  Future<void> _prefetchSingleCategory(
+    String token,
+    String categoryId,
+    String? branchId,
+  ) async {
+    try {
+      final useBillingMenuApi = _usesBillingMenuWidgetApi();
+      if (useBillingMenuApi && (branchId == null || branchId.trim().isEmpty)) {
+        return;
+      }
+      final response = await (useBillingMenuApi
+          ? http.get(
+              Uri.parse(
+                'https://blackforest3.vseyal.com/api/widgets/billing-menu',
+              ).replace(
+                queryParameters: <String, String>{
+                  'mode': 'products',
+                  'branch': branchId!.trim(),
+                  'categoryId': categoryId.trim(),
+                  'limit': '250',
+                },
+              ),
+              headers: {'Authorization': 'Bearer $token'},
+            )
+          : http.get(
+              Uri.parse(
+                'https://blackforest3.vseyal.com/api/products?where[category][equals]=$categoryId&limit=250&depth=1',
+              ),
+              headers: {'Authorization': 'Bearer $token'},
+            ));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final products = useBillingMenuApi
+            ? data['products'] ?? []
+            : data['docs'] ?? [];
+        if (products is List) {
+          ProductsPage.writeProductsCache(categoryId, branchId, products);
+          debugPrint("⚡ Pre-fetched category $categoryId individually");
+        }
+      }
+    } catch (_) {}
   }
 
   Future<void> _handleScan(String scanResult) async {
@@ -1802,7 +2502,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
       // Fetch product by UPC globally
       final response = await http.get(
         Uri.parse(
-          'https://blackforest.vseyal.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=1',
+          'https://blackforest3.vseyal.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=1',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -1872,7 +2572,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
     String title = _isHomeMode ? 'Categories' : 'Billing';
     if (!_isHomeMode && cartProvider.selectedTable != null) {
       title =
-          'Table: ${cartProvider.selectedTable} (${cartProvider.selectedSection})';
+          'Table: ${cartProvider.selectedTable!.split('-S-').first} (${cartProvider.selectedSection})';
     } else if (!_isHomeMode && cartProvider.isSharedTableOrder) {
       title = CartProvider.sharedTablesSectionName;
     }
@@ -1890,27 +2590,40 @@ class _CategoriesPageState extends State<CategoriesPage> {
               ),
             )
           : RefreshIndicator(
-              onRefresh: _fetchCategories,
+              onRefresh: () => _fetchCategories(forceRefresh: true),
               child: LayoutBuilder(
                 builder: (context, constraints) {
                   final orderedCategories = _orderedCategories();
                   final width = constraints.maxWidth;
                   final crossAxisCount = (width > 600) ? 5 : 3;
+                  final showBlockingLoader =
+                      _isLoading && orderedCategories.isEmpty;
 
                   return CustomScrollView(
                     physics: const AlwaysScrollableScrollPhysics(),
                     slivers: [
-                      const SliverPadding(
-                        padding: EdgeInsets.symmetric(vertical: 10),
-                        sliver: SliverToBoxAdapter(
+                      SliverToBoxAdapter(
+                        child: Padding(
+                          padding: EdgeInsets.symmetric(
+                            vertical: _hasOfferBanner ? 10 : 0,
+                          ),
                           child: OfferBanner(
                             height: 156,
                             showIndicators: false,
-                            itemMargin: EdgeInsets.symmetric(
+                            showLoadingIndicator: false,
+                            onHasOffersChanged: (hasOffers) {
+                              if (!mounted || _hasOfferBanner == hasOffers) {
+                                return;
+                              }
+                              setState(() {
+                                _hasOfferBanner = hasOffers;
+                              });
+                            },
+                            itemMargin: const EdgeInsets.symmetric(
                               horizontal: 6,
                               vertical: 4,
                             ),
-                            contentPadding: EdgeInsets.symmetric(
+                            contentPadding: const EdgeInsets.symmetric(
                               horizontal: 20,
                               vertical: 14,
                             ),
@@ -1923,7 +2636,20 @@ class _CategoriesPageState extends State<CategoriesPage> {
                           ),
                         ),
                       ),
-                      if (_isLoading)
+                      if (_isLoading && orderedCategories.isNotEmpty)
+                        const SliverToBoxAdapter(
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 6,
+                            ),
+                            child: LinearProgressIndicator(
+                              minHeight: 2,
+                              color: Colors.black,
+                            ),
+                          ),
+                        ),
+                      if (showBlockingLoader)
                         const SliverFillRemaining(
                           hasScrollBody: false,
                           child: Center(
@@ -1949,7 +2675,8 @@ class _CategoriesPageState extends State<CategoriesPage> {
                                 ),
                                 const SizedBox(height: 10),
                                 ElevatedButton(
-                                  onPressed: _fetchCategories,
+                                  onPressed: () =>
+                                      _fetchCategories(forceRefresh: true),
                                   child: const Text('Retry'),
                                 ),
                               ],
@@ -1989,19 +2716,15 @@ class _CategoriesPageState extends State<CategoriesPage> {
                                   category['id']?.toString() ?? '';
                               final String categoryName =
                                   category['name']?.toString() ?? 'Unknown';
+                              final categoryDisplayName = categoryName
+                                  .toUpperCase();
                               final isFavorite = _favoriteCategoryIds.contains(
                                 categoryId,
                               );
 
-                              String? imageUrl;
-                              if (category['image'] != null &&
-                                  category['image']['url'] != null) {
-                                imageUrl = category['image']['url'];
-                                if (imageUrl?.startsWith('/') ?? false) {
-                                  imageUrl =
-                                      'https://blackforest.vseyal.com$imageUrl';
-                                }
-                              }
+                              String? imageUrl = _resolveCategoryImageUrl(
+                                category,
+                              );
                               imageUrl ??=
                                   'https://via.placeholder.com/150?text=No+Image';
                               return GestureDetector(
@@ -2075,14 +2798,24 @@ class _CategoriesPageState extends State<CategoriesPage> {
                                                     ),
                                               ),
                                               alignment: Alignment.center,
-                                              child: Text(
-                                                categoryName,
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontWeight: FontWeight.bold,
+                                              child: Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 4,
+                                                    ),
+                                                child: Text(
+                                                  categoryDisplayName,
+                                                  textAlign: TextAlign.center,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 12.5,
+                                                    height: 1.0,
+                                                  ),
                                                 ),
-                                                textAlign: TextAlign.center,
-                                                overflow: TextOverflow.ellipsis,
                                               ),
                                             ),
                                           ),

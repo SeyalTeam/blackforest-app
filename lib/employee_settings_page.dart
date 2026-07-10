@@ -1,11 +1,17 @@
 import 'package:blackforest_app/common_scaffold.dart';
+import 'package:blackforest_app/api_server_prefs.dart';
+import 'package:blackforest_app/cart_provider.dart';
+import 'package:blackforest_app/kot_status_source_prefs.dart';
 import 'package:blackforest_app/printer/bluetooth_printer_settings_page.dart';
 import 'package:blackforest_app/printer/thermal_print_prefs.dart';
+import 'package:blackforest_app/waiter_call_range_filter_service.dart';
+import 'package:blackforest_app/waiter_call_table_range_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class EmployeeSettingsPage extends StatefulWidget {
@@ -25,20 +31,36 @@ class _EmployeeSettingsPageState extends State<EmployeeSettingsPage> {
   bool _isCheckingWifiPrinter = true;
   bool _isWifiPrinterConnected = false;
   bool _isCheckingLocation = true;
+  bool _isCheckingApiRouting = true;
   bool _isLocationEnabled = false;
   bool _hasLocationPermission = false;
+  bool _hasBranchGeoFenceConfig = false;
+  bool _isUsingRuntimeApiDomainConfig = false;
+  bool _isApiRoutingPrimaryOnlyMode = false;
+  double? _branchGeoRadiusMeters;
+  double? _distanceFromBranchMeters;
+  bool? _isInsideBranchGeoFence;
   bool _isReviewPrintEnabled = true;
+  String _activeApiHost = '';
   String? _branchName;
   String? _branchIpRange;
   String? _deviceWifiIp;
+  String? _apiRoutingError;
   String? _printerName;
   String? _wifiPrinterIp;
+  List<String> _apiFallbackHosts = const [];
+  List<String> _apiDefaultHosts = const [];
+  int _selectedWaiterCallTablesCount = 0;
+  String _kotStatusSource = kotStatusSourceConfirmed;
 
   @override
   void initState() {
     super.initState();
     _loadSettingsSummary();
   }
+
+  @override
+  void dispose() => super.dispose();
 
   Future<void> _loadSettingsSummary() async {
     final prefs = await SharedPreferences.getInstance();
@@ -50,14 +72,55 @@ class _EmployeeSettingsPageState extends State<EmployeeSettingsPage> {
         _printerName = prefs.getString('bt_printer_name');
         _wifiPrinterIp = prefs.getString('printerIp');
         _isReviewPrintEnabled = isThermalReviewPrintEnabled(prefs);
+        _kotStatusSource = loadKotStatusSourceFromPrefs(prefs);
       });
     }
 
     await Future.wait<void>([
       _refreshBluetoothStatus(prefs: prefs),
       _refreshWifiPrinterStatus(prefs: prefs),
+      _refreshApiRoutingStatus(),
       _refreshLocationStatus(),
+      _loadWaiterCallTableSelectionSummary(prefs: prefs),
     ]);
+  }
+
+  Future<void> _refreshApiRoutingStatus({bool showLoader = true}) async {
+    if (mounted && showLoader) {
+      setState(() {
+        _isCheckingApiRouting = true;
+      });
+    }
+
+    try {
+      await ensureApiHostRoutingReady();
+
+      if (!mounted) return;
+      setState(() {
+        _activeApiHost = apiHostActive.trim();
+        _isUsingRuntimeApiDomainConfig = isUsingRuntimeApiDomainConfig;
+        _isApiRoutingPrimaryOnlyMode = isApiRoutingPrimaryOnlyMode;
+        _apiFallbackHosts = runtimeApiFallbackHosts
+            .where((host) => host.trim().isNotEmpty && host != _activeApiHost)
+            .toList(growable: false);
+        _apiDefaultHosts = defaultApiHostCandidates
+            .where((host) => host.trim().isNotEmpty)
+            .toList(growable: false);
+        _apiRoutingError = null;
+        _isCheckingApiRouting = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _activeApiHost = apiHostActive.trim();
+        _isUsingRuntimeApiDomainConfig = isUsingRuntimeApiDomainConfig;
+        _isApiRoutingPrimaryOnlyMode = isApiRoutingPrimaryOnlyMode;
+        _apiFallbackHosts = runtimeApiFallbackHosts;
+        _apiDefaultHosts = defaultApiHostCandidates;
+        _apiRoutingError = error.toString();
+        _isCheckingApiRouting = false;
+      });
+    }
   }
 
   Future<void> _refreshWifiPrinterStatus({
@@ -148,6 +211,23 @@ class _EmployeeSettingsPageState extends State<EmployeeSettingsPage> {
 
     bool isLocationEnabled = false;
     bool hasLocationPermission = false;
+    bool hasGeoFenceConfig = false;
+    double? branchGeoRadiusMeters;
+    double? distanceFromBranchMeters;
+    bool? isInsideBranchGeoFence;
+    final prefs = await SharedPreferences.getInstance();
+
+    final branchLat = prefs.getDouble('branchLat');
+    final branchLng = prefs.getDouble('branchLng');
+    final branchRadiusRaw = prefs.getInt('branchRadius');
+    if (branchLat != null &&
+        branchLng != null &&
+        branchRadiusRaw != null &&
+        branchRadiusRaw > 0) {
+      hasGeoFenceConfig = true;
+      branchGeoRadiusMeters = branchRadiusRaw.toDouble();
+    }
+
     try {
       isLocationEnabled = await Geolocator.isLocationServiceEnabled().timeout(
         const Duration(seconds: 2),
@@ -160,17 +240,56 @@ class _EmployeeSettingsPageState extends State<EmployeeSettingsPage> {
       hasLocationPermission =
           permission == LocationPermission.whileInUse ||
           permission == LocationPermission.always;
+
+      if (isLocationEnabled &&
+          hasLocationPermission &&
+          hasGeoFenceConfig &&
+          branchLat != null &&
+          branchLng != null &&
+          branchGeoRadiusMeters != null) {
+        try {
+          final position = await Geolocator.getCurrentPosition(
+            locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.high,
+            ),
+          ).timeout(const Duration(seconds: 5));
+          distanceFromBranchMeters = Geolocator.distanceBetween(
+            position.latitude,
+            position.longitude,
+            branchLat,
+            branchLng,
+          );
+          isInsideBranchGeoFence =
+              distanceFromBranchMeters <= branchGeoRadiusMeters;
+        } catch (_) {
+          distanceFromBranchMeters = null;
+          isInsideBranchGeoFence = null;
+        }
+      }
     } catch (_) {
       isLocationEnabled = false;
       hasLocationPermission = false;
+      distanceFromBranchMeters = null;
+      isInsideBranchGeoFence = null;
     }
 
     if (!mounted) return;
     setState(() {
       _isLocationEnabled = isLocationEnabled;
       _hasLocationPermission = hasLocationPermission;
+      _hasBranchGeoFenceConfig = hasGeoFenceConfig;
+      _branchGeoRadiusMeters = branchGeoRadiusMeters;
+      _distanceFromBranchMeters = distanceFromBranchMeters;
+      _isInsideBranchGeoFence = isInsideBranchGeoFence;
       _isCheckingLocation = false;
     });
+  }
+
+  String _formatMeters(double meters) {
+    if (meters >= 1000) {
+      return '${(meters / 1000).toStringAsFixed(2)} km';
+    }
+    return '${meters.toStringAsFixed(0)} m';
   }
 
   Future<void> _openPrinterSettings() async {
@@ -234,6 +353,70 @@ class _EmployeeSettingsPageState extends State<EmployeeSettingsPage> {
     setState(() {
       _isReviewPrintEnabled = enabled;
     });
+  }
+
+  Future<void> _toggleKotStatusSource(bool usePrepared) async {
+    final nextStatus = usePrepared
+        ? kotStatusSourcePrepared
+        : kotStatusSourceConfirmed;
+    final prefs = await SharedPreferences.getInstance();
+    await saveKotStatusSourceToPrefs(prefs, nextStatus);
+    if (!mounted) return;
+    setState(() {
+      _kotStatusSource = nextStatus;
+    });
+    Provider.of<CartProvider>(
+      context,
+      listen: false,
+    ).syncKitchenNotifications();
+  }
+
+  Future<void> _loadWaiterCallTableSelectionSummary({
+    SharedPreferences? prefs,
+  }) async {
+    final resolvedPrefs = prefs ?? await SharedPreferences.getInstance();
+    final branchId = resolvedPrefs.getString('branchId')?.trim() ?? '';
+    if (branchId.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _selectedWaiterCallTablesCount = 0;
+      });
+      return;
+    }
+
+    final selections = WaiterCallRangeFilterService.readSelectionsForAnyUser(
+      prefs: resolvedPrefs,
+      userKeys: WaiterCallRangeFilterService.resolveCandidateUserKeysFromPrefs(
+        resolvedPrefs,
+      ),
+      branchId: branchId,
+    );
+
+    final selectedTables = <String>{};
+    for (final selection in selections) {
+      final normalizedSection = WaiterCallRangeFilterService.normalizeSection(
+        selection.section,
+      );
+      for (
+        int table = selection.startTable;
+        table <= selection.endTable;
+        table++
+      ) {
+        selectedTables.add('$normalizedSection|$table');
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _selectedWaiterCallTablesCount = selectedTables.length;
+    });
+  }
+
+  Future<void> _openWaiterCallTableRangePage() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (context) => const WaiterCallTableRangePage()),
+    );
+    await _loadWaiterCallTableSelectionSummary();
   }
 
   int? _ipToInt(String ip) {
@@ -542,13 +725,16 @@ class _EmployeeSettingsPageState extends State<EmployeeSettingsPage> {
   Widget _buildLocationStatusCard() {
     final isLocationReady =
         !_isCheckingLocation && _isLocationEnabled && _hasLocationPermission;
-    final branchLabel = (_branchName?.trim().isNotEmpty ?? false)
-        ? _branchName!
-        : 'Branch Location';
+    final rawBranchName = (_branchName?.trim().isNotEmpty ?? false)
+        ? _branchName!.trim()
+        : '';
+    final branchLabel = rawBranchName.isEmpty
+        ? 'Branch Location'
+        : rawBranchName;
     final statusText = _isCheckingLocation
         ? 'Checking location status...'
         : isLocationReady
-        ? 'Location enabled'
+        ? 'Location Enabled'
         : !_isLocationEnabled
         ? 'Location service disabled'
         : 'Location permission not allowed';
@@ -597,23 +783,56 @@ class _EmployeeSettingsPageState extends State<EmployeeSettingsPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    branchLabel,
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.black87,
+                  if (isLocationReady)
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            branchLabel,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.black87,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Icon(
+                          Icons.check_circle_rounded,
+                          color: Color(0xFF1BA672),
+                          size: 16,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Location Enabled',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Colors.grey[700],
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    )
+                  else ...[
+                    Text(
+                      branchLabel,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black87,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    statusText,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.grey[600],
-                      fontWeight: FontWeight.w500,
+                    const SizedBox(height: 4),
+                    Text(
+                      statusText,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.grey[600],
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -627,20 +846,7 @@ class _EmployeeSettingsPageState extends State<EmployeeSettingsPage> {
                 ),
               )
             else if (isLocationReady)
-              const Row(
-                children: [
-                  Icon(Icons.check, color: Color(0xFF1BA672), size: 16),
-                  SizedBox(width: 4),
-                  Text(
-                    'Enabled',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w500,
-                      color: Colors.black54,
-                    ),
-                  ),
-                ],
-              )
+              const SizedBox.shrink()
             else
               Container(
                 padding: const EdgeInsets.symmetric(
@@ -660,6 +866,319 @@ class _EmployeeSettingsPageState extends State<EmployeeSettingsPage> {
                   ),
                 ),
               ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildApiRoutingStatusCard() {
+    final activeHost = _activeApiHost.trim().isEmpty
+        ? apiHostActive.trim()
+        : _activeApiHost.trim();
+    final modeLabel = _isApiRoutingPrimaryOnlyMode
+        ? 'Mode: Primary domain only'
+        : 'Mode: Auto failover enabled';
+    final sourceLabel = _isUsingRuntimeApiDomainConfig
+        ? 'Source: Billing App API Domains'
+        : 'Source: Default app hosts';
+    final hostsLabel = _isUsingRuntimeApiDomainConfig
+        ? (_apiFallbackHosts.isEmpty
+              ? 'Fallback: No secondary domains configured'
+              : 'Fallback: ${_apiFallbackHosts.map((host) => 'https://$host').join(', ')}')
+        : 'Defaults: ${_apiDefaultHosts.map((host) => 'https://$host').join(', ')}';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey[200]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.cloud_outlined, color: Color(0xFF1BA672), size: 24),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Billing API Host',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _isCheckingApiRouting
+                      ? 'Checking API routing...'
+                      : '$sourceLabel • $modeLabel',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Active: https://$activeHost',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[700],
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  hostsLabel,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[700],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+                if (_apiRoutingError != null && _apiRoutingError!.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      'Status: unable to refresh right now',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.orange[700],
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (_isCheckingApiRouting)
+            const Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Color(0xFF1BA672),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBranchRadiusStatusCard() {
+    final isLocationReady =
+        !_isCheckingLocation && _isLocationEnabled && _hasLocationPermission;
+    final canShowGeoFenceStatus =
+        isLocationReady &&
+        _hasBranchGeoFenceConfig &&
+        _branchGeoRadiusMeters != null;
+    final isInsideGeoFence = _isInsideBranchGeoFence == true;
+    final isOutsideGeoFence = _isInsideBranchGeoFence == false;
+    final geoFenceStatusText = !_hasBranchGeoFenceConfig
+        ? 'Branch radius not configured'
+        : !isLocationReady
+        ? 'Enable location to verify branch radius'
+        : _distanceFromBranchMeters == null
+        ? 'Unable to measure current distance'
+        : isInsideGeoFence
+        ? 'Inside circle'
+        : 'Outside circle';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey[200]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.radar_rounded, color: Color(0xFF1BA672), size: 24),
+              SizedBox(width: 16),
+              Expanded(
+                child: Text(
+                  'Branch Radius in Meters',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black87,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (canShowGeoFenceStatus)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 60,
+                  height: 60,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color:
+                        (isOutsideGeoFence
+                                ? Colors.redAccent
+                                : const Color(0xFF1BA672))
+                            .withValues(alpha: 0.12),
+                    border: Border.all(
+                      color: isOutsideGeoFence
+                          ? Colors.redAccent
+                          : const Color(0xFF1BA672),
+                      width: 1.6,
+                    ),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    '${_branchGeoRadiusMeters!.round()}m',
+                    style: TextStyle(
+                      color: isOutsideGeoFence
+                          ? Colors.redAccent
+                          : const Color(0xFF1BA672),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Radius: ${_branchGeoRadiusMeters!.round()} m',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[700],
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      if (_distanceFromBranchMeters != null)
+                        Text(
+                          'Distance: ${_formatMeters(_distanceFromBranchMeters!)}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[700],
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      Text(
+                        geoFenceStatusText,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: isInsideGeoFence
+                              ? const Color(0xFF1BA672)
+                              : isOutsideGeoFence
+                              ? Colors.redAccent
+                              : Colors.grey[700],
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            )
+          else
+            Text(
+              geoFenceStatusText,
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[700],
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWaiterCallTableRangesCard() {
+    return InkWell(
+      onTap: _openWaiterCallTableRangePage,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.grey[200]!),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.03),
+              blurRadius: 10,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            const Icon(
+              Icons.table_restaurant_rounded,
+              color: Color(0xFF1BA672),
+              size: 24,
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Table Range',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.black87,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _selectedWaiterCallTablesCount > 0
+                        ? '$_selectedWaiterCallTablesCount tables selected'
+                        : 'Tap to choose tables for waiter-call notifications',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey[600],
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: Color(0xFF6B7280),
+              size: 22,
+            ),
           ],
         ),
       ),
@@ -729,6 +1248,81 @@ class _EmployeeSettingsPageState extends State<EmployeeSettingsPage> {
     );
   }
 
+  Widget _buildKotStatusSourceCard() {
+    final isPreparedSource = _kotStatusSource == kotStatusSourcePrepared;
+    final headline = isPreparedSource
+        ? 'Chef Prepared Status'
+        : 'Supervisor Confirmed Status';
+    final subtitle = isPreparedSource
+        ? 'KOT and bell use PREPARED items'
+        : 'KOT and bell use CONFIRMED items';
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.grey[200]!),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.03),
+            blurRadius: 10,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.toggle_on_outlined,
+            color: isPreparedSource ? const Color(0xFF1BA672) : Colors.black87,
+            size: 24,
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'KOT Status Source',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  headline,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: Colors.grey[700],
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  subtitle,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey[600],
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Switch(
+            value: isPreparedSource,
+            activeThumbColor: const Color(0xFF1BA672),
+            activeTrackColor: const Color(0xFF1BA672).withValues(alpha: 0.35),
+            onChanged: _toggleKotStatusSource,
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return CommonScaffold(
@@ -757,9 +1351,17 @@ class _EmployeeSettingsPageState extends State<EmployeeSettingsPage> {
             const SizedBox(height: 16),
             _buildWifiPrinterStatusCard(),
             const SizedBox(height: 16),
+            _buildApiRoutingStatusCard(),
+            const SizedBox(height: 16),
             _buildLocationStatusCard(),
             const SizedBox(height: 16),
+            _buildWaiterCallTableRangesCard(),
+            const SizedBox(height: 16),
+            _buildKotStatusSourceCard(),
+            const SizedBox(height: 16),
             _buildReviewPrintCard(),
+            const SizedBox(height: 16),
+            _buildBranchRadiusStatusCard(),
           ],
         ),
       ),

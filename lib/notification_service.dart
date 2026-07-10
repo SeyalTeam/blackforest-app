@@ -103,11 +103,12 @@ class NotificationService {
           playSound: true,
           enableVibration: true,
           category: AndroidNotificationCategory.alarm,
+          sound: RawResourceAndroidNotificationSound('table'),
         );
 
     const NotificationDetails notificationDetails = NotificationDetails(
       android: androidNotificationDetails,
-      iOS: DarwinNotificationDetails(presentSound: true),
+      iOS: DarwinNotificationDetails(presentSound: true, sound: 'table.mp3'),
       macOS: DarwinNotificationDetails(presentSound: true),
     );
 

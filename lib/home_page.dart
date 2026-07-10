@@ -8,8 +8,10 @@ import 'package:blackforest_app/cart_provider.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:blackforest_app/employee.dart';
 import 'package:blackforest_app/offer_banner.dart';
+import 'package:blackforest_app/api_server_prefs.dart';
 import 'package:blackforest_app/product_popularity_service.dart';
 import 'package:blackforest_app/products_page.dart';
+import 'package:blackforest_app/waiter_call_history_page.dart';
 import 'package:blackforest_app/widgets/product_rating_badge.dart';
 import 'package:blackforest_app/widgets/rolling_qty_text.dart';
 import 'package:flutter/material.dart';
@@ -267,7 +269,7 @@ class _HomeSearchOverlayState extends State<_HomeSearchOverlay> {
     }
 
     final response = await http.get(
-      Uri.parse('https://blackforest.vseyal.com/api/categories?$filterQuery'),
+      Uri.parse('https://blackforest3.vseyal.com/api/categories?$filterQuery'),
       headers: {
         'Authorization': 'Bearer $token',
         'Content-Type': 'application/json',
@@ -315,7 +317,7 @@ class _HomeSearchOverlayState extends State<_HomeSearchOverlay> {
   }) async {
     final response = await http.get(
       Uri.parse(
-        'https://blackforest.vseyal.com/api/products?where[name][like]=$query&limit=12&depth=2&sort=name',
+        'https://blackforest3.vseyal.com/api/products?where[name][like]=$query&limit=12&depth=2&sort=name',
       ),
       headers: {
         'Authorization': 'Bearer $token',
@@ -502,11 +504,13 @@ class _HomeSearchOverlayState extends State<_HomeSearchOverlay> {
     if (value == null || value.isEmpty) return null;
     if (value.startsWith('data:image/')) return value;
     if (value.startsWith('http://') || value.startsWith('https://')) {
-      return value;
+      return resolveApiAssetUrl(value);
     }
-    if (value.startsWith('//')) return 'https:$value';
-    if (value.startsWith('blackforest.vseyal.com')) return 'https://$value';
-    if (value.startsWith('/')) return 'https://blackforest.vseyal.com$value';
+    if (value.startsWith('//')) return resolveApiAssetUrl('https:$value');
+    if (value.startsWith('blackforest3.vseyal.com')) {
+      return resolveApiAssetUrl('https://$value');
+    }
+    if (value.startsWith('/')) return resolveApiAssetUrl(value);
     final lower = value.toLowerCase();
     final maybeFilePath =
         lower.endsWith('.png') ||
@@ -521,7 +525,7 @@ class _HomeSearchOverlayState extends State<_HomeSearchOverlay> {
         value.startsWith('files/') ||
         value.startsWith('api/') ||
         maybeFilePath) {
-      return 'https://blackforest.vseyal.com/$value';
+      return resolveApiAssetUrl('/$value');
     }
     return null;
   }
@@ -984,6 +988,10 @@ class _HomePageState extends State<HomePage> {
   static const int _maxProductsPerRule = 30;
   static const Duration _recommendedCacheTtl = Duration(minutes: 5);
   static const Duration _billingCategoriesCacheTtl = Duration(seconds: 90);
+  static const String _persistentRecommendedCachePrefix =
+      'home_recommended_cache_v1_';
+  static const String _persistentBillingCategoriesCachePrefix =
+      'home_billing_categories_cache_v1_';
   static const String _topCircleCategoriesRuleName = 'Top Categories';
   static const double _topSectionHeight = 314;
   static const double _stickyHomeHeaderTriggerOffset = 300;
@@ -1001,6 +1009,7 @@ class _HomePageState extends State<HomePage> {
   String? _branchName;
   String? _currentUserId;
   bool _isLoadingRecommended = true;
+  bool _hasTopOffers = false;
   bool _showStickyHomeHeader = false;
   List<_FavoriteRuleSection> _ruleSections = <_FavoriteRuleSection>[];
   List<_FavoriteCategoryCard> _billingCategories = <_FavoriteCategoryCard>[];
@@ -1073,11 +1082,59 @@ class _HomePageState extends State<HomePage> {
 
   Future<void> _loadUserPhoto() async {
     final prefs = await SharedPreferences.getInstance();
+    final photoUrl = prefs.getString('employee_photo_url');
+    var branchName = prefs.getString('branchName')?.trim() ?? '';
+    final token = prefs.getString('token')?.trim() ?? '';
+    final branchId = prefs.getString('branchId')?.trim() ?? '';
+
+    if (branchName.isEmpty && token.isNotEmpty && branchId.isNotEmpty) {
+      final fetchedBranchName = await _fetchBranchName(
+        token: token,
+        branchId: branchId,
+      );
+      if (fetchedBranchName != null && fetchedBranchName.isNotEmpty) {
+        branchName = fetchedBranchName;
+        await prefs.setString('branchName', fetchedBranchName);
+      }
+    }
+
     if (!mounted) return;
     setState(() {
-      _photoUrl = prefs.getString('employee_photo_url');
-      _branchName = prefs.getString('branchName')?.trim();
+      _photoUrl = photoUrl;
+      _branchName = branchName.isEmpty ? null : branchName;
     });
+  }
+
+  Future<String?> _fetchBranchName({
+    required String token,
+    required String branchId,
+  }) async {
+    try {
+      final response = await http.get(
+        Uri.parse('https://blackforest3.vseyal.com/api/branches/$branchId'),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode != 200) return null;
+
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) return null;
+
+      final directName = decoded['name']?.toString().trim();
+      if (directName != null && directName.isNotEmpty) {
+        return directName;
+      }
+
+      final nestedBranch = decoded['doc'];
+      if (nestedBranch is Map<String, dynamic>) {
+        final nestedName = nestedBranch['name']?.toString().trim();
+        if (nestedName != null && nestedName.isNotEmpty) {
+          return nestedName;
+        }
+      }
+    } catch (error) {
+      debugPrint('Home branch name fetch skipped: $error');
+    }
+    return null;
   }
 
   String _favoriteCategoriesKey(String userId) =>
@@ -1453,6 +1510,194 @@ class _HomePageState extends State<HomePage> {
   String _billingCategoriesCacheKey(String branchId) =>
       'branch-rule-top-categories-v1|${branchId.trim()}';
 
+  String _persistentRecommendedCacheKey(String branchId) =>
+      '$_persistentRecommendedCachePrefix${branchId.trim()}';
+
+  String _persistentBillingCategoriesCacheKey(String branchId) =>
+      '$_persistentBillingCategoriesCachePrefix${branchId.trim()}';
+
+  List<Map<String, dynamic>> _encodeRuleSections(
+    List<_FavoriteRuleSection> sections,
+  ) {
+    return sections
+        .map(
+          (section) => <String, dynamic>{
+            'title': section.title,
+            'products': section.products
+                .map((product) => Map<String, dynamic>.from(product))
+                .toList(),
+          },
+        )
+        .toList(growable: false);
+  }
+
+  List<_FavoriteRuleSection> _decodeRuleSections(dynamic raw) {
+    if (raw is! List) return const <_FavoriteRuleSection>[];
+    final sections = <_FavoriteRuleSection>[];
+    for (final entry in raw) {
+      if (entry is! Map) continue;
+      final map = Map<String, dynamic>.from(entry);
+      final title = (map['title'] ?? '').toString().trim();
+      if (title.isEmpty) continue;
+      final productsRaw = map['products'];
+      final products = <Map<String, dynamic>>[];
+      if (productsRaw is List) {
+        for (final product in productsRaw) {
+          if (product is Map) {
+            products.add(Map<String, dynamic>.from(product));
+          }
+        }
+      }
+      sections.add(_FavoriteRuleSection(title: title, products: products));
+    }
+    return sections;
+  }
+
+  List<Map<String, dynamic>> _encodeFavoriteCategories(
+    List<_FavoriteCategoryCard> categories,
+  ) {
+    return categories
+        .map(
+          (category) => <String, dynamic>{
+            'id': category.id,
+            'name': category.name,
+            'imageUrl': category.imageUrl,
+            'count': category.count,
+          },
+        )
+        .toList(growable: false);
+  }
+
+  List<_FavoriteCategoryCard> _decodeFavoriteCategories(dynamic raw) {
+    if (raw is! List) return const <_FavoriteCategoryCard>[];
+    final categories = <_FavoriteCategoryCard>[];
+    for (final entry in raw) {
+      if (entry is! Map) continue;
+      final map = Map<String, dynamic>.from(entry);
+      final id = (map['id'] ?? '').toString().trim();
+      final name = (map['name'] ?? '').toString().trim();
+      if (id.isEmpty || name.isEmpty) continue;
+      final imageUrl = map['imageUrl']?.toString().trim();
+      final countValue = map['count'];
+      final count = countValue is num
+          ? countValue.toInt()
+          : int.tryParse(countValue?.toString() ?? '') ?? 0;
+      categories.add(
+        _FavoriteCategoryCard(
+          id: id,
+          name: name,
+          imageUrl: (imageUrl == null || imageUrl.isEmpty) ? null : imageUrl,
+          count: count,
+        ),
+      );
+    }
+    return categories;
+  }
+
+  Future<_HomeRecommendedCacheEntry?> _readPersistentRecommendedCache(
+    String branchId,
+  ) async {
+    final normalizedBranchId = branchId.trim();
+    if (normalizedBranchId.isEmpty) return null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(
+        _persistentRecommendedCacheKey(normalizedBranchId),
+      );
+      if (raw == null || raw.isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final map = Map<String, dynamic>.from(decoded);
+      final fetchedAtMillis = map['fetchedAtMillis'];
+      final fetchedAt = fetchedAtMillis is num
+          ? DateTime.fromMillisecondsSinceEpoch(fetchedAtMillis.toInt())
+          : null;
+      if (fetchedAt == null) return null;
+      final sections = _decodeRuleSections(map['sections']);
+      final categories = _decodeFavoriteCategories(map['categories']);
+      if (sections.isEmpty && categories.isEmpty) return null;
+      return _HomeRecommendedCacheEntry(
+        sections: sections,
+        categories: categories,
+        fetchedAt: fetchedAt,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _persistRecommendedCache({
+    required String branchId,
+    required List<_FavoriteRuleSection> sections,
+    required List<_FavoriteCategoryCard> categories,
+    DateTime? fetchedAt,
+  }) async {
+    final normalizedBranchId = branchId.trim();
+    if (normalizedBranchId.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final payload = <String, dynamic>{
+        'fetchedAtMillis': (fetchedAt ?? DateTime.now()).millisecondsSinceEpoch,
+        'sections': _encodeRuleSections(sections),
+        'categories': _encodeFavoriteCategories(categories),
+      };
+      await prefs.setString(
+        _persistentRecommendedCacheKey(normalizedBranchId),
+        jsonEncode(payload),
+      );
+    } catch (_) {}
+  }
+
+  Future<_HomeBillingCategoriesCacheEntry?> _readPersistentBillingCache(
+    String branchId,
+  ) async {
+    final normalizedBranchId = branchId.trim();
+    if (normalizedBranchId.isEmpty) return null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(
+        _persistentBillingCategoriesCacheKey(normalizedBranchId),
+      );
+      if (raw == null || raw.isEmpty) return null;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final map = Map<String, dynamic>.from(decoded);
+      final fetchedAtMillis = map['fetchedAtMillis'];
+      final fetchedAt = fetchedAtMillis is num
+          ? DateTime.fromMillisecondsSinceEpoch(fetchedAtMillis.toInt())
+          : null;
+      if (fetchedAt == null) return null;
+      final categories = _decodeFavoriteCategories(map['categories']);
+      if (categories.isEmpty) return null;
+      return _HomeBillingCategoriesCacheEntry(
+        categories: categories,
+        fetchedAt: fetchedAt,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _persistBillingCategoriesCache({
+    required String branchId,
+    required List<_FavoriteCategoryCard> categories,
+    DateTime? fetchedAt,
+  }) async {
+    final normalizedBranchId = branchId.trim();
+    if (normalizedBranchId.isEmpty || categories.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final payload = <String, dynamic>{
+        'fetchedAtMillis': (fetchedAt ?? DateTime.now()).millisecondsSinceEpoch,
+        'categories': _encodeFavoriteCategories(categories),
+      };
+      await prefs.setString(
+        _persistentBillingCategoriesCacheKey(normalizedBranchId),
+        jsonEncode(payload),
+      );
+    } catch (_) {}
+  }
+
   Future<void> _loadHomeBillingCategories() async {
     final inFlight = _homeBillingCategoriesLoadFuture;
     if (inFlight != null) {
@@ -1475,20 +1720,33 @@ class _HomePageState extends State<HomePage> {
       final token = prefs.getString('token')?.trim();
       final branchId = prefs.getString('branchId')?.trim() ?? '';
 
+      final cacheKey = _billingCategoriesCacheKey(branchId);
+      var cached = _billingCategoriesCache[cacheKey];
+      if (cached == null) {
+        final persistent = await _readPersistentBillingCache(branchId);
+        if (persistent != null) {
+          _billingCategoriesCache[cacheKey] = _HomeBillingCategoriesCacheEntry(
+            categories: _cloneFavoriteCategories(persistent.categories),
+            fetchedAt: persistent.fetchedAt,
+          );
+          cached = _billingCategoriesCache[cacheKey];
+        }
+      }
+
+      if (cached != null) {
+        if (!mounted) return;
+        setState(() {
+          _billingCategories = _cloneFavoriteCategories(cached!.categories);
+        });
+        if (cached.isFresh(_billingCategoriesCacheTtl)) {
+          return;
+        }
+      }
+
       if (token == null || token.isEmpty) {
         if (!mounted) return;
         setState(() {
           _billingCategories = <_FavoriteCategoryCard>[];
-        });
-        return;
-      }
-
-      final cacheKey = _billingCategoriesCacheKey(branchId);
-      final cached = _billingCategoriesCache[cacheKey];
-      if (cached != null && cached.isFresh(_billingCategoriesCacheTtl)) {
-        if (!mounted) return;
-        setState(() {
-          _billingCategories = _cloneFavoriteCategories(cached.categories);
         });
         return;
       }
@@ -1504,6 +1762,12 @@ class _HomePageState extends State<HomePage> {
       _billingCategoriesCache[cacheKey] = _HomeBillingCategoriesCacheEntry(
         categories: _cloneFavoriteCategories(categories),
         fetchedAt: DateTime.now(),
+      );
+      unawaited(
+        _persistBillingCategoriesCache(
+          branchId: branchId,
+          categories: categories,
+        ),
       );
 
       if (!mounted) return;
@@ -1528,7 +1792,7 @@ class _HomePageState extends State<HomePage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest.vseyal.com/api/globals/widget-settings?depth=1',
+          'https://blackforest3.vseyal.com/api/globals/widget-settings?depth=1',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -1572,19 +1836,31 @@ class _HomePageState extends State<HomePage> {
       unawaited(_loadProductPopularity());
 
       final branchKey = _branchId!;
-      final cacheEntry = _recommendedCacheByBranch[branchKey];
+      var cacheEntry = _recommendedCacheByBranch[branchKey];
+      if (cacheEntry == null) {
+        final persistent = await _readPersistentRecommendedCache(branchKey);
+        if (persistent != null) {
+          _recommendedCacheByBranch[branchKey] = _HomeRecommendedCacheEntry(
+            sections: _cloneRuleSections(persistent.sections),
+            categories: _cloneFavoriteCategories(persistent.categories),
+            fetchedAt: persistent.fetchedAt,
+          );
+          cacheEntry = _recommendedCacheByBranch[branchKey];
+        }
+      }
       if (cacheEntry != null) {
+        final cachedEntry = cacheEntry;
         if (mounted) {
           setState(() {
-            _ruleSections = _cloneRuleSections(cacheEntry.sections);
+            _ruleSections = _cloneRuleSections(cachedEntry.sections);
             _favoriteCategories = _cloneFavoriteCategories(
-              cacheEntry.categories,
+              cachedEntry.categories,
             );
             _isLoadingRecommended = false;
           });
         }
         final isFresh =
-            DateTime.now().difference(cacheEntry.fetchedAt) <
+            DateTime.now().difference(cachedEntry.fetchedAt) <
             _recommendedCacheTtl;
         if (isFresh) {
           return;
@@ -1637,7 +1913,7 @@ class _HomePageState extends State<HomePage> {
   }) async {
     final rulesResponse = await http.get(
       Uri.parse(
-        'https://blackforest.vseyal.com/api/globals/widget-settings?depth=1',
+        'https://blackforest3.vseyal.com/api/globals/widget-settings?depth=1',
       ),
       headers: {
         'Authorization': 'Bearer $token',
@@ -1686,7 +1962,7 @@ class _HomePageState extends State<HomePage> {
     final idsParam = favoriteProductIds.join(',');
     final optionsResponse = await http.get(
       Uri.parse(
-        'https://blackforest.vseyal.com/api/widgets/product-options?ids=$idsParam',
+        'https://blackforest3.vseyal.com/api/widgets/product-options?ids=$idsParam',
       ),
       headers: {
         'Authorization': 'Bearer $token',
@@ -1812,6 +2088,7 @@ class _HomePageState extends State<HomePage> {
     List<_FavoriteRuleSection> sections = const <_FavoriteRuleSection>[],
     List<_FavoriteCategoryCard> categories = const <_FavoriteCategoryCard>[],
   }) {
+    final fetchedAt = DateTime.now();
     final payload = _FavoriteHomePayload(
       sections: _cloneRuleSections(sections),
       categories: _cloneFavoriteCategories(categories),
@@ -1819,7 +2096,15 @@ class _HomePageState extends State<HomePage> {
     _recommendedCacheByBranch[branchId] = _HomeRecommendedCacheEntry(
       sections: _cloneRuleSections(payload.sections),
       categories: _cloneFavoriteCategories(payload.categories),
-      fetchedAt: DateTime.now(),
+      fetchedAt: fetchedAt,
+    );
+    unawaited(
+      _persistRecommendedCache(
+        branchId: branchId,
+        sections: payload.sections,
+        categories: payload.categories,
+        fetchedAt: fetchedAt,
+      ),
     );
     return payload;
   }
@@ -1884,7 +2169,7 @@ class _HomePageState extends State<HomePage> {
       final idsParam = Uri.encodeQueryComponent(ids.join(','));
       final response = await http.get(
         Uri.parse(
-          'https://blackforest.vseyal.com/api/categories?where[id][in]=$idsParam&depth=1&limit=${ids.length}',
+          'https://blackforest3.vseyal.com/api/categories?where[id][in]=$idsParam&depth=1&limit=${ids.length}',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -2003,7 +2288,7 @@ class _HomePageState extends State<HomePage> {
       final idsParam = Uri.encodeQueryComponent(productIds.join(','));
       final response = await http.get(
         Uri.parse(
-          'https://blackforest.vseyal.com/api/products?where[id][in]=$idsParam&depth=2&limit=100',
+          'https://blackforest3.vseyal.com/api/products?where[id][in]=$idsParam&depth=2&limit=100',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -2331,11 +2616,11 @@ class _HomePageState extends State<HomePage> {
     if (value.startsWith('//')) {
       return 'https:$value';
     }
-    if (value.startsWith('blackforest.vseyal.com')) {
+    if (value.startsWith('blackforest3.vseyal.com')) {
       return 'https://$value';
     }
     if (value.startsWith('/')) {
-      return 'https://blackforest.vseyal.com$value';
+      return 'https://blackforest3.vseyal.com$value';
     }
     final lower = value.toLowerCase();
     final maybeFilePath =
@@ -2351,7 +2636,7 @@ class _HomePageState extends State<HomePage> {
         value.startsWith('files/') ||
         value.startsWith('api/') ||
         maybeFilePath) {
-      return 'https://blackforest.vseyal.com/$value';
+      return 'https://blackforest3.vseyal.com/$value';
     }
     return null;
   }
@@ -3914,7 +4199,149 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  void _handleTopOfferAvailabilityChanged(bool hasOffers) {
+    if (!mounted || _hasTopOffers == hasOffers) return;
+    setState(() {
+      _hasTopOffers = hasOffers;
+    });
+  }
+
+  Widget _buildTopHeaderRow(BuildContext context) {
+    final branchLabel = (_branchName ?? '').trim();
+    return Row(
+      children: [
+        if (branchLabel.isNotEmpty) ...[
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(18),
+                  border: Border.all(color: const Color(0x17000000)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.location_on_rounded,
+                      size: 15,
+                      color: Color(0xFF1F2937),
+                    ),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        branchLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF1F2937),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+        ] else
+          const Spacer(),
+        GestureDetector(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const WaiterCallHistoryPage(),
+              ),
+            );
+          },
+          child: const Icon(
+            Icons.call_outlined,
+            size: 22,
+            color: Color(0xFF1F2937),
+          ),
+        ),
+        const SizedBox(width: 10),
+        GestureDetector(
+          onTap: () {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (context) => const EmployeePage()),
+              (route) => false,
+            );
+          },
+          child: _photoUrl != null && _photoUrl!.isNotEmpty
+              ? CircleAvatar(
+                  radius: 20,
+                  backgroundImage: NetworkImage(_photoUrl!),
+                  backgroundColor: Colors.grey[100],
+                )
+              : const CircleAvatar(
+                  radius: 20,
+                  backgroundColor: Colors.white,
+                  child: Icon(Icons.person, color: Colors.black54),
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCompactTopSection(BuildContext context) {
+    return ClipRRect(
+      borderRadius: const BorderRadius.only(
+        bottomLeft: Radius.circular(30),
+        bottomRight: Radius.circular(30),
+      ),
+      child: Stack(
+        children: [
+          const DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFF4B7CC0), Color(0xFF3D68B6)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            child: SizedBox(width: double.infinity),
+          ),
+          SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildTopHeaderRow(context),
+                  const SizedBox(height: 12),
+                  _buildHomeSearchBar(),
+                ],
+              ),
+            ),
+          ),
+          OfferBanner(
+            height: 0,
+            showIndicators: false,
+            showLoadingIndicator: false,
+            onHasOffersChanged: _handleTopOfferAvailabilityChanged,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTopSection(BuildContext context) {
+    if (!_hasTopOffers) {
+      return _buildCompactTopSection(context);
+    }
+
     return ClipRRect(
       borderRadius: const BorderRadius.only(
         bottomLeft: Radius.circular(30),
@@ -3935,10 +4362,12 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
             ),
-            const OfferBanner(
+            OfferBanner(
               height: 314,
               viewportFraction: 1,
               showIndicators: true,
+              showLoadingIndicator: false,
+              onHasOffersChanged: _handleTopOfferAvailabilityChanged,
               itemMargin: EdgeInsets.zero,
               borderRadius: BorderRadius.zero,
               showShadow: false,
@@ -3971,67 +4400,7 @@ class _HomePageState extends State<HomePage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      children: [
-                        if ((_branchName?.isNotEmpty ?? false)) ...[
-                          Expanded(
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(
-                                    Icons.location_on_rounded,
-                                    size: 15,
-                                    color: Colors.white,
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Flexible(
-                                    child: Text(
-                                      _branchName!,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                        ] else
-                          const Spacer(),
-                        GestureDetector(
-                          onTap: () {
-                            Navigator.pushAndRemoveUntil(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => const EmployeePage(),
-                              ),
-                              (route) => false,
-                            );
-                          },
-                          child: _photoUrl != null && _photoUrl!.isNotEmpty
-                              ? CircleAvatar(
-                                  radius: 20,
-                                  backgroundImage: NetworkImage(_photoUrl!),
-                                  backgroundColor: Colors.grey[100],
-                                )
-                              : const CircleAvatar(
-                                  radius: 20,
-                                  backgroundColor: Colors.white,
-                                  child: Icon(
-                                    Icons.person,
-                                    color: Colors.black54,
-                                  ),
-                                ),
-                        ),
-                      ],
-                    ),
+                    _buildTopHeaderRow(context),
                     const SizedBox(height: 15),
                     _buildHomeSearchBar(),
                   ],

@@ -2,10 +2,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/table_customer_details_visibility_service.dart';
 import 'package:blackforest_app/printer/bluetooth_printer_prefs.dart';
 import 'package:blackforest_app/printer/thermal_print_prefs.dart';
+import 'package:blackforest_app/kot_status_source_prefs.dart';
+import 'package:blackforest_app/kot_auto_print_service.dart';
 
 const String _favoriteCategoryPrefix = 'favorite_category_ids_';
 
 Future<void> clearSessionPreservingFavorites(SharedPreferences prefs) async {
+  try {
+    await KotAutoPrintService.stopService();
+  } catch (_) {}
+
   final Map<String, dynamic> backup = {};
   for (final key in prefs.getKeys()) {
     if (key.startsWith(_favoriteCategoryPrefix)) {
@@ -15,6 +21,7 @@ Future<void> clearSessionPreservingFavorites(SharedPreferences prefs) async {
         key == btPrinterUseBillingKey ||
         key == btPrinterUseKotKey ||
         key == thermalReviewPrintEnabledKey ||
+        key == kotStatusSourcePrefKey ||
         key == 'printerPort' ||
         key == 'branchIp' ||
         key == 'printerIp') {

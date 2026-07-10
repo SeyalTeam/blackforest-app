@@ -7,23 +7,33 @@ import 'package:blackforest_app/login_page.dart';
 import 'package:blackforest_app/home_page.dart';
 import 'package:blackforest_app/home_navigation_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:blackforest_app/app_http.dart' as http;
-import 'dart:convert';
 
+import 'package:blackforest_app/api_server_prefs.dart';
 import 'package:blackforest_app/notification_service.dart';
-import 'package:blackforest_app/auth_flags.dart';
 import 'package:blackforest_app/auth_session_manager.dart';
 import 'package:blackforest_app/session_prefs.dart';
+import 'package:blackforest_app/app_version.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
-// import 'package:blackforest_app/kot_auto_print_service.dart'; // No longer needed in main.dart if we use it elsewhere
+import 'package:screen_protector/screen_protector.dart';
+import 'package:blackforest_app/kot_auto_print_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  try {
-    await NotificationService().init().timeout(const Duration(seconds: 8));
-  } catch (_) {
-    // Startup must continue even if notification init fails.
-  }
+  await AppVersion.init(); // cache version before any HTTP requests
+  await ensureApiHostRoutingReady();
+
+  // Enable screenshot prevention and background data leakage protection
+  unawaited(ScreenProtector.preventScreenshotOn());
+  unawaited(ScreenProtector.protectDataLeakageOn());
+
+  // Do not block startup for notification plugin initialization.
+  unawaited(
+    NotificationService().init().timeout(const Duration(seconds: 8)).catchError(
+      (_) {
+        // Startup must continue even if notification init fails.
+      },
+    ),
+  );
 
   FlutterForegroundTask.init(
     androidNotificationOptions: AndroidNotificationOptions(
@@ -134,139 +144,61 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   Future<Widget> _getInitialPage() async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('token');
-    if (token != null) {
-      // Validate token (recommended for security)
-      try {
-        final response = await http
-            .get(
-              Uri.parse(
-                'https://blackforest.vseyal.com/api/users/me?depth=5&showHiddenFields=true',
-              ),
-              headers: {'Authorization': 'Bearer $token'},
-            )
-            .timeout(const Duration(seconds: 12));
-        if (response.statusCode == 200) {
-          try {
-            final body = jsonDecode(response.body);
-            final user = body is Map<String, dynamic>
-                ? (body['user'] ?? body)
-                : null;
-            if (user is Map<String, dynamic>) {
-              if (isForceLoggedOutUser(user) || isLoginBlockedUser(user)) {
-                await clearSessionPreservingFavorites(prefs);
-                return const LoginPage();
-              }
-
-              // --- Session Duration Check ---
-              final loginTime = prefs.getInt('login_time') ?? 0;
-              final role = user['role']?.toString() ?? '';
-
-              // Roles allowed for 30 days
-              const longSessionRoles = [
-                'superadmin',
-                'admin',
-                'company',
-                'factory',
-              ];
-
-              if (!longSessionRoles.contains(role)) {
-                // For everyone else (Staff), enforce 14 hours (50400000 ms)
-                final diff = DateTime.now().millisecondsSinceEpoch - loginTime;
-                if (diff > 50400000) {
-                  // 14 hours
-                  await clearSessionPreservingFavorites(prefs);
-                  return const LoginPage();
-                }
-              }
-
-              // Store user-level name as a secondary identifier
-              final userName = user['name'] ?? user['username'];
-              if (userName != null) {
-                await prefs.setString('user_name', userName.toString());
-              }
-
-              final userId =
-                  user['id']?.toString() ??
-                  user['_id']?.toString() ??
-                  user[r'$oid']?.toString();
-              if (userId != null && userId.isNotEmpty) {
-                await prefs.setString('user_id', userId);
-              }
-
-              final userRole = user['role']?.toString();
-              if (userRole != null && userRole.isNotEmpty) {
-                await prefs.setString('role', userRole);
-              }
-
-              final emp = user['employee'];
-              if (emp is Map<String, dynamic>) {
-                final empId =
-                    emp['id']?.toString() ??
-                    emp['_id']?.toString() ??
-                    emp[r'$oid']?.toString();
-                if (empId != null && empId.isNotEmpty) {
-                  await prefs.setString('employee_id', empId);
-                }
-
-                // Strictly prioritize name from employee collection
-                final empName = emp['name']?.toString();
-                if (empName != null && empName.isNotEmpty) {
-                  await prefs.setString('employee_name', empName);
-                }
-
-                final empCode =
-                    emp['employeeId']?.toString() ??
-                    emp['employeeID']?.toString() ??
-                    emp['empId']?.toString();
-                if (empCode != null && empCode.isNotEmpty) {
-                  await prefs.setString('employee_code', empCode);
-                }
-
-                final photo = emp['photo'];
-                String? photoUrl;
-                if (photo is Map<String, dynamic>) {
-                  photoUrl =
-                      photo['thumbnailURL']?.toString() ??
-                      photo['thumbnailUrl']?.toString() ??
-                      photo['url']?.toString();
-                } else if (photo is String) {
-                  photoUrl = photo;
-                }
-
-                if (photoUrl != null && photoUrl.isNotEmpty) {
-                  if (photoUrl.startsWith('/')) {
-                    photoUrl = 'https://blackforest.vseyal.com$photoUrl';
-                  }
-                  await prefs.setString('employee_photo_url', photoUrl);
-                }
-              }
-            }
-          } catch (_) {}
-          // Valid: Return the authenticated landing page.
-          final navigationVisibility = await Future.wait<bool>([
-            HomeNavigationService.loadVisibilityForCurrentBranch(
-              prefs: prefs,
-              forceRefresh: true,
-            ),
-            HomeNavigationService.loadTableVisibilityForCurrentBranch(
-              prefs: prefs,
-              forceRefresh: true,
-            ),
-          ]);
-          final showHomeNavigation = navigationVisibility[0];
-          return IdleTimeoutWrapper(
-            child: showHomeNavigation
-                ? const HomePage()
-                : const CategoriesPage(),
-          );
-        }
-      } catch (_) {}
-      // Invalid: Clear prefs and fall to login
-      await clearSessionPreservingFavorites(prefs);
+    final token = (prefs.getString('token') ?? '').trim();
+    if (token.isEmpty) {
+      return const LoginPage();
     }
-    // No valid session: Return LoginPage
-    return const LoginPage();
+
+    // Cache-first boot: avoid waiting on network before first frame.
+    final loginTime = prefs.getInt('login_time') ?? 0;
+    final cachedRole = (prefs.getString('role') ?? '').trim().toLowerCase();
+    const longSessionRoles = <String>{
+      'superadmin',
+      'admin',
+      'company',
+      'factory',
+    };
+    if (loginTime > 0 && !longSessionRoles.contains(cachedRole)) {
+      final diff = DateTime.now().millisecondsSinceEpoch - loginTime;
+      if (diff > 50400000) {
+        await clearSessionPreservingFavorites(prefs);
+        return const LoginPage();
+      }
+    }
+
+    final branchId = (prefs.getString('branchId') ?? '').trim();
+    if (token.isNotEmpty && branchId.isNotEmpty) {
+      unawaited(KotAutoPrintService.startService());
+    }
+    final showHomeNavigation = HomeNavigationService.readCachedVisibility(
+      prefs,
+      branchId: branchId,
+      fallback: true,
+    );
+    final showTableNavigation = HomeNavigationService.readCachedTableVisibility(
+      prefs,
+      branchId: branchId,
+      fallback: true,
+    );
+
+    unawaited(
+      HomeNavigationService.loadVisibilityForCurrentBranch(
+        prefs: prefs,
+        forceRefresh: true,
+        fallback: showHomeNavigation,
+      ),
+    );
+    unawaited(
+      HomeNavigationService.loadTableVisibilityForCurrentBranch(
+        prefs: prefs,
+        forceRefresh: true,
+        fallback: showTableNavigation,
+      ),
+    );
+
+    return IdleTimeoutWrapper(
+      child: showHomeNavigation ? const HomePage() : const CategoriesPage(),
+    );
   }
 
   @override

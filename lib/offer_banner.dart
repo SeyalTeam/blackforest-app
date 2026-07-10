@@ -10,6 +10,7 @@ class OfferBanner extends StatefulWidget {
   final double height;
   final double viewportFraction;
   final bool showIndicators;
+  final bool showLoadingIndicator;
   final EdgeInsetsGeometry itemMargin;
   final BorderRadiusGeometry borderRadius;
   final bool showShadow;
@@ -30,12 +31,14 @@ class OfferBanner extends StatefulWidget {
   final int compactSubtitleMaxLines;
   final TextOverflow regularSubtitleOverflow;
   final TextOverflow compactSubtitleOverflow;
+  final ValueChanged<bool>? onHasOffersChanged;
 
   const OfferBanner({
     super.key,
     this.height = 200,
     this.viewportFraction = 1,
     this.showIndicators = true,
+    this.showLoadingIndicator = true,
     this.itemMargin = const EdgeInsets.fromLTRB(0, 4, 0, 6),
     this.borderRadius = const BorderRadius.all(Radius.circular(20)),
     this.showShadow = true,
@@ -59,6 +62,7 @@ class OfferBanner extends StatefulWidget {
     this.compactSubtitleMaxLines = 2,
     this.regularSubtitleOverflow = TextOverflow.ellipsis,
     this.compactSubtitleOverflow = TextOverflow.ellipsis,
+    this.onHasOffersChanged,
   });
 
   @override
@@ -106,6 +110,7 @@ class _OfferBannerState extends State<OfferBanner> {
   late final PageController _pageController;
   Timer? _timer;
   int _currentPage = 0;
+  bool? _lastHasOffersNotified;
 
   @override
   void initState() {
@@ -115,6 +120,15 @@ class _OfferBannerState extends State<OfferBanner> {
       viewportFraction: widget.viewportFraction,
     );
     _bootstrapOffers();
+  }
+
+  @override
+  void didUpdateWidget(covariant OfferBanner oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.onHasOffersChanged != widget.onHasOffersChanged) {
+      _lastHasOffersNotified = null;
+      _notifyHasOffers(_offers.isNotEmpty);
+    }
   }
 
   @override
@@ -133,6 +147,7 @@ class _OfferBannerState extends State<OfferBanner> {
       setState(() {
         _isLoading = false;
       });
+      _notifyHasOffers(false);
       return;
     }
 
@@ -152,6 +167,17 @@ class _OfferBannerState extends State<OfferBanner> {
       prefs: prefs,
       showLoadingIfEmpty: true,
     );
+  }
+
+  void _notifyHasOffers(bool hasOffers) {
+    final callback = widget.onHasOffersChanged;
+    if (callback == null) return;
+    if (_lastHasOffersNotified == hasOffers) return;
+    _lastHasOffersNotified = hasOffers;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      callback(hasOffers);
+    });
   }
 
   _CachedOfferBannerData? _loadCachedOffers(SharedPreferences prefs) {
@@ -215,7 +241,7 @@ class _OfferBannerState extends State<OfferBanner> {
     try {
       final metadataResponse = await http.get(
         Uri.parse(
-          'https://blackforest.vseyal.com/api/globals/customer-offer-settings?depth=0',
+          'https://blackforest3.vseyal.com/api/globals/customer-offer-settings?depth=0',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -273,7 +299,7 @@ class _OfferBannerState extends State<OfferBanner> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest.vseyal.com/api/globals/customer-offer-settings?depth=1',
+          'https://blackforest3.vseyal.com/api/globals/customer-offer-settings?depth=1',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -284,6 +310,7 @@ class _OfferBannerState extends State<OfferBanner> {
           setState(() {
             _isLoading = false;
           });
+          _notifyHasOffers(false);
         }
         return;
       }
@@ -327,6 +354,7 @@ class _OfferBannerState extends State<OfferBanner> {
         setState(() {
           _isLoading = false;
         });
+        _notifyHasOffers(false);
       }
     }
   }
@@ -346,6 +374,7 @@ class _OfferBannerState extends State<OfferBanner> {
         _currentPage = 0;
       }
     });
+    _notifyHasOffers(cloned.isNotEmpty);
 
     if (_offers.length > 1) {
       _startAutoScroll();
@@ -381,7 +410,7 @@ class _OfferBannerState extends State<OfferBanner> {
     final url = rawUrl.trim();
     if (url.isEmpty) return null;
     if (url.startsWith('/')) {
-      return 'https://blackforest.vseyal.com$url';
+      return 'https://blackforest3.vseyal.com$url';
     }
     if (url.startsWith('http://') || url.startsWith('https://')) {
       return url;
@@ -452,7 +481,7 @@ class _OfferBannerState extends State<OfferBanner> {
 
     try {
       final response = await http.get(
-        Uri.parse('https://blackforest.vseyal.com/api/media').replace(
+        Uri.parse('https://blackforest3.vseyal.com/api/media').replace(
           queryParameters: <String, String>{
             'where[id][in]': missingMediaIds.join(','),
             'limit': missingMediaIds.length.toString(),
@@ -763,6 +792,9 @@ class _OfferBannerState extends State<OfferBanner> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
+      if (!widget.showLoadingIndicator) {
+        return const SizedBox.shrink();
+      }
       return SizedBox(
         height: widget.height,
         child: Center(

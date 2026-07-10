@@ -1,10 +1,13 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:blackforest_app/app_http.dart' as http;
+import 'package:blackforest_app/api_server_prefs.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:blackforest_app/notification_service.dart';
 import 'package:blackforest_app/cart_page.dart';
+import 'package:blackforest_app/kot_status_source_prefs.dart';
+import 'package:blackforest_app/waiter_call_range_filter_service.dart';
 
 class CartItem {
   final String id;
@@ -64,16 +67,7 @@ class CartItem {
     String? branchId,
     String? tableSection,
   }) {
-    String? imageUrl;
-    if (product['images'] != null &&
-        product['images'].isNotEmpty &&
-        product['images'][0]['image'] != null &&
-        product['images'][0]['image']['url'] != null) {
-      imageUrl = product['images'][0]['image']['url'];
-      if (imageUrl != null && imageUrl.startsWith('/')) {
-        imageUrl = 'https://blackforest.vseyal.com$imageUrl';
-      }
-    }
+    final imageUrl = resolveImageUrlFromProduct(product);
 
     double price =
         branchPrice ??
@@ -84,8 +78,23 @@ class CartItem {
         );
     final gstPercent = extractEffectiveGstPercent(product, branchId: branchId);
 
-    // ✅ read unit from product (default to 'pcs' if missing)
-    String? unit = product['unit']?.toString().toLowerCase() ?? 'pcs';
+    // ✅ read unit from product (handle nesting)
+    String? unit;
+    if (branchId != null && product['branchOverrides'] is List) {
+      final overrides = product['branchOverrides'] as List;
+      for (final override in overrides) {
+        if (override is Map) {
+          final overrideBranchId = extractRefId(override['branch']);
+          if (overrideBranchId == branchId && override['unit'] != null) {
+            unit = override['unit'].toString().toLowerCase();
+            break;
+          }
+        }
+      }
+    }
+    unit ??= product['unit']?.toString().toLowerCase() ?? 
+             product['defaultPriceDetails']?['unit']?.toString().toLowerCase() ?? 
+             'pcs';
 
     // ✅ Extract department
     String? dept;
@@ -106,6 +115,7 @@ class CartItem {
           ? product['category']['id']?.toString()
           : product['category'].toString();
     }
+    categoryId ??= product['categoryId']?.toString();
 
     return CartItem(
       id: product['id'],
@@ -131,6 +141,101 @@ class CartItem {
       effectiveUnitPrice: null,
       lineSubtotal: null,
     );
+  }
+
+  static String? _normalizeImageUrlValue(dynamic rawUrl) {
+    if (rawUrl == null || rawUrl is Map || rawUrl is List) return null;
+    final value = rawUrl.toString().trim();
+    if (value.isEmpty) return null;
+    if (value.startsWith('data:image/')) return value;
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      return resolveApiAssetUrl(value);
+    }
+    if (value.startsWith('//')) {
+      return resolveApiAssetUrl('https:$value');
+    }
+    if (value.startsWith('blackforest3.vseyal.com')) {
+      return resolveApiAssetUrl('https://$value');
+    }
+    if (value.startsWith('/')) {
+      return resolveApiAssetUrl(value);
+    }
+    final lower = value.toLowerCase();
+    final maybeFilePath =
+        lower.endsWith('.png') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.webp') ||
+        lower.endsWith('.gif') ||
+        lower.endsWith('.svg') ||
+        lower.endsWith('.avif');
+    if (value.startsWith('uploads/') ||
+        value.startsWith('media/') ||
+        value.startsWith('files/') ||
+        value.startsWith('api/') ||
+        maybeFilePath) {
+      return resolveApiAssetUrl('/$value');
+    }
+    return null;
+  }
+
+  static String? _extractImageFromNode(dynamic node) {
+    final direct = _normalizeImageUrlValue(node);
+    if (direct != null) return direct;
+
+    if (node is List) {
+      for (final child in node) {
+        final nested = _extractImageFromNode(child);
+        if (nested != null) return nested;
+      }
+      return null;
+    }
+
+    if (node is! Map) return null;
+
+    for (final key in const [
+      'url',
+      'imageUrl',
+      'thumbnail',
+      'thumbnailURL',
+      'thumbnailUrl',
+      'productImage',
+    ]) {
+      final candidate = _normalizeImageUrlValue(node[key]);
+      if (candidate != null) return candidate;
+    }
+
+    final nestedImage = _extractImageFromNode(node['image']);
+    if (nestedImage != null) return nestedImage;
+
+    final nestedImages = _extractImageFromNode(node['images']);
+    if (nestedImages != null) return nestedImages;
+
+    return null;
+  }
+
+  static String? resolveImageUrlFromProduct(
+    dynamic product, {
+    Map<String, dynamic>? itemMap,
+  }) {
+    final fromProduct = _extractImageFromNode(product);
+    if (fromProduct != null) return fromProduct;
+
+    if (itemMap != null) {
+      for (final key in const [
+        'imageUrl',
+        'thumbnail',
+        'productImage',
+        'image',
+        'thumbnailURL',
+        'thumbnailUrl',
+      ]) {
+        final candidate = _extractImageFromNode(itemMap[key]);
+        if (candidate != null) return candidate;
+      }
+    }
+
+    return null;
   }
 
   Map<String, dynamic> toJson() {
@@ -383,6 +488,17 @@ class CartItem {
     final sectionPriceMode = _sectionPriceMode(sectionName);
     if (sectionPriceMode == null) {
       return null;
+    }
+
+    final enableKeys = sectionPriceMode == 'ac'
+        ? const <String>['enableAC', 'enableAc']
+        : const <String>['enableNonAC', 'enableNonAc'];
+
+    if (branchPriceDetails != null) {
+      final enabled = _readFirstBool(branchPriceDetails, enableKeys);
+      if (enabled == false) {
+        return null;
+      }
     }
 
     final candidatePriceDetails = <Map<String, dynamic>?>[
@@ -640,9 +756,14 @@ class CartProvider extends ChangeNotifier {
     CartType.billing: const <Map<String, dynamic>>[],
     CartType.table: const <Map<String, dynamic>>[],
   };
+  final Map<CartType, bool> _customerDetailsPromptSkippedMap = {
+    CartType.billing: false,
+    CartType.table: false,
+  };
 
   // Shared state
   String? _branchId;
+  String _gstMode = 'inclusive';
   String? _printerIp;
   int _printerPort = 9100;
   String? _printerProtocol = 'esc_pos';
@@ -687,10 +808,26 @@ class CartProvider extends ChangeNotifier {
     }
   }
 
-  double get total => (cartItems + recalledItems).fold(
-    0.0,
-    (sum, item) => sum + item.lineTotal,
-  );
+  double get total {
+    final subtotal = (cartItems + recalledItems).fold(
+      0.0,
+      (sum, item) => sum + item.lineTotal,
+    );
+    if (_gstMode == 'exclusive') {
+      final tax = (cartItems + recalledItems).fold(
+        0.0,
+        (sum, item) {
+          if (item.isOfferFreeItem || item.isRandomCustomerOfferItem) {
+            return sum;
+          }
+          return sum + (item.lineTotal * item.gstPercent / 100.0);
+        },
+      );
+      return subtotal + tax;
+    } else {
+      return subtotal;
+    }
+  }
 
   String? get recalledBillId => _recalledBillIdMap[_currentType];
   String? get selectedKitchenId => _selectedKitchenIdMap[_currentType];
@@ -701,19 +838,23 @@ class CartProvider extends ChangeNotifier {
   String? get selectedTable => _selectedTableMap[_currentType];
   String? get selectedSection => _selectedSectionMap[_currentType];
   bool get isSharedTableOrder =>
-      _isSharedTablesSection(_selectedSectionMap[_currentType]);
+      _isSharedTablesSection(_selectedSectionMap[_currentType]) ||
+      (selectedTable ?? '').contains('-S-');
   bool get preferHomeCategoriesUiForCurrentDraft =>
       _preferHomeCategoriesUiMap[_currentType] == true;
   List<Map<String, dynamic>> get homeTopCategoriesSeedForCurrentDraft =>
       _homeTopCategoriesSeedMap[_currentType]!
           .map((item) => Map<String, dynamic>.from(item))
           .toList(growable: false);
+  bool get isCustomerDetailsPromptSkippedForCurrentDraft =>
+      _customerDetailsPromptSkippedMap[_currentType] == true;
 
   // Shared getters
   String? get printerIp => _printerIp;
   int get printerPort => _printerPort;
   String? get printerProtocol => _printerProtocol;
   String? get branchId => _branchId;
+  String get gstMode => _gstMode;
 
   CartProvider() {
     _loadCarts();
@@ -825,6 +966,7 @@ class CartProvider extends ChangeNotifier {
     _selectedKitchenNameMap[type] = null;
     _customerNameMap[type] = null;
     _customerPhoneMap[type] = null;
+    _customerDetailsPromptSkippedMap[type] = false;
     _draftOwnerNameMap[type] = null;
     _selectedTableMap[type] = null;
     _selectedSectionMap[type] = null;
@@ -838,6 +980,42 @@ class CartProvider extends ChangeNotifier {
     _clearMetadata(_currentType);
     notifyListeners();
     _saveCurrentCart();
+  }
+
+  Future<void> clearAllDrafts({bool notify = true}) async {
+    for (final type in CartType.values) {
+      _itemsMap[type]!.clear();
+      _recalledItemsMap[type]!.clear();
+      _clearMetadata(type);
+    }
+    _branchId = null;
+
+    final prefs = await SharedPreferences.getInstance();
+    const draftStorageBases = <String>[
+      'cart',
+      'recalledItems',
+      'recalledBillId',
+      'customerName',
+      'customerPhone',
+      'draftOwnerName',
+      'selectedTable',
+      'selectedSection',
+      'selectedKitchenId',
+      'selectedKitchenName',
+      'preferHomeCategoriesUi',
+      'homeTopCategoriesSeed',
+      'customerDetailsPromptSkipped',
+    ];
+
+    for (final type in CartType.values) {
+      for (final base in draftStorageBases) {
+        await prefs.remove(_key(type, base));
+      }
+    }
+
+    if (notify) {
+      notifyListeners();
+    }
   }
 
   bool _isSharedTablesSection(String? section) {
@@ -920,8 +1098,22 @@ class CartProvider extends ChangeNotifier {
         (trimmedName == null || trimmedName.isEmpty) ? null : trimmedName;
     _customerPhoneMap[_currentType] =
         (trimmedPhone == null || trimmedPhone.isEmpty) ? null : trimmedPhone;
+    final hasCustomerDetails =
+        _customerNameMap[_currentType] != null ||
+        _customerPhoneMap[_currentType] != null;
+    if (hasCustomerDetails) {
+      _customerDetailsPromptSkippedMap[_currentType] = false;
+    }
 
     notifyListeners();
+    _saveCurrentCart();
+  }
+
+  void setCustomerDetailsPromptSkipped(bool skipped, {bool notify = false}) {
+    _customerDetailsPromptSkippedMap[_currentType] = skipped;
+    if (notify) {
+      notifyListeners();
+    }
     _saveCurrentCart();
   }
 
@@ -994,6 +1186,13 @@ class CartProvider extends ChangeNotifier {
     _branchId = branchId;
   }
 
+  void setGstMode(String mode) {
+    if (mode == 'inclusive' || mode == 'exclusive') {
+      _gstMode = mode;
+      notifyListeners();
+    }
+  }
+
   void setPrinterDetails(
     String? printerIp,
     int? printerPort,
@@ -1053,6 +1252,10 @@ class CartProvider extends ChangeNotifier {
       _key(type, 'preferHomeCategoriesUi'),
       _preferHomeCategoriesUiMap[type] == true,
     );
+    await prefs.setBool(
+      _key(type, 'customerDetailsPromptSkipped'),
+      _customerDetailsPromptSkippedMap[type] == true,
+    );
     final homeTopCategoriesSeed = _homeTopCategoriesSeedMap[type]!;
     if (homeTopCategoriesSeed.isNotEmpty) {
       await prefs.setString(
@@ -1066,6 +1269,10 @@ class CartProvider extends ChangeNotifier {
 
   Future<void> _loadCarts() async {
     final prefs = await SharedPreferences.getInstance();
+    final gstModeString = prefs.getString('gstMode');
+    if (gstModeString != null) {
+      _gstMode = gstModeString;
+    }
     for (var type in CartType.values) {
       // Load active draft
       final cartString = prefs.getString(_key(type, 'cart'));
@@ -1101,6 +1308,8 @@ class CartProvider extends ChangeNotifier {
       );
       _preferHomeCategoriesUiMap[type] =
           prefs.getBool(_key(type, 'preferHomeCategoriesUi')) ?? false;
+      _customerDetailsPromptSkippedMap[type] =
+          prefs.getBool(_key(type, 'customerDetailsPromptSkipped')) ?? false;
       final homeTopCategoriesSeed = prefs.getString(
         _key(type, 'homeTopCategoriesSeed'),
       );
@@ -1153,19 +1362,33 @@ class CartProvider extends ChangeNotifier {
             .map((item) => '${item.name}: ${item.specialNote}')
             .join(', '),
       };
+      final currentTableNumber = selectedTable?.trim() ?? '';
+      String finalTableNumber = currentTableNumber.isEmpty
+          ? 'T${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}'
+          : currentTableNumber;
+
+      String finalSection = selectedSection ?? '';
+      if (selectedSection == sharedTablesSectionName && !finalTableNumber.contains('-S-')) {
+        finalTableNumber = '$finalTableNumber-S-${DateTime.now().millisecondsSinceEpoch.toString().substring(10)}';
+        finalSection = 'AC';
+      }
+
       if (hasTableDetailsForSubmit) {
         payload['tableDetails'] = {
-          'section': selectedSection,
-          'tableNumber': selectedTable,
+          'section': finalSection,
+          'tableNumber': finalTableNumber,
         };
       }
       final body = jsonEncode(payload);
 
       final response = await http.post(
-        Uri.parse('https://blackforest.vseyal.com/api/billings'),
+        Uri.parse('https://blackforest3.vseyal.com/api/billings'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
+          http.idempotencyHeaderName: http.generateIdempotencyKey(
+            scope: 'billings-create',
+          ),
         },
         body: body,
       );
@@ -1185,7 +1408,7 @@ class CartProvider extends ChangeNotifier {
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Network error: Check your internet')),
+        SnackBar(content: Text('Error: ${e.toString().replaceAll('Exception: Failed to submit billing: ', '')}')),
       );
       return null;
     }
@@ -1254,10 +1477,13 @@ class CartProvider extends ChangeNotifier {
       final itemsPayload = list.map((i) => i.toBillingPayload()).toList();
 
       final response = await http.patch(
-        Uri.parse('https://blackforest.vseyal.com/api/billings/$billId'),
+        Uri.parse('https://blackforest3.vseyal.com/api/billings/$billId'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
+          http.idempotencyHeaderName: http.generateIdempotencyKey(
+            scope: 'billings-update-$billId',
+          ),
         },
         body: jsonEncode({'items': itemsPayload}),
       );
@@ -1349,7 +1575,7 @@ class CartProvider extends ChangeNotifier {
       if (token == null) return;
 
       final response = await http.get(
-        Uri.parse('https://blackforest.vseyal.com/api/billings/$billId'),
+        Uri.parse('https://blackforest3.vseyal.com/api/billings/$billId'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
@@ -1455,26 +1681,30 @@ class CartProvider extends ChangeNotifier {
             'subTotal',
             'sub_total',
           ]);
-          final sGstValue = readOptionalMoney(sItem, [
-            'gstAmount',
-            'taxAmount',
-            'tax',
-          ]);
-          final sSubtotal = sIsRandomCustomerOfferItem
-              ? 0.0
-              : sExplicitLineTotal != null && sExplicitLineTotal > 0
-              ? sExplicitLineTotal
-              : sTaxableValue != null && sGstValue != null
-              ? sTaxableValue + sGstValue
-              : sSubtotalValue != null &&
-                    sExpectedLineTotalFromPrice > 0 &&
-                    sSubtotalValue > sExpectedLineTotalFromPrice + 0.009
-              ? sExpectedLineTotalFromPrice
-              : sSubtotalValue;
-          final sGstPercent = CartItem.extractEffectiveGstPercent(
+
+          double sGstPercent = CartItem.extractEffectiveGstPercent(
             sItem['product'],
             branchId: _branchId,
           );
+          if (sGstPercent <= 0) {
+            sGstPercent = CartItem.parsePercent(
+              sItem['gstRate'] ??
+              sItem['gstPercent'] ??
+              sItem['gst'] ??
+              sItem['taxPercent'],
+            );
+          }
+          final sSubtotal = sIsRandomCustomerOfferItem
+              ? 0.0
+              : sSubtotalValue != null
+              ? sSubtotalValue
+              : sTaxableValue != null
+              ? sTaxableValue
+              : sExplicitLineTotal != null && sExplicitLineTotal > 0
+              ? (sGstPercent > 0 ? (sExplicitLineTotal * 100) / (100 + sGstPercent) : sExplicitLineTotal)
+              : sExpectedLineTotalFromPrice > 0
+              ? sExpectedLineTotalFromPrice
+              : sSubtotalValue;
 
           // Prefer matching by billing sub-item ID, fallback to product ID.
           int idx = -1;
@@ -1579,8 +1809,129 @@ class CartProvider extends ChangeNotifier {
       final token = prefs.getString('token');
       final userId = prefs.getString('user_id');
       final branchId = prefs.getString('branchId');
+      final sourceStatus = loadKotStatusSourceFromPrefs(prefs);
 
       if (token == null || userId == null) return;
+      final normalizedUserId = userId.trim();
+      final normalizedBranchId = branchId?.trim() ?? '';
+      final userKeys = WaiterCallRangeFilterService.resolveCandidateUserKeysFromPrefs(prefs);
+      final assignedRows = normalizedBranchId.isEmpty
+          ? const <WaiterCallRangeSelection>[]
+          : WaiterCallRangeFilterService.readSelectionsForAnyUser(
+              prefs: prefs,
+              userKeys: userKeys,
+              branchId: normalizedBranchId,
+            );
+      final hasSelectedTableRows = assignedRows.isNotEmpty;
+
+      final cachedTablesRaw = prefs.getString('cached_tables_$normalizedBranchId');
+      List<dynamic> cachedTables = [];
+      if (cachedTablesRaw != null) {
+        try {
+          cachedTables = jsonDecode(cachedTablesRaw) as List<dynamic>;
+        } catch (_) {}
+      }
+
+      if (cachedTables.isEmpty && normalizedBranchId.isNotEmpty && token.isNotEmpty) {
+        try {
+          final tablesResponse = await http.get(
+            Uri.parse(
+              'https://blackforest3.vseyal.com/api/tables?where[branch][equals]=$normalizedBranchId&limit=1&depth=1',
+            ),
+            headers: {'Authorization': 'Bearer $token'},
+          ).timeout(const Duration(seconds: 5));
+          if (tablesResponse.statusCode == 200) {
+            final tablesData = jsonDecode(tablesResponse.body);
+            final List<dynamic> allDocs = tablesData['docs'] ?? [];
+            final dynamic branchDoc = allDocs.isNotEmpty ? allDocs.first : null;
+            if (branchDoc != null) {
+              final List<dynamic> sections = branchDoc['sections'] ?? [];
+              if (sections.isNotEmpty) {
+                cachedTables = sections;
+                await prefs.setString('cached_tables_$normalizedBranchId', jsonEncode(sections));
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('Error fetching tables fallback in CartProvider: $e');
+        }
+      }
+
+      Map<String, dynamic> asMap(dynamic value) => value is Map
+          ? Map<String, dynamic>.from(value)
+          : const <String, dynamic>{};
+      String asText(dynamic value) => value?.toString().trim() ?? '';
+      String resolveId(dynamic value) {
+        if (value is Map) {
+          final map = Map<String, dynamic>.from(value);
+          final id = asText(map['id']);
+          if (id.isNotEmpty) return id;
+          final nestedId = asText(map['_id']);
+          if (nestedId.isNotEmpty) return nestedId;
+          return asText(map[r'$oid']);
+        }
+        return asText(value);
+      }
+
+      String resolveBillId(Map<String, dynamic> bill) {
+        final id = asText(bill['id']);
+        if (id.isNotEmpty) return id;
+        final nestedId = asText(bill['_id']);
+        if (nestedId.isNotEmpty) return nestedId;
+        return asText(bill[r'$oid']);
+      }
+
+      String resolveSection(Map<String, dynamic> bill) {
+        final tableDetails = asMap(bill['tableDetails']);
+        final table = asMap(bill['table']);
+        final tableSection = asMap(table['section']);
+
+        // Prefer canonical section name from populated table relation.
+        final sectionName = asText(tableSection['name']);
+        if (sectionName.isNotEmpty) return sectionName;
+
+        final section = asText(tableDetails['section']);
+        if (section.isNotEmpty) return section;
+
+        return asText(table['section']);
+      }
+
+      String resolveTableNumberToken(Map<String, dynamic> bill) {
+        final tableDetails = asMap(bill['tableDetails']);
+        final fromDetails = asText(tableDetails['tableNumber']);
+        if (fromDetails.isNotEmpty) return fromDetails;
+
+        final table = asMap(bill['table']);
+        final tableName = asText(table['name']);
+        if (tableName.isEmpty) return '';
+        final parsed = WaiterCallRangeFilterService.parseTableToken(tableName);
+        return parsed?.toString() ?? tableName;
+      }
+
+      String resolveTableLabel(Map<String, dynamic> bill) {
+        final table = asMap(bill['table']);
+        final tableName = asText(table['name']);
+        if (tableName.isNotEmpty) return tableName;
+        final tableNumber = resolveTableNumberToken(bill);
+        if (tableNumber.isNotEmpty) return 'Table $tableNumber';
+        return 'Kitchen';
+      }
+
+      bool isAssignedTableOrderForWaiter(Map<String, dynamic> bill) {
+        if (assignedRows.isEmpty) {
+          return false;
+        }
+        final section = resolveSection(bill);
+        final tableToken = resolveTableNumberToken(bill);
+        if (section.isEmpty || tableToken.isEmpty) {
+          return false;
+        }
+        return WaiterCallRangeFilterService.shouldNotifyForCall(
+          selections: assignedRows,
+          section: section,
+          tableNumber: tableToken,
+        );
+      }
 
       final now = DateTime.now();
       final todayStart = DateTime(
@@ -1589,12 +1940,13 @@ class CartProvider extends ChangeNotifier {
         now.day,
       ).toIso8601String();
 
-      // Fetch pending/ordered bills for today
+      // Fetch today's active table bills in the branch. Waiter-specific filtering
+      // is applied in-app so QR-origin bills can also be matched by table rows.
       String urlString =
-          'https://blackforest.vseyal.com/api/billings?where[status][in]=pending,ordered&where[createdBy][equals]=$userId&where[createdAt][greater_than_equal]=$todayStart&limit=100&sort=-createdAt&depth=1';
+          'https://blackforest3.vseyal.com/api/billings?where[status][in]=pending,ordered,confirmed,prepared&where[createdAt][greater_than_equal]=$todayStart&limit=150&sort=-createdAt&depth=2';
 
-      if (branchId != null) {
-        urlString += '&where[branch][equals]=$branchId';
+      if (normalizedBranchId.isNotEmpty) {
+        urlString += '&where[branch][equals]=$normalizedBranchId';
       }
 
       final response = await http.get(
@@ -1610,23 +1962,108 @@ class CartProvider extends ChangeNotifier {
         final List<dynamic> bills = data['docs'] ?? [];
         List<Map<String, dynamic>> readyItems = [];
 
-        for (var bill in bills) {
+        for (final rawBill in bills) {
+          final bill = asMap(rawBill);
+          if (bill.isEmpty) continue;
+
+          final createdById = resolveId(bill['createdBy']);
+          final isOwnedByWaiter =
+              createdById.isNotEmpty && createdById == normalizedUserId;
+          final isAssignedTableOrder = isAssignedTableOrderForWaiter(bill);
+          final includeBill = hasSelectedTableRows
+              ? isAssignedTableOrder
+              : (isOwnedByWaiter || isAssignedTableOrder);
+          if (!includeBill) {
+            continue;
+          }
+
+          // Table allocation check
+          final sectionName = resolveSection(bill);
+          final tableNumStr = resolveTableNumberToken(bill);
+          final tableNumber = WaiterCallRangeFilterService.parseTableToken(tableNumStr) ?? 0;
+          if (tableNumber > 0 && sectionName.isNotEmpty) {
+            bool isAllocated = true;
+            if (userKeys.isNotEmpty) {
+              final normalizedSearchSection = WaiterCallRangeFilterService.normalizeSection(sectionName);
+              bool sectionHasAnyAllocations = false;
+              for (final section in cachedTables) {
+                if (section is! Map) continue;
+                final name = WaiterCallRangeFilterService.normalizeSection(section['name']?.toString() ?? 'General');
+                if (name == normalizedSearchSection) {
+                  final allocations = section['waiterAllocations'];
+                  if (allocations is List && allocations.isNotEmpty) {
+                    sectionHasAnyAllocations = true;
+                    break;
+                  }
+                }
+              }
+
+              if (sectionHasAnyAllocations) {
+                bool foundMatch = false;
+                for (final section in cachedTables) {
+                  if (section is! Map) continue;
+                  final name = WaiterCallRangeFilterService.normalizeSection(section['name']?.toString() ?? 'General');
+                  if (name == normalizedSearchSection) {
+                    final allocations = section['waiterAllocations'];
+                    if (allocations is List) {
+                      for (final alloc in allocations) {
+                        if (alloc is! Map) continue;
+                        final rawNum = alloc['tableNumber']?.toString().trim() ?? '';
+                        if (rawNum != tableNumber.toString()) continue;
+
+                        final waiterVal = alloc['waiter'];
+                        String waiterId = '';
+                        String waiterName = '';
+                        if (waiterVal is String) {
+                          waiterId = waiterVal;
+                        } else if (waiterVal is Map) {
+                          waiterId = (waiterVal['id'] ?? waiterVal['_id'] ?? '').toString().trim();
+                          waiterName = (waiterVal['name'] ?? waiterVal['username'] ?? '').toString().trim().toLowerCase();
+                        }
+
+                        for (final candidate in userKeys) {
+                          if (candidate.isNotEmpty &&
+                              (candidate == waiterId || candidate.toLowerCase() == waiterName)) {
+                            foundMatch = true;
+                            break;
+                          }
+                        }
+                      }
+                    }
+                  }
+                  if (foundMatch) break;
+                }
+                isAllocated = foundMatch;
+              }
+            }
+
+            if (!isAllocated) {
+              continue;
+            }
+          }
+
+          final billId = resolveBillId(bill);
+          if (billId.isEmpty) continue;
+
+          final tableLabel = resolveTableLabel(bill);
+          final sectionLabel = resolveSection(bill);
           final items = bill['items'] as List?;
           if (items == null) continue;
 
-          for (var item in items) {
+          for (final item in items) {
+            if (item is! Map) continue;
             final status = item['status']?.toString().toLowerCase();
             final String itemId =
-                '${bill['id']}_${item['name']}_${status}_${item['updatedAt']}';
+                '${billId}_${item['name']}_${status}_${item['updatedAt']}';
             if (_readNotificationIds.contains(itemId)) continue;
 
-            if (status == 'prepared' || status == 'confirmed') {
+            if (status == sourceStatus) {
               readyItems.add({
                 'id': itemId,
-                'billId': bill['id'],
+                'billId': billId,
                 'kotNumber': bill['kotNumber']?.toString() ?? 'N/A',
-                'tableName': bill['table']?['name'] ?? 'Kitchen',
-                'sectionName': bill['table']?['section']?['name'],
+                'tableName': tableLabel,
+                'sectionName': sectionLabel,
                 'productName': item['name'],
                 'quantity': item['quantity'],
                 'unit': item['unit'],
@@ -1721,7 +2158,7 @@ class CartProvider extends ChangeNotifier {
     if (token == null) throw Exception("No token");
 
     final response = await http.get(
-      Uri.parse('https://blackforest.vseyal.com/api/billings/$billId?depth=3'),
+      Uri.parse('https://blackforest3.vseyal.com/api/billings/$billId?depth=3'),
       headers: {'Authorization': 'Bearer $token'},
     );
 
@@ -1765,25 +2202,26 @@ class CartProvider extends ChangeNotifier {
                 ? (prod['id'] ?? prod['_id'] ?? prod[r'$oid']).toString()
                 : prod.toString();
 
-            String? imageUrl;
+            final imageUrl = CartItem.resolveImageUrlFromProduct(
+              prod,
+              itemMap: itemMap,
+            );
             String? dept;
             String? cid;
 
             if (prod is Map) {
-              if (prod['images'] != null &&
-                  (prod['images'] as List).isNotEmpty) {
-                final img = prod['images'][0]['image'];
-                if (img != null && img['url'] != null) {
-                  imageUrl = img['url'];
-                  if (imageUrl != null && imageUrl.startsWith('/')) {
-                    imageUrl = 'https://blackforest.vseyal.com$imageUrl';
-                  }
-                }
-              }
               if (prod['department'] != null) {
                 dept = (prod['department'] is Map)
                     ? prod['department']['name']
                     : prod['department'];
+              } else if (prod['category'] != null && prod['category'] is Map) {
+                final category = prod['category'] as Map;
+                if (category['department'] != null) {
+                  final catDept = category['department'];
+                  dept = (catDept is Map)
+                      ? catDept['name']
+                      : catDept;
+                }
               }
               if (prod['category'] != null) {
                 cid = (prod['category'] is Map)
@@ -1809,7 +2247,12 @@ class CartProvider extends ChangeNotifier {
             );
             final gstPercent = productGstPercent > 0
                 ? productGstPercent
-                : CartItem.parsePercent(itemMap['gstPercent']);
+                : CartItem.parsePercent(
+                    itemMap['gstRate'] ??
+                    itemMap['gstPercent'] ??
+                    itemMap['gst'] ??
+                    itemMap['taxPercent'],
+                  );
             final hasEffectiveUnitPrice = itemMap.containsKey(
               'effectiveUnitPrice',
             );
@@ -1847,20 +2290,16 @@ class CartProvider extends ChangeNotifier {
               'subTotal',
               'sub_total',
             ]);
-            final gstValue = readOptionalMoney(itemMap, [
-              'gstAmount',
-              'taxAmount',
-              'tax',
-            ]);
+
             final lineSubtotal = isRandomCustomerOfferItem
                 ? 0.0
+                : subtotalValue != null
+                ? subtotalValue
+                : taxableValue != null
+                ? taxableValue
                 : explicitLineTotal != null && explicitLineTotal > 0
-                ? explicitLineTotal
-                : taxableValue != null && gstValue != null
-                ? taxableValue + gstValue
-                : subtotalValue != null &&
-                      expectedLineTotalFromPrice > 0 &&
-                      subtotalValue > expectedLineTotalFromPrice + 0.009
+                ? (gstPercent > 0 ? (explicitLineTotal * 100) / (100 + gstPercent) : explicitLineTotal)
+                : expectedLineTotalFromPrice > 0
                 ? expectedLineTotalFromPrice
                 : subtotalValue;
 
@@ -1961,7 +2400,7 @@ class CartProvider extends ChangeNotifier {
         lookupQuery['branchId'] = activeBranchId;
       }
       final lookupUri = Uri.parse(
-        'https://blackforest.vseyal.com/api/billing/customer-lookup',
+        'https://blackforest3.vseyal.com/api/billing/customer-lookup',
       ).replace(queryParameters: lookupQuery);
       final lookupResponse = await http.get(lookupUri, headers: headers);
       if (lookupResponse.statusCode != 200) {
@@ -3897,7 +4336,7 @@ class CartProvider extends ChangeNotifier {
         }
 
         final lookupUri = Uri.parse(
-          'https://blackforest.vseyal.com/api/billing/customer-lookup',
+          'https://blackforest3.vseyal.com/api/billing/customer-lookup',
         ).replace(queryParameters: lookupQuery);
         final lookupResponse = await http.get(lookupUri, headers: headers);
         if (lookupResponse.statusCode != 200) return null;
@@ -4173,7 +4612,7 @@ class CartProvider extends ChangeNotifier {
           final query = Map<String, String>.from(baseQuery);
           query['where[$phoneField][equals]'] = normalizedPhone;
           final firstPageUri = Uri.parse(
-            'https://blackforest.vseyal.com/api/billings',
+            'https://blackforest3.vseyal.com/api/billings',
           ).replace(queryParameters: query);
           final firstPageResponse = await http.get(
             firstPageUri,
@@ -4261,7 +4700,7 @@ class CartProvider extends ChangeNotifier {
             final pagedQuery = Map<String, String>.from(query);
             pagedQuery['page'] = page.toString();
             final pageUri = Uri.parse(
-              'https://blackforest.vseyal.com/api/billings',
+              'https://blackforest3.vseyal.com/api/billings',
             ).replace(queryParameters: pagedQuery);
             final pageResponse = await http.get(pageUri, headers: headers);
             if (pageResponse.statusCode != 200) break;
@@ -4396,7 +4835,7 @@ class CartProvider extends ChangeNotifier {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest.vseyal.com/api/globals/customer-offer-settings?depth=0',
+          'https://blackforest3.vseyal.com/api/globals/customer-offer-settings?depth=0',
         ),
         headers: headers,
       );

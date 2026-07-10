@@ -161,7 +161,7 @@ class CategoryPopularityService {
           'page': currentPage.toString(),
         };
         final uri = Uri.parse(
-          'https://blackforest.vseyal.com/api/billings',
+          'https://blackforest3.vseyal.com/api/billings',
         ).replace(queryParameters: pagedQuery);
 
         final response = await http.get(

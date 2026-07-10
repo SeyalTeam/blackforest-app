@@ -1,20 +1,27 @@
 import 'dart:convert';
 import 'dart:math';
+import 'dart:ui';
 import 'package:blackforest_app/app_http.dart' as http;
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:esc_pos_utils/esc_pos_utils.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
 import 'package:image/image.dart' as img;
 import 'package:intl/intl.dart';
 import 'package:qr/qr.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/printer/unified_printer.dart';
 import 'package:blackforest_app/printer/thermal_print_prefs.dart';
+import 'package:blackforest_app/printer/bluetooth_printer_prefs.dart';
+import 'package:blackforest_app/waiter_call_range_filter_service.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:blackforest_app/notification_service.dart';
 
 @pragma('vm:entry-point')
 void startCallback() {
+  WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
   FlutterForegroundTask.setTaskHandler(PrintTaskHandler());
 }
 
@@ -26,8 +33,76 @@ class PrintTaskHandler extends TaskHandler {
 
   @override
   Future<void> onRepeatEvent(DateTime timestamp) async {
-    // Run the sync logic in the background
-    await KotAutoPrintService.syncPendingWebsiteKots(isBackground: true);
+    final alerts = await KotAutoPrintService.syncPendingWebsiteKots(isBackground: true);
+
+    try {
+      final isForeground = await FlutterForegroundTask.isAppOnForeground;
+      if (isForeground) {
+        return;
+      }
+
+      final waiterCallAlerts = alerts
+          .where((alert) => alert.isWaiterCall && alert.waiterCall != null)
+          .toList();
+      if (waiterCallAlerts.isEmpty) {
+        return;
+      }
+
+      final notificationService = NotificationService();
+      await notificationService.init().timeout(const Duration(seconds: 5)).catchError((_) {});
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+      final branchId = prefs.getString('branchId')?.trim() ?? '';
+      if (branchId.isEmpty) return;
+
+      final notifiedKey = 'auto_waiter_call_notified_v1_$branchId';
+      final notifiedEventKeys = prefs.getStringList(notifiedKey)?.toSet() ?? <String>{};
+
+      var didUpdatePrefs = false;
+      for (final alert in waiterCallAlerts) {
+        final payload = alert.waiterCall!;
+        if (notifiedEventKeys.contains(payload.eventKey)) {
+          continue;
+        }
+
+        String title = 'Table ${payload.tableNumber} Calling';
+        if (payload.tableNumber == '0') {
+          title = 'Calling for Other Work';
+        }
+
+        String body = '';
+        if (payload.callerRole != null) {
+          body = 'Called by ${payload.callerRole}';
+          if (payload.tableNumber != '0') {
+            body += ' for Table ${payload.tableNumber}';
+          }
+          body += ' | Section: ${payload.section}';
+        } else {
+          body = 'Section: ${payload.section} | Customer: ${payload.customerName.trim().isEmpty ? 'Guest' : payload.customerName}';
+        }
+
+        await notificationService.showWaiterCallNotification(
+          id: payload.eventKey.hashCode,
+          title: title,
+          body: body,
+          payload: payload.billId,
+        );
+
+        notifiedEventKeys.add(payload.eventKey);
+        didUpdatePrefs = true;
+      }
+
+      if (didUpdatePrefs) {
+        await KotAutoPrintService._persistRememberedIds(
+          prefs: prefs,
+          key: notifiedKey,
+          ids: notifiedEventKeys,
+        );
+      }
+    } catch (error) {
+      debugPrint('🛎️ Error processing background waiter notification: $error');
+    }
   }
 
   @override
@@ -37,13 +112,13 @@ class PrintTaskHandler extends TaskHandler {
 }
 
 class KotAutoPrintService {
-  static const String _apiBase = 'https://blackforest.vseyal.com/api';
+  static const String _apiBase = 'https://blackforest3.vseyal.com/api';
   static const Duration _configCacheTtl = Duration(minutes: 2);
   static const int _maxRememberedItems = 1200;
   static const String _autoCompletedReceiptPrefKey =
       'auto_completed_bill_receipt_enabled';
   static final RegExp _waiterCallRegex = RegExp(
-    r'WAITER_CALL_SOS\s+([0-9T:\.\+\-Z]+)\s+TABLE-([^\s|]+)\s+SECTION-([^|\n]+)',
+    r'WAITER_CALL_SOS\s+([0-9T:\.\+\-Z]+)\s+TABLE-([^\s|]+)\s+SECTION-([^|\n]+)(?:\s*\|\s*BY-([^\s|]+))?(?:\s*FOR-([^\n|]+))?',
     caseSensitive: false,
   );
   static final RegExp _waiterAckRegex = RegExp(
@@ -58,6 +133,18 @@ class KotAutoPrintService {
   static String? _cachedConfigBranchId;
 
   static Future<void> startService() async {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      final notificationPermission = await FlutterForegroundTask.checkNotificationPermission();
+      if (notificationPermission != NotificationPermission.granted) {
+        await FlutterForegroundTask.requestNotificationPermission();
+      }
+
+      final isIgnoringBattery = await FlutterForegroundTask.isIgnoringBatteryOptimizations;
+      if (!isIgnoringBattery) {
+        await FlutterForegroundTask.requestIgnoreBatteryOptimization();
+      }
+    }
+
     if (!await FlutterForegroundTask.isRunningService) {
       await FlutterForegroundTask.startService(
         notificationTitle: 'Blackforest Printer Active',
@@ -112,15 +199,13 @@ class KotAutoPrintService {
         return alerts;
       }
 
-      if (!isBackground) {
-        alerts.addAll(
-          await _collectWaiterCallAlerts(
-            prefs: prefs,
-            token: token,
-            branchId: branchId,
-          ),
-        );
-      }
+      alerts.addAll(
+        await _collectWaiterCallAlerts(
+          prefs: prefs,
+          token: token,
+          branchId: branchId,
+        ),
+      );
 
       final bills = await _fetchCandidateBills(
         token: token,
@@ -283,7 +368,7 @@ class KotAutoPrintService {
     }
 
     final prefs = await SharedPreferences.getInstance();
-    final userId = prefs.getString('user_id')?.trim() ?? '';
+    final userId = WaiterCallRangeFilterService.resolveUserKeyFromPrefs(prefs);
     final branchId = prefs.getString('branchId')?.trim() ?? '';
     if (userId.isEmpty || branchId.isEmpty) {
       return;
@@ -442,11 +527,8 @@ class KotAutoPrintService {
     required String branchId,
   }) async {
     final now = DateTime.now();
-    final todayStart = DateTime(
-      now.year,
-      now.month,
-      now.day,
-    ).toUtc().toIso8601String();
+    // Use 24 hours ago as start time to be safe against midnight shifts and timezone differences
+    final todayStart = now.subtract(const Duration(hours: 24)).toUtc().toIso8601String();
 
     final url = Uri.parse(
       '$_apiBase/billings'
@@ -490,6 +572,7 @@ class KotAutoPrintService {
     required String token,
     required String branchId,
   }) async {
+    await prefs.reload();
     final alerts = <AutoSyncAlert>[];
     final activeBills = await _fetchActiveBranchBillsForWaiterAlerts(
       token: token,
@@ -500,9 +583,28 @@ class KotAutoPrintService {
     }
 
     final idsKey = _waiterCallHandledKey(branchId);
+    final presentedKey = _waiterCallPresentedKey(branchId);
     final seededKey = _waiterCallAlertsSeededKey(branchId);
     final handledEventKeys = prefs.getStringList(idsKey)?.toSet() ?? <String>{};
+    final presentedEventKeys =
+        prefs.getStringList(presentedKey)?.toSet() ?? <String>{};
     final isSeeded = prefs.getBool(seededKey) ?? false;
+    final waiterUserKey = WaiterCallRangeFilterService.resolveUserKeyFromPrefs(
+      prefs,
+    );
+    final selectedRangeRows = WaiterCallRangeFilterService.readSelections(
+      prefs: prefs,
+      userId: waiterUserKey,
+      branchId: branchId,
+    );
+    final userKeys = WaiterCallRangeFilterService.resolveCandidateUserKeysFromPrefs(prefs);
+    final cachedTablesRaw = prefs.getString('cached_tables_$branchId');
+    List<dynamic> cachedTables = [];
+    if (cachedTablesRaw != null) {
+      try {
+        cachedTables = jsonDecode(cachedTablesRaw) as List<dynamic>;
+      } catch (_) {}
+    }
     var didPersist = false;
 
     for (final bill in activeBills) {
@@ -534,7 +636,8 @@ class KotAutoPrintService {
       }
 
       for (final entry in parsedEntries) {
-        if (handledEventKeys.contains(entry.eventKey)) {
+        if (handledEventKeys.contains(entry.eventKey) ||
+            presentedEventKeys.contains(entry.eventKey)) {
           continue;
         }
 
@@ -542,6 +645,43 @@ class KotAutoPrintService {
           // Initial seed should not alert for historical SOS entries.
           handledEventKeys.add(entry.eventKey);
           didPersist = true;
+          continue;
+        }
+
+        final tableNumberInt = WaiterCallRangeFilterService.parseTableToken(entry.tableNumber) ?? 0;
+        bool shouldNotify = false;
+
+        if (entry.targetWaiterId != null && entry.targetWaiterId!.isNotEmpty) {
+          shouldNotify = userKeys.contains(entry.targetWaiterId);
+        } else if (tableNumberInt > 0 && entry.section.isNotEmpty) {
+          final hasAllocations = _sectionHasAnyAllocations(
+            sectionName: entry.section,
+            cachedTables: cachedTables,
+          );
+
+          if (hasAllocations) {
+            shouldNotify = _isTableAllocatedToMe(
+              sectionName: entry.section,
+              tableNumber: tableNumberInt,
+              cachedTables: cachedTables,
+              candidateKeys: userKeys,
+            );
+          } else {
+            shouldNotify = WaiterCallRangeFilterService.shouldNotifyForCall(
+              selections: selectedRangeRows,
+              section: entry.section,
+              tableNumber: entry.tableNumber,
+            );
+          }
+        } else {
+          shouldNotify = WaiterCallRangeFilterService.shouldNotifyForCall(
+            selections: selectedRangeRows,
+            section: entry.section,
+            tableNumber: entry.tableNumber,
+          );
+        }
+
+        if (!shouldNotify) {
           continue;
         }
 
@@ -561,6 +701,68 @@ class KotAutoPrintService {
     }
 
     return alerts;
+  }
+
+  static bool _sectionHasAnyAllocations({
+    required String sectionName,
+    required List<dynamic> cachedTables,
+  }) {
+    final normalizedSearchSection = WaiterCallRangeFilterService.normalizeSection(sectionName);
+    for (final section in cachedTables) {
+      if (section is! Map) continue;
+      final name = WaiterCallRangeFilterService.normalizeSection(section['name']?.toString() ?? 'General');
+      if (name == normalizedSearchSection) {
+        final allocations = section['waiterAllocations'];
+        if (allocations is List && allocations.isNotEmpty) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  static bool _isTableAllocatedToMe({
+    required String sectionName,
+    required int tableNumber,
+    required List<dynamic> cachedTables,
+    required List<String> candidateKeys,
+  }) {
+    if (candidateKeys.isEmpty) return false;
+    final normalizedSearchSection = WaiterCallRangeFilterService.normalizeSection(sectionName);
+
+    for (final section in cachedTables) {
+      if (section is! Map) continue;
+      final name = WaiterCallRangeFilterService.normalizeSection(section['name']?.toString() ?? 'General');
+      if (name == normalizedSearchSection) {
+        final allocations = section['waiterAllocations'];
+        if (allocations is List) {
+          for (final alloc in allocations) {
+            if (alloc is! Map) continue;
+            final rawNum = alloc['tableNumber']?.toString().trim() ?? '';
+            if (rawNum != tableNumber.toString()) continue;
+
+            final waiterVal = alloc['waiter'];
+            String waiterId = '';
+            String waiterName = '';
+            if (waiterVal is String) {
+              waiterId = waiterVal;
+            } else if (waiterVal is Map) {
+              waiterId = (waiterVal['id'] ?? waiterVal['_id'] ?? '').toString().trim();
+              waiterName = (waiterVal['name'] ?? waiterVal['username'] ?? '').toString().trim().toLowerCase();
+            }
+
+            for (final candidate in candidateKeys) {
+              if (candidate.isNotEmpty &&
+                  (candidate == waiterId || candidate.toLowerCase() == waiterName)) {
+                return true;
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return false;
   }
 
   static List<WaiterCallAlertPayload> _extractWaiterCallEntries({
@@ -590,6 +792,11 @@ class KotAutoPrintService {
           ? sectionFromNote
           : fallbackSection;
 
+      final callerRoleVal = match.groupCount >= 4 ? match.group(4) : null;
+      final targetWaiterVal = match.groupCount >= 5 ? match.group(5) : null;
+      final callerRole = callerRoleVal != null ? _toText(callerRoleVal) : null;
+      final targetWaiterId = targetWaiterVal != null ? _toText(targetWaiterVal) : null;
+
       if (timestampIso.isEmpty || tableNumber.isEmpty) {
         continue;
       }
@@ -603,6 +810,8 @@ class KotAutoPrintService {
           section: section,
           customerName: customerName,
           kotNumber: kotNumber,
+          callerRole: callerRole?.isEmpty == true ? null : callerRole,
+          targetWaiterId: targetWaiterId?.isEmpty == true ? null : targetWaiterId,
         ),
       );
     }
@@ -643,6 +852,33 @@ class KotAutoPrintService {
       prefs: prefs,
       key: idsKey,
       ids: handledEventKeys,
+    );
+    await markWaiterCallPresented(eventKey: trimmedEventKey);
+    await prefs.setBool(_waiterCallAlertsSeededKey(branchId), true);
+  }
+
+  static Future<void> markWaiterCallPresented({
+    required String eventKey,
+  }) async {
+    final trimmedEventKey = eventKey.trim();
+    if (trimmedEventKey.isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final branchId = prefs.getString('branchId')?.trim() ?? '';
+    if (branchId.isEmpty) return;
+
+    final presentedKey = _waiterCallPresentedKey(branchId);
+    final presentedEventKeys =
+        prefs.getStringList(presentedKey)?.toSet() ?? <String>{};
+    if (presentedEventKeys.contains(trimmedEventKey)) {
+      return;
+    }
+
+    presentedEventKeys.add(trimmedEventKey);
+    await _persistRememberedIds(
+      prefs: prefs,
+      key: presentedKey,
+      ids: presentedEventKeys,
     );
     await prefs.setBool(_waiterCallAlertsSeededKey(branchId), true);
   }
@@ -931,8 +1167,12 @@ class KotAutoPrintService {
     required _KotPrintConfig? config,
     required Map<String, dynamic> bill,
   }) async {
+    final btMac = prefs.getString(btPrinterMacKey) ?? '';
+    final btBillingEnabled = isBluetoothBillingEnabled(prefs);
+    final hasBluetooth = btMac.isNotEmpty && btBillingEnabled;
+
     final target = _resolveReceiptPrinterTarget(config);
-    if (target == null || target.printerIp.isEmpty) {
+    if ((target == null || target.printerIp.isEmpty) && !hasBluetooth) {
       return const AutoSyncAlert(
         message:
             'Bill saved, but receipt not printed (printer not configured).',
@@ -940,7 +1180,9 @@ class KotAutoPrintService {
       );
     }
 
-    if (target.printerProtocol.toLowerCase() != 'esc_pos') {
+    if (target != null &&
+        target.printerProtocol.toLowerCase() != 'esc_pos' &&
+        !hasBluetooth) {
       return const AutoSyncAlert(
         message:
             'Bill saved, but receipt not printed (unsupported printer setup).',
@@ -955,14 +1197,14 @@ class KotAutoPrintService {
         (prefs.getString('printerPort') ?? '').trim(),
       );
       final candidatePorts = <int>{
-        target.printerPort,
+        if (target != null) target.printerPort,
         if (prefsPort != null) prefsPort,
         9100,
         9101,
       }.toList(growable: false);
 
       printer = await UnifiedPrinter.connect(
-        printerIp: target.printerIp,
+        printerIp: target?.printerIp,
         candidatePorts: candidatePorts,
         paperSize: PaperSize.mm80,
         profile: profile,
@@ -971,7 +1213,7 @@ class KotAutoPrintService {
 
       if (printer == null) {
         debugPrint(
-          '⚠️ Auto receipt connect failed for ${target.printerIp} on ports ${candidatePorts.join(", ")}',
+          '⚠️ Auto receipt connect failed for ${target?.printerIp ?? 'Bluetooth'} on ports ${candidatePorts.join(", ")}',
         );
         return const AutoSyncAlert(
           message: 'Bill saved, but receipt not printed. Check printer.',
@@ -1200,7 +1442,7 @@ class KotAutoPrintService {
         }
 
         dept = dept.trim().toLowerCase();
-        return dept.isNotEmpty && dept != 'others';
+        return dept.isEmpty || dept != 'others';
       });
       shouldShowFeedback =
           shouldShowFeedback && isThermalReviewPrintEnabled(prefs);
@@ -1236,7 +1478,7 @@ class KotAutoPrintService {
       }
 
       // QR Code Logic (Same as cart_page.dart)
-      String billingUrl = 'https://blackforest.vseyal.com/billings';
+      String billingUrl = 'https://blackforest3.vseyal.com/billings';
       String? billingId = bill['id'] ?? bill['doc']?['id'] ?? bill['_id'];
       if (billingId != null) {
         billingUrl = '$billingUrl/$billingId';
@@ -1343,7 +1585,7 @@ class KotAutoPrintService {
       printer.cut();
       await printer.disconnectAndPrint();
       debugPrint(
-        '🧾 Auto receipt printed on ${target.printerIp} for ${_tableDisplayLabel(bill)}',
+        '🧾 Auto receipt printed on ${target?.printerIp ?? 'Bluetooth'} for ${_tableDisplayLabel(bill)}',
       );
       return const AutoSyncAlert(
         message: 'Bill printed successfully',
@@ -1995,6 +2237,9 @@ class KotAutoPrintService {
   static String _waiterCallHandledKey(String branchId) =>
       'auto_waiter_call_handled_v1_$branchId';
 
+  static String _waiterCallPresentedKey(String branchId) =>
+      'auto_waiter_call_presented_v1_$branchId';
+
   static String _waiterCallAlertsSeededKey(String branchId) =>
       'auto_waiter_call_alerts_seeded_v1_$branchId';
 }
@@ -2036,6 +2281,8 @@ class WaiterCallAlertPayload {
     required this.section,
     required this.customerName,
     required this.kotNumber,
+    this.callerRole,
+    this.targetWaiterId,
   });
 
   final String eventKey;
@@ -2045,6 +2292,8 @@ class WaiterCallAlertPayload {
   final String section;
   final String customerName;
   final String kotNumber;
+  final String? callerRole;
+  final String? targetWaiterId;
 }
 
 class _KotPrintConfig {

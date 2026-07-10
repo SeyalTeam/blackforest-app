@@ -11,6 +11,7 @@ bool _isCustomerHistoryDialogOpen = false;
 Future<void> showCustomerHistoryDialog(
   BuildContext context, {
   required String phoneNumber,
+  String? customerName,
 }) async {
   final normalizedPhone = phoneNumber.replaceAll(RegExp(r'\D'), '');
   if (normalizedPhone.length < 10) return;
@@ -24,7 +25,10 @@ Future<void> showCustomerHistoryDialog(
       MaterialPageRoute(
         fullscreenDialog: true,
         builder: (ctx) =>
-            _CustomerHistoryRouteScreen(phoneNumber: normalizedPhone),
+            _CustomerHistoryRouteScreen(
+              phoneNumber: normalizedPhone,
+              customerName: customerName,
+            ),
       ),
     );
   } finally {
@@ -34,14 +38,23 @@ Future<void> showCustomerHistoryDialog(
 
 class _CustomerHistoryRouteScreen extends StatelessWidget {
   final String phoneNumber;
-  const _CustomerHistoryRouteScreen({required this.phoneNumber});
+  final String? customerName;
+  const _CustomerHistoryRouteScreen({
+    required this.phoneNumber,
+    this.customerName,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xCC000000),
       body: SafeArea(
-        child: Center(child: CustomerHistoryDialog(phoneNumber: phoneNumber)),
+        child: Center(
+          child: CustomerHistoryDialog(
+            phoneNumber: phoneNumber,
+            customerName: customerName,
+          ),
+        ),
       ),
     );
   }
@@ -49,7 +62,12 @@ class _CustomerHistoryRouteScreen extends StatelessWidget {
 
 class CustomerHistoryDialog extends StatefulWidget {
   final String phoneNumber;
-  const CustomerHistoryDialog({super.key, required this.phoneNumber});
+  final String? customerName;
+  const CustomerHistoryDialog({
+    super.key,
+    required this.phoneNumber,
+    this.customerName,
+  });
 
   @override
   State<CustomerHistoryDialog> createState() => _CustomerHistoryDialogState();
@@ -163,6 +181,7 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
   Map<String, String> _reviewMessageByBillTimeProductKey = <String, String>{};
   String? _selectedProductKey;
   String? _selectedProductName;
+  String _resolvedCustomerName = '';
 
   @override
   void initState() {
@@ -183,6 +202,48 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
     if (position.pixels >= position.maxScrollExtent - 180) {
       _loadMoreHistory();
     }
+  }
+
+  String _normalizeCustomerName(dynamic value) {
+    final raw = value?.toString().trim() ?? '';
+    if (raw.isEmpty) return '';
+    final normalized = raw.toLowerCase();
+    if (normalized == 'n/a' ||
+        normalized == 'na' ||
+        normalized == 'null' ||
+        normalized == 'unknown') {
+      return '';
+    }
+    return raw;
+  }
+
+  String _extractCustomerNameFromBill(Map<String, dynamic> bill) {
+    final customerDetails = bill['customerDetails'];
+    if (customerDetails is Map) {
+      final fromCustomerDetails =
+          _normalizeCustomerName(customerDetails['name']);
+      if (fromCustomerDetails.isNotEmpty) return fromCustomerDetails;
+    }
+
+    final directCandidates = <dynamic>[
+      bill['customerName'],
+      bill['name'],
+      bill['customer'],
+    ];
+    for (final candidate in directCandidates) {
+      final normalized = _normalizeCustomerName(candidate);
+      if (normalized.isNotEmpty) return normalized;
+    }
+
+    return '';
+  }
+
+  String _resolveCustomerNameFromBills(Iterable<Map<String, dynamic>> bills) {
+    for (final bill in bills) {
+      final name = _extractCustomerNameFromBill(bill);
+      if (name.isNotEmpty) return name;
+    }
+    return '';
   }
 
   Future<void> _fetchHistory() async {
@@ -212,6 +273,7 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
     _reviewMessageByBillTimeProductKey = <String, String>{};
     _selectedProductKey = null;
     _selectedProductName = null;
+    _resolvedCustomerName = _normalizeCustomerName(widget.customerName);
 
     if (mounted) {
       setState(() {
@@ -292,6 +354,9 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
       }
 
       _knownTotalBills = totalBillsHint;
+      if (_resolvedCustomerName.isEmpty) {
+        _resolvedCustomerName = _resolveCustomerNameFromBills(mergedInitialBills);
+      }
       _nextSingleItemPage = mergedInitialBills.length + 1;
       if (mounted) {
         setState(() {
@@ -382,6 +447,10 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
         _nextSingleItemPage += incomingBills.length;
       } else {
         _nextSingleItemPage += 1;
+      }
+
+      if (_resolvedCustomerName.isEmpty) {
+        _resolvedCustomerName = _resolveCustomerNameFromBills(updatedBills);
       }
 
       if (mounted) {
@@ -485,7 +554,7 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
 
       for (final field in fieldsToTry) {
         for (final phoneValue in phoneValues) {
-          final uri = Uri.parse('https://blackforest.vseyal.com/api/billings')
+          final uri = Uri.parse('https://blackforest3.vseyal.com/api/billings')
               .replace(
                 queryParameters: {
                   'sort': '-createdAt',
@@ -554,7 +623,7 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
       };
       final uri =
           Uri.parse(
-            'https://blackforest.vseyal.com/api/billing/customer-lookup',
+            'https://blackforest3.vseyal.com/api/billing/customer-lookup',
           ).replace(
             queryParameters: {
               'phoneNumber': normalizedPhone,
@@ -1137,7 +1206,7 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
 
     for (final phone in phoneValues) {
       for (var page = 1; page <= 12; page++) {
-        final uri = Uri.parse('https://blackforest.vseyal.com/api/reviews')
+        final uri = Uri.parse('https://blackforest3.vseyal.com/api/reviews')
             .replace(
               queryParameters: {
                 'sort': '-createdAt',
@@ -1661,9 +1730,9 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
         return text;
       }
       if (text.startsWith('//')) return 'https:$text';
-      if (text.startsWith('/')) return 'https://blackforest.vseyal.com$text';
+      if (text.startsWith('/')) return 'https://blackforest3.vseyal.com$text';
       if (text.contains(' ')) return null;
-      return 'https://blackforest.vseyal.com/$text';
+      return 'https://blackforest3.vseyal.com/$text';
     }
     if (value is List) {
       for (final entry in value) {
@@ -2303,10 +2372,19 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
         (footerBillCount > 0 || footerTotalAmount != null);
     final isProductDetailView =
         _showProductInsights && _selectedProductKey != null;
+    final favoriteOwnerName = _resolvedCustomerName.isNotEmpty
+        ? _resolvedCustomerName
+        : _resolveCustomerNameFromBills(<Map<String, dynamic>>[
+            ..._bills,
+            ..._insightBills,
+          ]);
+    final favoriteTitle = favoriteOwnerName.isNotEmpty
+        ? "$favoriteOwnerName Favorite"
+        : "Customer Favorite";
     final dialogTitle = isProductDetailView
         ? "Product Visits"
         : _showProductInsights
-        ? "Customer Favorite's"
+        ? favoriteTitle
         : "Customer History";
     final popupWidth = (screenSize.width * (_showProductInsights ? 0.98 : 0.95))
         .clamp(0.0, _showProductInsights ? 980.0 : 760.0)
@@ -2743,6 +2821,16 @@ class _ReceiptContentState extends State<ReceiptContent> {
     return amount < 0 ? 0.0 : amount;
   }
 
+  double _roundDoubleSpecial(double value) {
+    final intPart = value.truncateToDouble();
+    final fracPart = double.parse((value - intPart).toStringAsFixed(4));
+    if (fracPart <= 0.50) {
+      return intPart;
+    } else {
+      return intPart + 1.0;
+    }
+  }
+
   double _qtyOf(dynamic value) {
     if (value is num) return value.toDouble();
     if (value is String) return double.tryParse(value) ?? 0.0;
@@ -2921,6 +3009,7 @@ class _ReceiptContentState extends State<ReceiptContent> {
         : const <dynamic>[];
 
     final branch = _asMap(bill['branch']);
+    final gstMode = branch?['gstMode']?.toString().trim() ?? 'inclusive';
     final branchCompany = _asMap(branch?['company']);
     final directCompany = _asMap(bill['company']);
     final companyName = _textOf(
@@ -3021,17 +3110,12 @@ class _ReceiptContentState extends State<ReceiptContent> {
       );
 
       var amount = _positiveMoney(
-        item['lineTotal'] ??
-            item['subtotal'] ??
+        item['finalLineTotal'] ??
+            item['lineTotalInclusive'] ??
+            item['lineTotal'] ??
             item['total'] ??
             item['amount'],
       );
-      if (amount <= 0 && unitPrice > 0) {
-        amount = unitPrice * quantity;
-      }
-      if (unitPrice <= 0 && quantity > 0 && amount > 0) {
-        unitPrice = amount / quantity;
-      }
 
       var tax = _positiveMoney(
         item['taxAmount'] ??
@@ -3039,19 +3123,70 @@ class _ReceiptContentState extends State<ReceiptContent> {
             item['tax'] ??
             item['lineTaxAmount'],
       );
+
       var gstPercent = _positiveMoney(
         item['gstRate'] ??
             item['gstPercent'] ??
             item['gst'] ??
             item['taxPercent'],
       );
-      if (tax <= 0 && amount > 0) {
-        if (gstPercent > 0) {
-          tax = (amount * gstPercent) / 100;
+
+      if (amount <= 0) {
+        final subtotal = _positiveMoney(
+          item['subtotal'] ??
+              item['taxableAmount'] ??
+              item['taxable'] ??
+              item['subTotal'] ??
+              item['sub_total'],
+        );
+        if (subtotal > 0) {
+          if (tax > 0) {
+            amount = subtotal + tax;
+          } else if (gstPercent > 0) {
+            if (gstMode == 'exclusive') {
+              tax = subtotal * gstPercent / 100.0;
+              amount = subtotal + tax;
+            } else {
+              amount = subtotal;
+              tax = amount - (amount / (1 + gstPercent / 100.0));
+            }
+          } else {
+            amount = subtotal;
+          }
         }
       }
+
+      if (amount <= 0 && unitPrice > 0) {
+        final subtotal = unitPrice * quantity;
+        if (gstPercent > 0) {
+          if (gstMode == 'exclusive') {
+            tax = subtotal * gstPercent / 100.0;
+            amount = subtotal + tax;
+          } else {
+            amount = subtotal;
+            tax = amount - (amount / (1 + gstPercent / 100.0));
+          }
+        } else {
+          amount = subtotal;
+        }
+      }
+
+      if (unitPrice <= 0 && quantity > 0 && amount > 0) {
+        unitPrice = amount / quantity;
+      }
+
+      if (tax <= 0 && amount > 0) {
+        if (gstPercent > 0) {
+          final taxable = (amount * 100) / (100 + gstPercent);
+          tax = amount - taxable;
+        }
+      }
+
       if (gstPercent <= 0 && amount > 0 && tax > 0) {
-        gstPercent = (tax * 100) / amount;
+        final taxable = amount - tax;
+        if (taxable > 0) {
+          gstPercent = (tax * 100) / taxable;
+        }
       }
 
       lineItems.add({
@@ -3118,31 +3253,11 @@ class _ReceiptContentState extends State<ReceiptContent> {
     }
     if (grossAmount <= 0) grossAmount = lineAmountTotal;
 
-    final billDiscount = (grossAmount - totalAmount)
-        .clamp(0.0, double.infinity)
-        .toDouble();
-    final customerOfferDiscount = _positiveMoney(bill['customerOfferDiscount']);
-    final totalPercentageOfferDiscount = _positiveMoney(
-      bill['totalPercentageOfferDiscount'],
-    );
-    final customerEntryPercentageOfferDiscount = _positiveMoney(
-      bill['customerEntryPercentageOfferDiscount'],
-    );
-    final explainedDiscount =
-        customerOfferDiscount +
-        totalPercentageOfferDiscount +
-        customerEntryPercentageOfferDiscount;
-    final otherDiscount = (billDiscount - explainedDiscount)
-        .clamp(0.0, double.infinity)
-        .toDouble();
-
     var subTotalAmount = _positiveMoney(
       bill['subTotal'] ?? bill['subtotal'] ?? bill['itemsTotal'],
     );
     if (subTotalAmount <= 0) {
-      subTotalAmount = billDiscount > 0
-          ? grossAmount - billDiscount
-          : lineAmountTotal;
+      subTotalAmount = lineAmountTotal;
     }
 
     var cgstAmount = _positiveMoney(bill['cgstAmount'] ?? bill['cgst']);
@@ -3160,6 +3275,30 @@ class _ReceiptContentState extends State<ReceiptContent> {
       }
     }
 
+    final resolvedGst = gstAmount > 0 ? gstAmount : (cgstAmount + sgstAmount);
+    if (resolvedGst > 0 && totalAmount <= subTotalAmount + 0.01) {
+      totalAmount += resolvedGst;
+    }
+
+    final billDiscount = (grossAmount - subTotalAmount)
+        .clamp(0.0, double.infinity)
+        .toDouble();
+    final customerOfferDiscount = _positiveMoney(bill['customerOfferDiscount']);
+    final totalPercentageOfferDiscount = _positiveMoney(
+      bill['totalPercentageOfferDiscount'],
+    );
+    final customerEntryPercentageOfferDiscount = _positiveMoney(
+      bill['customerEntryPercentageOfferDiscount'],
+    );
+    final explainedDiscount =
+        customerOfferDiscount +
+        totalPercentageOfferDiscount +
+        customerEntryPercentageOfferDiscount;
+    final otherDiscount = (billDiscount - explainedDiscount)
+        .clamp(0.0, double.infinity)
+        .toDouble();
+
+
     final storedRoundOff = _moneyOrNull(
       bill['roundOffAmount'] ??
           bill['roundOff'] ??
@@ -3167,12 +3306,17 @@ class _ReceiptContentState extends State<ReceiptContent> {
           bill['round_off'] ??
           bill['roundingOff'],
     );
-    final storedPreRoundTotal = _moneyOrNull(
+    double? storedPreRoundTotal = _moneyOrNull(
       bill['totalAmountBeforeRoundOff'] ??
           bill['totalBeforeRoundOff'] ??
           bill['preRoundTotal'] ??
           bill['preRoundAmount'],
     );
+    if (storedPreRoundTotal != null &&
+        gstAmount > 0 &&
+        storedPreRoundTotal <= subTotalAmount + 0.01) {
+      storedPreRoundTotal += gstAmount;
+    }
     final storedRoundedGrandTotal = _moneyOrNull(
       bill['roundedGrandTotal'] ??
           bill['roundedTotal'] ??
@@ -3193,12 +3337,9 @@ class _ReceiptContentState extends State<ReceiptContent> {
           return totalAmount;
         })();
 
-    final derivedRoundOff = totalAmount - computedPreRoundTotal;
-
-    final rawRoundOff = storedRoundOff ?? derivedRoundOff;
-    final roundOffAmount = double.parse(rawRoundOff.toStringAsFixed(2));
     final roundedGrandTotal =
-        storedRoundedGrandTotal ?? double.parse(totalAmount.toStringAsFixed(2));
+        storedRoundedGrandTotal ?? _roundDoubleSpecial(computedPreRoundTotal);
+    final roundOffAmount = storedRoundOff ?? (roundedGrandTotal - computedPreRoundTotal);
     final roundOffSign = roundOffAmount >= 0 ? '+' : '-';
 
     const printInk = Color(0xFF1F1B17);

@@ -1,4 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -52,8 +53,9 @@
             android:value="2" />
         
         <!-- Foreground Service -->
-        <service android:name="com.pravera.flutter_foreground_task.service.ForegroundTaskService"
+        <service android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
                  android:foregroundServiceType="dataSync"
+                 android:exported="false"
                  android:stopWithTask="false" />
     </application>
     <!-- Required to query activities that can process text, see:

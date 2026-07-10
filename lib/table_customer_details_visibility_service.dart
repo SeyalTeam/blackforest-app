@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:blackforest_app/app_http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -13,6 +13,18 @@ class TableCustomerDetailsVisibilityConfig {
   final bool autoSubmitCustomerDetailsForBillingOrders;
   final bool showCustomerHistoryForTableOrders;
   final bool showCustomerHistoryForBillingOrders;
+  final bool skipDeliver;
+  final String skipDeliverWaiterSelectionType;
+  final List<String> skipDeliverWaiters;
+  final bool skipConfirm;
+  final String skipConfirmWaiterSelectionType;
+  final List<String> skipConfirmWaiters;
+  final int delayMinutes;
+  final bool applyToBilling;
+  final bool applyToTable;
+  final String waiterSelectionType;
+  final List<String> waiters;
+  final bool entireBillBlocking;
 
   const TableCustomerDetailsVisibilityConfig({
     required this.showCustomerDetailsForTableOrders,
@@ -23,6 +35,18 @@ class TableCustomerDetailsVisibilityConfig {
     required this.autoSubmitCustomerDetailsForBillingOrders,
     required this.showCustomerHistoryForTableOrders,
     required this.showCustomerHistoryForBillingOrders,
+    required this.skipDeliver,
+    required this.skipDeliverWaiterSelectionType,
+    required this.skipDeliverWaiters,
+    required this.skipConfirm,
+    required this.skipConfirmWaiterSelectionType,
+    required this.skipConfirmWaiters,
+    required this.delayMinutes,
+    required this.applyToBilling,
+    required this.applyToTable,
+    required this.waiterSelectionType,
+    required this.waiters,
+    required this.entireBillBlocking,
   });
 
   static const TableCustomerDetailsVisibilityConfig defaultValue =
@@ -35,13 +59,25 @@ class TableCustomerDetailsVisibilityConfig {
         autoSubmitCustomerDetailsForBillingOrders: true,
         showCustomerHistoryForTableOrders: true,
         showCustomerHistoryForBillingOrders: true,
+        skipDeliver: false,
+        skipDeliverWaiterSelectionType: 'all',
+        skipDeliverWaiters: [],
+        skipConfirm: false,
+        skipConfirmWaiterSelectionType: 'all',
+        skipConfirmWaiters: [],
+        delayMinutes: 0,
+        applyToBilling: true,
+        applyToTable: true,
+        waiterSelectionType: 'all',
+        waiters: [],
+        entireBillBlocking: false,
       );
 }
 
 class TableCustomerDetailsVisibilityService {
   TableCustomerDetailsVisibilityService._();
 
-  static const String _apiHost = 'blackforest.vseyal.com';
+  static const String _apiHost = 'blackforest3.vseyal.com';
   static final Map<String, TableCustomerDetailsVisibilityConfig>
   _cacheByBranch = {};
   static final Map<String, Future<TableCustomerDetailsVisibilityConfig>>
@@ -61,9 +97,8 @@ class TableCustomerDetailsVisibilityService {
       return TableCustomerDetailsVisibilityConfig.defaultValue;
     }
 
-    // In debug builds, always fetch fresh value so backend setting changes
-    // are visible without app restart/hot restart.
-    final bypassCache = kDebugMode || forceRefresh;
+    // Keep this fast on tap flows; callers can still force refresh explicitly.
+    final bypassCache = forceRefresh;
     if (!bypassCache) {
       final cached = _cacheByBranch[resolvedBranchId];
       if (cached != null) {
@@ -316,6 +351,142 @@ class TableCustomerDetailsVisibilityService {
           'showCustomerHistory',
         ], true);
 
+        final skipDeliver = readBoolFromTree(source, [
+          'skipDeliver',
+          'skip_deliver',
+        ], false);
+
+        final skipConfirm = readBoolFromTree(source, [
+          'skipConfirm',
+          'skip_confirm',
+        ], false);
+
+        int readIntFromTree(
+          dynamic node,
+          List<String> keys,
+          int defaultValue,
+        ) {
+          final wanted = keys.map((k) => k.toLowerCase()).toSet();
+
+          int? scan(dynamic current) {
+            if (current is Map) {
+              for (final entry in current.entries) {
+                final key = entry.key.toString().toLowerCase();
+                if (wanted.contains(key)) {
+                  if (entry.value is num) {
+                    return (entry.value as num).toInt();
+                  }
+                  if (entry.value is String) {
+                    final parsed = int.tryParse(entry.value.trim());
+                    if (parsed != null) return parsed;
+                  }
+                }
+              }
+              for (final entry in current.entries) {
+                final nested = scan(entry.value);
+                if (nested != null) return nested;
+              }
+            } else if (current is List) {
+              for (final item in current) {
+                final nested = scan(item);
+                if (nested != null) return nested;
+              }
+            }
+            return null;
+          }
+
+          return scan(node) ?? defaultValue;
+        }
+
+        final delayMinutes = readIntFromTree(source, [
+          'delayMinutes',
+          'delay_minutes',
+          'categoryDelay',
+          'category_delay',
+          'delay',
+        ], 0);
+
+        final applyToBilling = readBoolFromTree(source, [
+          'applyToBilling',
+          'apply_to_billing',
+        ], true);
+
+        final applyToTable = readBoolFromTree(source, [
+          'applyToTable',
+          'apply_to_table',
+        ], true);
+
+        String readStringFromTree(
+          dynamic node,
+          List<String> keys,
+          String defaultValue,
+        ) {
+          final wanted = keys.map((k) => k.toLowerCase()).toSet();
+
+          String? scan(dynamic current) {
+            if (current is Map) {
+              for (final entry in current.entries) {
+                final key = entry.key.toString().toLowerCase();
+                if (wanted.contains(key)) {
+                  if (entry.value is String) return entry.value as String;
+                }
+              }
+              for (final entry in current.entries) {
+                final nested = scan(entry.value);
+                if (nested != null) return nested;
+              }
+            } else if (current is List) {
+              for (final item in current) {
+                final nested = scan(item);
+                if (nested != null) return nested;
+              }
+            }
+            return null;
+          }
+
+          return scan(node) ?? defaultValue;
+        }
+
+        final waiterSelectionType = readStringFromTree(source, [
+          'waiterSelectionType',
+          'waiter_selection_type',
+        ], 'all');
+
+        List<String> waiters = [];
+        final waitersNode = source['waiters'];
+        if (waitersNode is List) {
+          waiters = waitersNode.map((item) => item.toString()).toList();
+        }
+
+        final skipDeliverWaiterSelectionType = readStringFromTree(source, [
+          'skipDeliverWaiterSelectionType',
+          'skip_deliver_waiter_selection_type',
+        ], 'all');
+
+        List<String> skipDeliverWaiters = [];
+        final skipDeliverWaitersNode = source['skipDeliverWaiters'];
+        if (skipDeliverWaitersNode is List) {
+          skipDeliverWaiters = skipDeliverWaitersNode.map((item) => item.toString()).toList();
+        }
+
+        final skipConfirmWaiterSelectionType = readStringFromTree(source, [
+          'skipConfirmWaiterSelectionType',
+          'skip_confirm_waiter_selection_type',
+        ], 'all');
+
+        List<String> skipConfirmWaiters = [];
+        final skipConfirmWaitersNode = source['skipConfirmWaiters'];
+        if (skipConfirmWaitersNode is List) {
+          skipConfirmWaiters = skipConfirmWaitersNode.map((item) => item.toString()).toList();
+        }
+
+        final entireBillBlocking = readBoolFromTree(source, [
+          'entireBillBlocking',
+          'entire_bill_blocking',
+          'entireBillBlockingSystem',
+          'entire_bill_blocking_system',
+        ], false);
+
         final config = TableCustomerDetailsVisibilityConfig(
           showCustomerDetailsForTableOrders: showCustomerDetailsForTableOrders,
           allowSkipCustomerDetailsForTableOrders:
@@ -331,10 +502,22 @@ class TableCustomerDetailsVisibilityService {
           showCustomerHistoryForTableOrders: showCustomerHistoryForTableOrders,
           showCustomerHistoryForBillingOrders:
               showCustomerHistoryForBillingOrders,
+          skipDeliver: skipDeliver,
+          skipDeliverWaiterSelectionType: skipDeliverWaiterSelectionType,
+          skipDeliverWaiters: skipDeliverWaiters,
+          skipConfirm: skipConfirm,
+          skipConfirmWaiterSelectionType: skipConfirmWaiterSelectionType,
+          skipConfirmWaiters: skipConfirmWaiters,
+          delayMinutes: delayMinutes,
+          applyToBilling: applyToBilling,
+          applyToTable: applyToTable,
+          waiterSelectionType: waiterSelectionType,
+          waiters: waiters,
+          entireBillBlocking: entireBillBlocking,
         );
 
         debugPrint(
-          '[TableCustomerDetailsVisibilityService] config table(show=${config.showCustomerDetailsForTableOrders}, skip=${config.allowSkipCustomerDetailsForTableOrders}, history=${config.showCustomerHistoryForTableOrders}, autoSubmit=${config.autoSubmitCustomerDetailsForTableOrders}) billing(show=${config.showCustomerDetailsForBillingOrders}, skip=${config.allowSkipCustomerDetailsForBillingOrders}, history=${config.showCustomerHistoryForBillingOrders}, autoSubmit=${config.autoSubmitCustomerDetailsForBillingOrders})',
+          '[TableCustomerDetailsVisibilityService] config table(show=${config.showCustomerDetailsForTableOrders}, skip=${config.allowSkipCustomerDetailsForTableOrders}, history=${config.showCustomerHistoryForTableOrders}, autoSubmit=${config.autoSubmitCustomerDetailsForTableOrders}) billing(show=${config.showCustomerDetailsForBillingOrders}, skip=${config.allowSkipCustomerDetailsForBillingOrders}, history=${config.showCustomerHistoryForBillingOrders}, autoSubmit=${config.autoSubmitCustomerDetailsForBillingOrders}) skipDeliver=${config.skipDeliver} skipConfirm=${config.skipConfirm} delayMinutes=${config.delayMinutes}',
         );
 
         return config;

@@ -9,6 +9,7 @@ import 'package:network_info_plus/network_info_plus.dart';
 import 'package:blackforest_app/cart_page.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:blackforest_app/cart_provider.dart';
+import 'package:blackforest_app/api_server_prefs.dart';
 import 'package:blackforest_app/product_popularity_service.dart';
 import 'package:blackforest_app/widgets/rolling_qty_text.dart';
 import 'package:blackforest_app/widgets/product_rating_badge.dart';
@@ -66,6 +67,95 @@ class ProductsPage extends StatefulWidget {
   final List<Map<String, dynamic>> initialHomeTopCategories;
   final String? initialFocusedProductId;
 
+  static final Map<String, _ProductsCacheEntry> _productsCache = {};
+
+  /// Pre-populates the product cache for multiple categories at once.
+  /// Used by the pre-fetcher to avoid 5-10s delays when tapping categories.
+  static void bulkCacheProducts(List<dynamic> allProducts, String? branchId) {
+    final Map<String, List<dynamic>> grouped = {};
+    for (final product in allProducts) {
+      final cat = product['category'];
+      final fallbackCategoryId = product['categoryId'];
+      String? catId;
+      if (cat is Map) {
+        catId = (cat['id'] ?? cat['_id'] ?? cat[r'$oid'])?.toString();
+      } else {
+        catId = cat?.toString();
+      }
+      catId ??= fallbackCategoryId?.toString();
+      if (catId != null) {
+        grouped.putIfAbsent(catId, () => []).add(product);
+      }
+    }
+
+    final now = DateTime.now();
+    final normalizedBranchId = branchId?.trim() ?? '';
+    final bId = normalizedBranchId.isEmpty ? 'no-branch' : normalizedBranchId;
+    grouped.forEach((catId, products) {
+      _productsCache['${catId}_$bId'] = _ProductsCacheEntry(
+        products: products,
+        fetchedAt: now,
+      );
+    });
+  }
+
+  static _ProductsCacheEntry? _readValidCacheEntryForKey(String key) {
+    final entry = _productsCache[key];
+    if (entry == null) return null;
+    final isExpired =
+        DateTime.now().difference(entry.fetchedAt) >
+        const Duration(hours: 15);
+    if (isExpired) {
+      _productsCache.remove(key);
+      return null;
+    }
+    return entry;
+  }
+
+  static List<dynamic>? readProductsCache(String categoryId, String? branchId) {
+    final normalizedCategoryId = categoryId.trim();
+    if (normalizedCategoryId.isEmpty) return null;
+    final normalizedBranchId = branchId?.trim() ?? '';
+
+    final candidateKeys = <String>[
+      if (normalizedBranchId.isNotEmpty)
+        '${normalizedCategoryId}_$normalizedBranchId',
+      '${normalizedCategoryId}_no-branch',
+    ];
+
+    for (final key in candidateKeys) {
+      final entry = _readValidCacheEntryForKey(key);
+      if (entry == null) continue;
+      return List<dynamic>.from(entry.products);
+    }
+
+    final keyPrefix = '${normalizedCategoryId}_';
+    for (final cacheEntry in _productsCache.entries) {
+      if (!cacheEntry.key.startsWith(keyPrefix)) continue;
+      final valid = _readValidCacheEntryForKey(cacheEntry.key);
+      if (valid == null) continue;
+      return List<dynamic>.from(valid.products);
+    }
+    return null;
+  }
+
+  static void writeProductsCache(
+    String categoryId,
+    String? branchId,
+    List<dynamic> products,
+  ) {
+    final normalizedCategoryId = categoryId.trim();
+    if (normalizedCategoryId.isEmpty) return;
+    final normalizedBranchId = branchId?.trim() ?? '';
+    final bId = normalizedBranchId.isEmpty ? 'no-branch' : normalizedBranchId;
+    _productsCache['${normalizedCategoryId}_$bId'] = _ProductsCacheEntry(
+      products: List<dynamic>.from(products),
+      fetchedAt: DateTime.now(),
+    );
+  }
+
+  final int delayMinutes;
+
   const ProductsPage({
     super.key,
     required this.categoryId,
@@ -73,6 +163,7 @@ class ProductsPage extends StatefulWidget {
     this.sourcePage = PageType.billing,
     this.initialHomeTopCategories = const <Map<String, dynamic>>[],
     this.initialFocusedProductId,
+    this.delayMinutes = 0,
   });
 
   @override
@@ -80,8 +171,6 @@ class ProductsPage extends StatefulWidget {
 }
 
 class _ProductsPageState extends State<ProductsPage> {
-  static const Duration _productsCacheTtl = Duration(seconds: 90);
-  static final Map<String, _ProductsCacheEntry> _productsCache = {};
   static const Duration _homeTopCategoriesCacheTtl = Duration(seconds: 90);
   static const String _homeTopCategoriesCacheVersion =
       'branch-rule-top-categories-v1';
@@ -99,6 +188,9 @@ class _ProductsPageState extends State<ProductsPage> {
   Map<String, ProductPopularityInfo> _productPopularityById =
       <String, ProductPopularityInfo>{};
   bool _isLoading = true;
+  bool _isDelayActive = false;
+  int _remainingSeconds = 0;
+  Timer? _delayTimer;
   String? _branchId;
   String? _userRole;
   String? _currentUserId;
@@ -111,34 +203,93 @@ class _ProductsPageState extends State<ProductsPage> {
   bool get _isHomeMode => widget.sourcePage == PageType.home;
   bool get _usesTableCart =>
       widget.sourcePage == PageType.table || widget.sourcePage == PageType.home;
+  bool get _usesBillingMenuWidgetApi =>
+      widget.sourcePage == PageType.table ||
+      (widget.sourcePage == PageType.billing &&
+          (_userRole ?? '').trim().toLowerCase() == 'waiter');
 
-  String _productsScope() {
-    if (widget.sourcePage == PageType.home) return 'home';
-    if (widget.sourcePage == PageType.table) return 'table';
-    return 'billing';
-  }
-
-  String _cacheKey() {
-    return '${_productsScope()}|${widget.categoryId}|${_branchId ?? ''}|${_userRole ?? ''}';
+  bool _hasProductImageHints(List<dynamic> products) {
+    for (final rawProduct in products) {
+      if (rawProduct is! Map) continue;
+      final product = Map<String, dynamic>.from(rawProduct);
+      if ((product['imageUrl']?.toString().trim().isNotEmpty ?? false) ||
+          (product['thumbnail']?.toString().trim().isNotEmpty ?? false)) {
+        return true;
+      }
+      final image = product['image'];
+      if (image is Map &&
+          ((image['url']?.toString().trim().isNotEmpty ?? false) ||
+              (image['thumbnailURL']?.toString().trim().isNotEmpty ?? false) ||
+              (image['thumbnailUrl']?.toString().trim().isNotEmpty ?? false))) {
+        return true;
+      }
+      final images = product['images'];
+      if (images is List) {
+        for (final row in images) {
+          if (row is! Map) continue;
+          final nestedImage = row['image'];
+          if (nestedImage is Map &&
+              ((nestedImage['url']?.toString().trim().isNotEmpty ?? false) ||
+                  (nestedImage['thumbnailURL']?.toString().trim().isNotEmpty ??
+                      false))) {
+            return true;
+          }
+        }
+      }
+    }
+    return false;
   }
 
   List<dynamic>? _readProductsCache() {
-    final entry = _productsCache[_cacheKey()];
-    if (entry == null) return null;
-    final isExpired =
-        DateTime.now().difference(entry.fetchedAt) > _productsCacheTtl;
-    if (isExpired) {
-      _productsCache.remove(_cacheKey());
-      return null;
-    }
-    return List<dynamic>.from(entry.products);
+    final cached = ProductsPage.readProductsCache(widget.categoryId, _branchId);
+    return cached;
   }
 
   void _writeProductsCache(List<dynamic> products) {
-    _productsCache[_cacheKey()] = _ProductsCacheEntry(
-      products: List<dynamic>.from(products),
-      fetchedAt: DateTime.now(),
-    );
+    ProductsPage.writeProductsCache(widget.categoryId, _branchId, products);
+    unawaited(_persistPersistentProductsCache(products));
+  }
+
+  Future<void> _hydratePersistentProductsCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final branchId = prefs.getString('branchId')?.trim();
+      final cacheKey = 'cached_products_${widget.categoryId}_${branchId ?? 'no-branch'}';
+      final raw = prefs.getString(cacheKey);
+      if (raw == null || raw.isEmpty) return;
+
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final payload = Map<String, dynamic>.from(decoded);
+      final cachedAt = DateTime.tryParse(payload['cachedAt'] ?? '') ?? DateTime(2000);
+      
+      if (DateTime.now().difference(cachedAt) > const Duration(hours: 24)) {
+        return;
+      }
+
+      final products = payload['products'];
+      if (products is! List || products.isEmpty) return;
+
+      if (!mounted) return;
+      setState(() {
+        _products = products;
+        _isLoading = false;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _persistPersistentProductsCache(List<dynamic> products) async {
+    if (products.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final branchId = prefs.getString('branchId')?.trim();
+      final cacheKey = 'cached_products_${widget.categoryId}_${branchId ?? 'no-branch'}';
+      final payload = <String, dynamic>{
+        'cachedAt': DateTime.now().toIso8601String(),
+        'products': products,
+      };
+      await prefs.setString(cacheKey, jsonEncode(payload));
+    } catch (_) {}
   }
 
   @override
@@ -160,14 +311,38 @@ class _ProductsPageState extends State<ProductsPage> {
       }
     }
     unawaited(_loadProductPopularity());
+    unawaited(_hydratePersistentProductsCache());
     _fetchProducts();
+
+    if (widget.delayMinutes > 0) {
+      _isDelayActive = true;
+      _remainingSeconds = widget.delayMinutes * 60;
+      _delayTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+        if (!mounted) {
+          t.cancel();
+          return;
+        }
+        if (_remainingSeconds <= 1) {
+          t.cancel();
+          setState(() {
+            _isDelayActive = false;
+          });
+        } else {
+          setState(() {
+            _remainingSeconds--;
+          });
+        }
+      });
+    }
   }
 
   @override
   void dispose() {
+    _delayTimer?.cancel();
     _homeSearchController.dispose();
     super.dispose();
   }
+
 
   void _ensureCartMode() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -459,7 +634,7 @@ class _ProductsPageState extends State<ProductsPage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest.vseyal.com/api/globals/widget-settings?depth=1',
+          'https://blackforest3.vseyal.com/api/globals/widget-settings?depth=1',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -625,7 +800,7 @@ class _ProductsPageState extends State<ProductsPage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest.vseyal.com/api/categories?where[id][in]=${ids.join(',')}&depth=1&limit=100',
+          'https://blackforest3.vseyal.com/api/categories?where[id][in]=${ids.join(',')}&depth=1&limit=100',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -693,7 +868,7 @@ class _ProductsPageState extends State<ProductsPage> {
   Future<void> _fetchUserData(String token) async {
     try {
       final response = await http.get(
-        Uri.parse('https://blackforest.vseyal.com/api/users/me?depth=2'),
+        Uri.parse('https://blackforest3.vseyal.com/api/users/me?depth=2'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
@@ -778,7 +953,7 @@ class _ProductsPageState extends State<ProductsPage> {
       try {
         final gRes = await http.get(
           Uri.parse(
-            'https://blackforest.vseyal.com/api/globals/branch-geo-settings',
+            'https://blackforest3.vseyal.com/api/globals/branch-geo-settings',
           ),
           headers: {
             'Authorization': 'Bearer $token',
@@ -819,7 +994,7 @@ class _ProductsPageState extends State<ProductsPage> {
 
       // 2. Fallback to Branches Collection
       final allBranchesResponse = await http.get(
-        Uri.parse('https://blackforest.vseyal.com/api/branches?depth=1'),
+        Uri.parse('https://blackforest3.vseyal.com/api/branches?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (allBranchesResponse.statusCode == 200) {
@@ -843,40 +1018,173 @@ class _ProductsPageState extends State<ProductsPage> {
     }
   }
 
-  /// Fetch all products under a category, filtered by role/branch
-  Future<void> _fetchProducts() async {
-    setState(() {
-      _isLoading = true;
-    });
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('token');
-      if (token == null) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No token found. Please login again.')),
-        );
-        setState(() {
-          _isLoading = false;
-        });
-        return;
-      }
+  /// Fetch all products under a category, filtered by role/branch.
+  Future<void> _fetchProducts({bool forceRefresh = false}) async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    if (token == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No token found. Please login again.')),
+      );
+      setState(() {
+        _isLoading = false;
+      });
+      return;
+    }
 
-      _userRole ??= prefs.getString('role');
-      _branchId ??= prefs.getString('branchId');
+    _userRole ??= prefs.getString('role');
+    _branchId = (_branchId ?? prefs.getString('branchId') ?? '').trim();
+    if (_branchId != null && _branchId!.isEmpty) {
+      _branchId = null;
+    }
 
+    if (!forceRefresh) {
       final cachedProducts = _readProductsCache();
       if (cachedProducts != null) {
+        debugPrint(
+          "🎯 Products Cache HIT for category: ${widget.categoryName}",
+        );
         if (!mounted) return;
         setState(() {
           _products = cachedProducts;
           _isLoading = false;
         });
+        // Refresh in background so reopening the screen keeps cache fresh.
+        unawaited(_fetchProductsInternal(token));
         return;
       }
+    }
+    debugPrint(
+      "🌐 Products Cache MISS for category: ${widget.categoryName}. Fetching from network...",
+    );
 
-      if (_userRole == null || (_userRole == 'waiter' && _branchId == null)) {
+    setState(() {
+      _isLoading = true;
+    });
+
+    await _fetchProductsInternal(token);
+  }
+
+  String? _extractApiErrorMessage(String responseBody) {
+    try {
+      final decoded = jsonDecode(responseBody);
+      if (decoded is Map && decoded['message'] != null) {
+        final message = decoded['message'].toString().trim();
+        if (message.isNotEmpty) return message;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Iterable<List<T>> _chunked<T>(List<T> items, int size) sync* {
+    if (size <= 0) {
+      yield items;
+      return;
+    }
+    for (var i = 0; i < items.length; i += size) {
+      final end = (i + size < items.length) ? i + size : items.length;
+      yield items.sublist(i, end);
+    }
+  }
+
+  Future<List<dynamic>> _hydrateBillingMenuProductImages(
+    String token,
+    List<dynamic> products,
+  ) async {
+    if (products.isEmpty) return products;
+
+    final ids = products
+        .whereType<Map>()
+        .map((row) => row['id']?.toString().trim() ?? '')
+        .where((id) => id.isNotEmpty)
+        .toList(growable: false);
+    if (ids.isEmpty) return products;
+
+    final docsById = <String, Map<String, dynamic>>{};
+    for (final idChunk in _chunked<String>(ids, 60)) {
+      final response = await http.get(
+        Uri.parse(
+          'https://blackforest3.vseyal.com/api/products?where[id][in]=${idChunk.join(',')}&depth=2&limit=${idChunk.length}',
+        ),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+      if (response.statusCode != 200) continue;
+
+      final decoded = jsonDecode(response.body);
+      final payload = decoded is Map
+          ? Map<String, dynamic>.from(decoded)
+          : <String, dynamic>{};
+      final docs = payload['docs'];
+      if (docs is! List) continue;
+
+      for (final rawDoc in docs) {
+        if (rawDoc is! Map) continue;
+        final doc = Map<String, dynamic>.from(rawDoc);
+        final id = doc['id']?.toString().trim() ?? '';
+        if (id.isEmpty) continue;
+        docsById[id] = doc;
+      }
+    }
+
+    if (docsById.isEmpty) return products;
+
+    return products
+        .map((rawProduct) {
+          if (rawProduct is! Map) return rawProduct;
+          final product = Map<String, dynamic>.from(rawProduct);
+          final id = product['id']?.toString().trim() ?? '';
+          final doc = docsById[id];
+          if (doc == null) return product;
+
+          product['image'] ??= doc['image'];
+          product['images'] ??= doc['images'];
+          product['imageUrl'] ??= doc['imageUrl'];
+          product['thumbnail'] ??= doc['thumbnail'];
+          return product;
+        })
+        .toList(growable: false);
+  }
+
+  List<dynamic> _normalizeBillingMenuProducts(dynamic rawProducts) {
+    if (rawProducts is! List) return const <dynamic>[];
+    final normalized = <dynamic>[];
+    final defaultCategoryId = widget.categoryId.trim();
+
+    for (final raw in rawProducts) {
+      if (raw is! Map) continue;
+      final product = Map<String, dynamic>.from(raw);
+      final categoryId = (product['categoryId'] ?? defaultCategoryId)
+          .toString()
+          .trim();
+      if (categoryId.isNotEmpty && product['category'] == null) {
+        product['category'] = categoryId;
+      }
+
+      if (product['defaultPriceDetails'] == null && product['price'] != null) {
+        product['defaultPriceDetails'] = <String, dynamic>{
+          'price': product['price'],
+        };
+      }
+
+      normalized.add(product);
+    }
+    return normalized;
+  }
+
+  Future<void> _fetchProductsInternal(String token) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final requiresBranchForWidgetApi = _usesBillingMenuWidgetApi;
+      _branchId = (_branchId ?? prefs.getString('branchId') ?? '').trim();
+      if (_branchId != null && _branchId!.isEmpty) _branchId = null;
+
+      if (_userRole == null || _userRole!.isEmpty || (_usesBillingMenuWidgetApi && _branchId == null)) {
         await _fetchUserData(token);
+        if (!mounted) return;
+        _userRole = prefs.getString('role');
+        _branchId = (prefs.getString('branchId') ?? '').trim();
+        if (_branchId != null && _branchId!.isEmpty) _branchId = null;
       }
 
       if (_isHomeMode && _homeTopCategories.isEmpty) {
@@ -884,9 +1192,98 @@ class _ProductsPageState extends State<ProductsPage> {
       }
       unawaited(_loadProductPopularity());
 
-      // Updated: Fetch all products in the category without restricting to branch overrides
+      if (_usesBillingMenuWidgetApi) {
+        final branchId = _branchId?.trim() ?? '';
+        final categoryId = widget.categoryId.trim();
+        if (branchId.isEmpty) {
+          const message = 'branch (or branchId) is required';
+          if (!mounted) return;
+          if (_products.isEmpty) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(const SnackBar(content: Text(message)));
+          }
+          setState(() {
+            _isLoading = false;
+          });
+          return;
+        }
+        if (categoryId.isEmpty) {
+          const message = 'categoryId is required when mode=products';
+          if (!mounted) return;
+          if (_products.isEmpty) {
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(const SnackBar(content: Text(message)));
+          }
+          setState(() {
+            _isLoading = false;
+          });
+          return;
+        }
+
+        final response = await http.get(
+          Uri.parse(
+            'https://blackforest3.vseyal.com/api/widgets/billing-menu',
+          ).replace(
+            queryParameters: <String, String>{
+              'mode': 'products',
+              'branch': branchId,
+              'categoryId': categoryId,
+              'limit': '250',
+            },
+          ),
+          headers: {'Authorization': 'Bearer $token'},
+        );
+
+        if (response.statusCode == 200) {
+          final decoded = jsonDecode(response.body);
+          final payload = decoded is Map
+              ? Map<String, dynamic>.from(decoded)
+              : <String, dynamic>{};
+          var fetchedProducts = _normalizeBillingMenuProducts(
+            payload['products'],
+          );
+          fetchedProducts = fetchedProducts
+              .where((product) {
+                if (product is! Map) return false;
+                final item = Map<String, dynamic>.from(product);
+                final status = item['status'];
+                if (status == 'inactive') return false;
+                if (item['isAvailable'] == false) return false;
+                if (item['isOutOfStock'] == true) return false;
+                return true;
+              })
+              .toList(growable: false);
+
+          if (!mounted) return;
+          final baseProducts = List<dynamic>.from(fetchedProducts);
+          setState(() {
+            _products = baseProducts;
+            _isLoading = false;
+          });
+
+          _writeProductsCache(baseProducts);
+          return;
+        }
+
+        final message =
+            _extractApiErrorMessage(response.body) ??
+            'Failed to fetch products: ${response.statusCode}';
+        if (!mounted) return;
+        if (_products.isEmpty) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(message)));
+        }
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+
       final url =
-          'https://blackforest.vseyal.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=2';
+          'https://blackforest3.vseyal.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
       final response = await http.get(
         Uri.parse(url),
         headers: {'Authorization': 'Bearer $token'},
@@ -896,19 +1293,12 @@ class _ProductsPageState extends State<ProductsPage> {
 
         var fetchedProducts = data['docs'] ?? [];
 
-        // Filter out products:
-        // 1. Globally inactive (status == 'inactive')
-        // 2. Inactive for current branch (branch in inactiveBranches)
         if (fetchedProducts is List) {
           fetchedProducts = fetchedProducts.where((product) {
-            // Check global status
             final status = product['status'];
             if (status == 'inactive') return false;
-
-            // Check availability
             if (product['isAvailable'] == false) return false;
 
-            // Check branch-specific inactivity
             if (_branchId != null) {
               final inactiveBranches = product['inactiveBranches'];
               if (inactiveBranches != null && inactiveBranches is List) {
@@ -938,20 +1328,25 @@ class _ProductsPageState extends State<ProductsPage> {
         _writeProductsCache(List<dynamic>.from(fetchedProducts));
       } else {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to fetch products: ${response.statusCode}'),
-          ),
-        );
+        if (_products.isEmpty) {
+          // Only show error if we don't have cached data showing
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to fetch products: ${response.statusCode}'),
+            ),
+          );
+        }
         setState(() {
           _isLoading = false;
         });
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Network error: Check your internet')),
-      );
+      if (_products.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Network error: Check your internet')),
+        );
+      }
       setState(() {
         _isLoading = false;
       });
@@ -1076,12 +1471,14 @@ class _ProductsPageState extends State<ProductsPage> {
     if (value == null || value.isEmpty) return null;
     if (value.startsWith('data:image/')) return value;
     if (value.startsWith('http://') || value.startsWith('https://')) {
-      return value;
+      return resolveApiAssetUrl(value);
     }
-    if (value.startsWith('//')) return 'https:$value';
-    if (value.startsWith('blackforest.vseyal.com')) return 'https://$value';
-    if (value.startsWith('/')) return 'https://blackforest.vseyal.com$value';
-    return value;
+    if (value.startsWith('//')) return resolveApiAssetUrl('https:$value');
+    if (value.startsWith('blackforest3.vseyal.com')) {
+      return resolveApiAssetUrl('https://$value');
+    }
+    if (value.startsWith('/')) return resolveApiAssetUrl(value);
+    return resolveApiAssetUrl('/$value');
   }
 
   String? _extractImageFromAny(dynamic node) {
@@ -1250,22 +1647,44 @@ class _ProductsPageState extends State<ProductsPage> {
 
   bool _isWeightBasedProduct(Map<String, dynamic> product) {
     try {
-      final unit = product['defaultPriceDetails']?['unit']
-          ?.toString()
-          .toLowerCase();
+      final cartProvider = Provider.of<CartProvider>(context, listen: false);
+      final branchId = _branchId?.trim();
+      
+      // Check branch overrides first for unit
+      String? unit;
+      if (branchId != null && product['branchOverrides'] is List) {
+        final overrides = product['branchOverrides'] as List;
+        for (final override in overrides) {
+          if (override is Map) {
+            final overrideBranchId = CartItem.extractRefId(override['branch']);
+            if (overrideBranchId == branchId && override['unit'] != null) {
+              unit = override['unit'].toString().toLowerCase();
+              break;
+            }
+          }
+        }
+      }
+      
+      // Fallback to default unit
+      unit ??= product['defaultPriceDetails']?['unit']?.toString().toLowerCase();
+
       final isKgFlag =
           product['isKg'] == true ||
           product['sellByWeight'] == true ||
           product['weightBased'] == true;
-      final pricingType = product['pricingType']?.toString().toLowerCase();
 
-      if (unit != null && (unit.contains('kg') || unit.contains('gram'))) {
+      if (unit != null && (
+          unit == 'kg' || 
+          unit == 'kilograms' || 
+          unit == 'g' || 
+          unit == 'gram' || 
+          unit == 'grams' ||
+          unit.contains('kg') || 
+          unit.contains('gram')
+      )) {
         return true;
       }
       if (isKgFlag) {
-        return true;
-      }
-      if (pricingType != null && pricingType.contains('kg')) {
         return true;
       }
     } catch (_) {
@@ -1382,15 +1801,19 @@ class _ProductsPageState extends State<ProductsPage> {
             fontSize: actionFontSize,
           ),
           Expanded(
-            child: Center(
-              child: RollingQtyText(
-                value: qty,
-                height: controlHeight,
-                style: const TextStyle(
-                  fontSize: qtyFontSize,
-                  fontWeight: FontWeight.w900,
-                  color: Colors.white,
-                  height: 1,
+            child: GestureDetector(
+              onTap: () => _addOrUpdateProduct(product),
+              behavior: HitTestBehavior.opaque,
+              child: Center(
+                child: RollingQtyText(
+                  value: qty,
+                  height: controlHeight,
+                  style: const TextStyle(
+                    fontSize: qtyFontSize,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
+                    height: 1,
+                  ),
                 ),
               ),
             ),
@@ -1503,7 +1926,24 @@ class _ProductsPageState extends State<ProductsPage> {
     double quantity = 1.0;
     if (isWeightBased) {
       // Step 4: Show popup if weight-based
-      final unit = product['defaultPriceDetails']?['unit'] ?? 'kg';
+      
+      // Determine display unit
+      String displayUnit = 'kg';
+      if (_branchId != null && product['branchOverrides'] is List) {
+        final overrides = product['branchOverrides'] as List;
+        for (final override in overrides) {
+          if (override is Map) {
+            final overrideBranchId = CartItem.extractRefId(override['branch']);
+            if (overrideBranchId == _branchId && override['unit'] != null) {
+              displayUnit = override['unit'].toString();
+              break;
+            }
+          }
+        }
+      } else {
+        displayUnit = product['defaultPriceDetails']?['unit']?.toString() ?? 'kg';
+      }
+
       final TextEditingController weightController = TextEditingController(
         text: existingQty > 0 ? existingQty.toStringAsFixed(2) : '',
       );
@@ -1512,7 +1952,7 @@ class _ProductsPageState extends State<ProductsPage> {
         barrierDismissible: true,
         builder: (context) {
           return AlertDialog(
-            title: Text('Enter Weight ($unit)'),
+            title: Text('Enter Weight ($displayUnit)'),
             content: TextField(
               controller: weightController,
               keyboardType: const TextInputType.numberWithOptions(
@@ -1520,7 +1960,7 @@ class _ProductsPageState extends State<ProductsPage> {
               ),
               decoration: InputDecoration(
                 hintText: 'e.g. 0.5',
-                labelText: 'Weight in $unit',
+                labelText: 'Weight in $displayUnit',
                 border: const OutlineInputBorder(),
               ),
             ),
@@ -2141,31 +2581,20 @@ class _ProductsPageState extends State<ProductsPage> {
                   ]
                 : const [],
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(26),
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: imageUrl == null
-                            ? Container(
-                                color: const Color(0xFFF3F3F3),
-                                alignment: Alignment.center,
-                                child: const Icon(
-                                  Icons.fastfood_outlined,
-                                  size: 34,
-                                  color: Colors.black45,
-                                ),
-                              )
-                            : CachedNetworkImage(
-                                imageUrl: imageUrl,
-                                fit: BoxFit.cover,
-                                placeholder: (context, url) =>
-                                    Container(color: const Color(0xFFF3F3F3)),
-                                errorWidget: (context, url, error) => Container(
+          child: GestureDetector(
+            onTap: () => _addOrUpdateProduct(product),
+            behavior: HitTestBehavior.opaque,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(26),
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: imageUrl == null
+                              ? Container(
                                   color: const Color(0xFFF3F3F3),
                                   alignment: Alignment.center,
                                   child: const Icon(
@@ -2173,101 +2602,119 @@ class _ProductsPageState extends State<ProductsPage> {
                                     size: 34,
                                     color: Colors.black45,
                                   ),
+                                )
+                              : CachedNetworkImage(
+                                  imageUrl: imageUrl,
+                                  fit: BoxFit.cover,
+                                  placeholder: (context, url) =>
+                                      Container(color: const Color(0xFFF3F3F3)),
+                                  errorWidget: (context, url, error) => Container(
+                                    color: const Color(0xFFF3F3F3),
+                                    alignment: Alignment.center,
+                                    child: const Icon(
+                                      Icons.fastfood_outlined,
+                                      size: 34,
+                                      color: Colors.black45,
+                                    ),
+                                  ),
                                 ),
+                        ),
+                        Positioned(
+                          top: 8,
+                          right: 8,
+                          child: GestureDetector(
+                            onTap: () =>
+                                _toggleFavoriteProduct(productId, productName),
+                            child: Container(
+                              padding: const EdgeInsets.all(3),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.26),
+                                shape: BoxShape.circle,
                               ),
-                      ),
-                      Positioned(
-                        top: 8,
-                        right: 8,
-                        child: GestureDetector(
-                          onTap: () =>
-                              _toggleFavoriteProduct(productId, productName),
-                          child: Container(
-                            padding: const EdgeInsets.all(3),
-                            decoration: BoxDecoration(
-                              color: Colors.black.withValues(alpha: 0.26),
-                              shape: BoxShape.circle,
-                            ),
-                            child: Icon(
-                              isFavorite
-                                  ? Icons.favorite_rounded
-                                  : Icons.favorite_border_rounded,
-                              color: isFavorite
-                                  ? _homeAccentColor
-                                  : Colors.white.withValues(alpha: 0.95),
-                              size: 18,
+                              child: Icon(
+                                isFavorite
+                                    ? Icons.favorite_rounded
+                                    : Icons.favorite_border_rounded,
+                                color: isFavorite
+                                    ? _homeAccentColor
+                                    : Colors.white.withValues(alpha: 0.95),
+                                size: 18,
+                              ),
                             ),
                           ),
                         ),
-                      ),
+                      ],
+                    ),
+                  ),
+                ),
+                SizedBox(height: topGap),
+                if (hasMetaRow) ...[
+                  Row(
+                    children: [
+                      if (isVeg != null) _buildVegNonVegIcon(isVeg),
+                      const Spacer(),
+                      if (badgeInfo != null)
+                        ProductRatingBadge(
+                          info: badgeInfo,
+                          fontSize: 10,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 4,
+                          ),
+                        ),
                     ],
                   ),
-                ),
-              ),
-              SizedBox(height: topGap),
-              if (hasMetaRow) ...[
-                Row(
-                  children: [
-                    if (isVeg != null) _buildVegNonVegIcon(isVeg),
-                    const Spacer(),
-                    if (badgeInfo != null)
-                      ProductRatingBadge(
-                        info: badgeInfo,
-                        fontSize: 10,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 4,
-                        ),
-                      ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-              ],
-              SizedBox(
-                height: nameHeight,
-                child: Text(
-                  '$productName (${_formatDetailedPrice(price)})',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF2D333D),
-                    height: 1.15,
+                  const SizedBox(height: 4),
+                ],
+                SizedBox(
+                  height: nameHeight,
+                  child: Text(
+                    '$productName (${_formatDetailedPrice(price)})',
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF2D333D),
+                      height: 1.15,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(height: 2),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(
-                    child: SizedBox(
-                      height: 22,
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          _formatCompactPrice(price),
-                          maxLines: 1,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.black,
-                            height: 1,
+                const SizedBox(height: 2),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: SizedBox(
+                        height: 22,
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            _formatCompactPrice(price),
+                            maxLines: 1,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.black,
+                              height: 1,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  SizedBox(
-                    width: 81,
-                    child: _buildHomeQtyControl(product: product, qty: qty),
-                  ),
-                ],
-              ),
-            ],
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      width: 81,
+                      child: GestureDetector(
+                        onTap: () {}, // Prevent card tap from triggering when tapping control area
+                        child: _buildHomeQtyControl(product: product, qty: qty),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -2292,7 +2739,9 @@ class _ProductsPageState extends State<ProductsPage> {
     final visibleProducts = _filteredHomeProducts();
     String title = widget.categoryName;
     if (!_isHomeMode && cartProvider.selectedTable != null) {
-      title = '${widget.categoryName} (Table: ${cartProvider.selectedTable})';
+      title = '${widget.categoryName} (Table: ${cartProvider.selectedTable!.split('-S-').first})';
+    } else if (!_isHomeMode && cartProvider.isSharedTableOrder) {
+      title = '${widget.categoryName} (Shared Table)';
     }
 
     return CommonScaffold(
@@ -2301,218 +2750,348 @@ class _ProductsPageState extends State<ProductsPage> {
       showAppBar: !_isHomeMode,
       hideBottomNavigationBar: _isHomeMode && totalQty > 0.0001,
       onScanCallback: _handleScan,
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Colors.black))
+      body: _isDelayActive
+          ? const Center(
+              child: SpokeLoader(size: 100.0),
+            )
+          : _isLoading
+              ? const Center(child: CircularProgressIndicator(color: Colors.black))
           : _isHomeMode
           ? RefreshIndicator(
-              onRefresh: _fetchProducts,
+              onRefresh: () => _fetchProducts(forceRefresh: true),
               child: _buildHomeModeBody(
                 visibleProducts: visibleProducts,
                 totalQty: totalQty,
                 activeCartItems: activeCartItems,
               ),
             )
-          : _products.isEmpty
-          ? const Center(
-              child: Text(
-                'No products found',
-                style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18),
-              ),
-            )
-          : LayoutBuilder(
-              builder: (context, constraints) {
-                final width = constraints.maxWidth;
-                final crossAxisCount = (width > 600) ? 5 : 3;
-                return GridView.builder(
-                  padding: const EdgeInsets.all(10),
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: crossAxisCount,
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 10,
-                    childAspectRatio: 0.75,
-                  ),
-                  itemCount: _products.length,
-                  itemBuilder: (context, index) {
-                    final product = _products[index];
-                    String? imageUrl;
-                    if (product['images'] != null &&
-                        product['images'].isNotEmpty &&
-                        product['images'][0]['image'] != null &&
-                        product['images'][0]['image']['url'] != null) {
-                      imageUrl = product['images'][0]['image']['url'];
-                      if (imageUrl != null && imageUrl.startsWith('/')) {
-                        imageUrl = 'https://blackforest.vseyal.com$imageUrl';
-                      }
-                    }
-                    imageUrl ??=
-                        'https://via.placeholder.com/150?text=No+Image';
-
-                    return GestureDetector(
-                      onTap: () => _toggleProductSelection(index),
-                      child: Consumer<CartProvider>(
-                        builder: (context, cartProvider, child) {
-                          final resolvedPrice = _readProductPrice(
-                            Map<String, dynamic>.from(product),
-                            cartProvider: cartProvider,
-                          );
-                          final price = _formatCompactPrice(resolvedPrice);
-                          final isSelected = cartProvider.cartItems.any(
-                            (i) => i.id == product['id'],
-                          );
-                          final qty = cartProvider.cartItems
-                              .firstWhere(
-                                (i) => i.id == product['id'],
-                                orElse: () => CartItem(
-                                  id: '',
-                                  name: '',
-                                  price: 0,
-                                  quantity: 0,
-                                ),
-                              )
-                              .quantity;
-                          String qtyText;
-                          if (qty == qty.floorToDouble()) {
-                            qtyText = qty.toInt().toString();
-                          } else {
-                            qtyText = qty.toStringAsFixed(2);
-                          }
-
-                          return Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(8),
-                              border: isSelected
-                                  ? Border.all(color: Colors.green, width: 4)
-                                  : null,
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.1),
-                                  spreadRadius: 1,
-                                  blurRadius: 5,
-                                  offset: const Offset(0, 2),
-                                ),
-                              ],
+          : RefreshIndicator(
+              onRefresh: () => _fetchProducts(forceRefresh: true),
+              child: _products.isEmpty
+                  ? ListView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: const [
+                        SizedBox(height: 180),
+                        Center(
+                          child: Text(
+                            'No products found',
+                            style: TextStyle(
+                              color: Color(0xFF4A4A4A),
+                              fontSize: 18,
                             ),
-                            child: Stack(
-                              children: [
-                                Column(
-                                  children: [
-                                    Expanded(
-                                      flex: 8,
-                                      child: ClipRRect(
-                                        borderRadius:
-                                            const BorderRadius.vertical(
-                                              top: Radius.circular(8),
-                                            ),
-                                        child: CachedNetworkImage(
-                                          imageUrl: imageUrl!,
-                                          fit: BoxFit.cover,
-                                          width: double.infinity,
-                                          placeholder: (context, url) =>
-                                              const Center(
-                                                child:
-                                                    CircularProgressIndicator(),
+                          ),
+                        ),
+                      ],
+                    )
+                  : LayoutBuilder(
+                      builder: (context, constraints) {
+                        final width = constraints.maxWidth;
+                        final crossAxisCount = (width > 600) ? 5 : 3;
+                        return GridView.builder(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          padding: const EdgeInsets.all(10),
+                          gridDelegate:
+                              SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: crossAxisCount,
+                                crossAxisSpacing: 10,
+                                mainAxisSpacing: 10,
+                                childAspectRatio: 0.75,
+                              ),
+                          itemCount: _products.length,
+                          itemBuilder: (context, index) {
+                            final product = _products[index];
+                            final productMap = Map<String, dynamic>.from(
+                              product,
+                            );
+                            String? imageUrl = _resolveProductImage(productMap);
+                            imageUrl ??=
+                                'https://via.placeholder.com/150?text=No+Image';
+
+                            return GestureDetector(
+                              onTap: () => _toggleProductSelection(index),
+                              child: Consumer<CartProvider>(
+                                builder: (context, cartProvider, child) {
+                                  final resolvedPrice = _readProductPrice(
+                                    Map<String, dynamic>.from(product),
+                                    cartProvider: cartProvider,
+                                  );
+                                  final price = _formatCompactPrice(
+                                    resolvedPrice,
+                                  );
+                                  final isSelected = cartProvider.cartItems.any(
+                                    (i) => i.id == product['id'],
+                                  );
+                                  final qty = cartProvider.cartItems
+                                      .firstWhere(
+                                        (i) => i.id == product['id'],
+                                        orElse: () => CartItem(
+                                          id: '',
+                                          name: '',
+                                          price: 0,
+                                          quantity: 0,
+                                        ),
+                                      )
+                                      .quantity;
+                                  String qtyText;
+                                  if (qty == qty.floorToDouble()) {
+                                    qtyText = qty.toInt().toString();
+                                  } else {
+                                    qtyText = qty.toStringAsFixed(2);
+                                  }
+
+                                  return Container(
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: isSelected
+                                          ? Border.all(
+                                              color: Colors.green,
+                                              width: 4,
+                                            )
+                                          : null,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withValues(
+                                            alpha: 0.1,
+                                          ),
+                                          spreadRadius: 1,
+                                          blurRadius: 5,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Stack(
+                                      children: [
+                                        Column(
+                                          children: [
+                                            Expanded(
+                                              flex: 8,
+                                              child: ClipRRect(
+                                                borderRadius:
+                                                    const BorderRadius.vertical(
+                                                      top: Radius.circular(8),
+                                                    ),
+                                                child: CachedNetworkImage(
+                                                  imageUrl: imageUrl!,
+                                                  fit: BoxFit.cover,
+                                                  width: double.infinity,
+                                                  placeholder: (context, url) =>
+                                                      const Center(
+                                                        child:
+                                                            CircularProgressIndicator(),
+                                                      ),
+                                                  errorWidget:
+                                                      (context, url, error) =>
+                                                          const Center(
+                                                            child: Text(
+                                                              'No Image',
+                                                              style: TextStyle(
+                                                                color:
+                                                                    Colors.grey,
+                                                              ),
+                                                            ),
+                                                          ),
+                                                ),
                                               ),
-                                          errorWidget: (context, url, error) =>
-                                              const Center(
+                                            ),
+                                            Expanded(
+                                              flex: 2,
+                                              child: Container(
+                                                width: double.infinity,
+                                                decoration: const BoxDecoration(
+                                                  color: Colors.black,
+                                                  borderRadius:
+                                                      BorderRadius.vertical(
+                                                        bottom: Radius.circular(
+                                                          8,
+                                                        ),
+                                                      ),
+                                                ),
+                                                alignment: Alignment.center,
                                                 child: Text(
-                                                  'No Image',
-                                                  style: TextStyle(
+                                                  product['name'] ?? 'Unknown',
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                  textAlign: TextAlign.center,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        Positioned(
+                                          top: 2,
+                                          left: 2,
+                                          child: Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 4,
+                                              vertical: 2,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: Colors.black,
+                                              borderRadius:
+                                                  BorderRadius.circular(4),
+                                            ),
+                                            child: Text(
+                                              price,
+                                              style: const TextStyle(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 10,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                        if (isSelected)
+                                          Positioned.fill(
+                                            child: Align(
+                                              alignment: Alignment.center,
+                                              child: Container(
+                                                decoration: BoxDecoration(
+                                                  color: Colors.black
+                                                      .withValues(alpha: 0.7),
+                                                  border: Border.all(
                                                     color: Colors.grey,
+                                                    width: 1,
+                                                  ),
+                                                  borderRadius:
+                                                      BorderRadius.circular(4),
+                                                ),
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 8,
+                                                      vertical: 4,
+                                                    ),
+                                                child: Text(
+                                                  qtyText,
+                                                  style: const TextStyle(
+                                                    color: Colors.white,
+                                                    fontSize: 16,
+                                                    fontWeight: FontWeight.bold,
                                                   ),
                                                 ),
                                               ),
-                                        ),
-                                      ),
-                                    ),
-                                    Expanded(
-                                      flex: 2,
-                                      child: Container(
-                                        width: double.infinity,
-                                        decoration: const BoxDecoration(
-                                          color: Colors.black,
-                                          borderRadius: BorderRadius.vertical(
-                                            bottom: Radius.circular(8),
+                                            ),
                                           ),
-                                        ),
-                                        alignment: Alignment.center,
-                                        child: Text(
-                                          product['name'] ?? 'Unknown',
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                          textAlign: TextAlign.center,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
+                                      ],
                                     ),
-                                  ],
-                                ),
-                                Positioned(
-                                  top: 2,
-                                  left: 2,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 4,
-                                      vertical: 2,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.black,
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      price,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 10,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                if (isSelected)
-                                  Positioned.fill(
-                                    child: Align(
-                                      alignment: Alignment.center,
-                                      child: Container(
-                                        decoration: BoxDecoration(
-                                          color: Colors.black.withValues(
-                                            alpha: 0.7,
-                                          ),
-                                          border: Border.all(
-                                            color: Colors.grey,
-                                            width: 1,
-                                          ),
-                                          borderRadius: BorderRadius.circular(
-                                            4,
-                                          ),
-                                        ),
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 4,
-                                        ),
-                                        child: Text(
-                                          qtyText,
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-                    );
-                  },
-                );
-              },
+                                  );
+                                },
+                              ),
+                            );
+                          },
+                        );
+                      },
+                    ),
             ),
     );
+  }
+}
+
+class SpokeLoader extends StatefulWidget {
+  final double size;
+
+  const SpokeLoader({
+    super.key,
+    this.size = 120.0,
+  });
+
+  @override
+  State<SpokeLoader> createState() => _SpokeLoaderState();
+}
+
+class _SpokeLoaderState extends State<SpokeLoader>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  int _rotationOffset = 0;
+
+  final List<Color> _spokeColors = [
+    const Color(0xFF5D2D0C), // Top
+    const Color(0xFFFFF9E6), // Top-Right
+    const Color(0xFFFFF1BD), // Right
+    const Color(0xFFFFDF7D), // Bottom-Right
+    const Color(0xFFFFC02E), // Bottom
+    const Color(0xFFF99D1C), // Bottom-Left
+    const Color(0xFFE56C0E), // Left
+    const Color(0xFFB94A0E), // Top-Left
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..addListener(() {
+        final newOffset = (_controller.value * 8).floor() % 8;
+        if (newOffset != _rotationOffset) {
+          setState(() {
+            _rotationOffset = newOffset;
+          });
+        }
+      });
+    _controller.repeat();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return CustomPaint(
+      size: Size(widget.size, widget.size),
+      painter: SpokeLoaderPainter(
+        rotationOffset: _rotationOffset,
+        colors: _spokeColors,
+      ),
+    );
+  }
+}
+
+class SpokeLoaderPainter extends CustomPainter {
+  final int rotationOffset;
+  final List<Color> colors;
+
+  SpokeLoaderPainter({
+    required this.rotationOffset,
+    required this.colors,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double radius = size.width / 2;
+    final Paint paint = Paint()..style = PaintingStyle.fill;
+
+    canvas.save();
+    canvas.translate(radius, radius);
+
+    for (int i = 0; i < 8; i++) {
+      final colorIndex = (i - rotationOffset) % 8;
+      paint.color = colors[colorIndex < 0 ? colorIndex + 8 : colorIndex];
+
+      final double spokeWidth = size.width * 0.12;
+      final double spokeHeight = size.width * 0.32;
+
+      final RRect rect = RRect.fromRectAndRadius(
+        Rect.fromLTWH(-spokeWidth / 2, -radius, spokeWidth, spokeHeight),
+        Radius.circular(spokeWidth / 2),
+      );
+      canvas.drawRRect(rect, paint);
+
+      canvas.rotate(3.141592653589793 / 4);
+    }
+
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant SpokeLoaderPainter oldDelegate) {
+    return oldDelegate.rotationOffset != rotationOffset;
   }
 }
