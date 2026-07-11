@@ -54,5 +54,15 @@
 		<!-- Custom message for your app's purpose -->
 		<key>UIStatusBarHidden</key>
 		<false/>
+		<key>LSApplicationQueriesSchemes</key>
+		<array>
+			<string>phonepe</string>
+			<string>tez</string>
+			<string>paytmmp</string>
+			<string>bhim</string>
+			<string>amazonpay</string>
+			<string>credpay</string>
+		</array>
 	</dict>
 </plist>
+

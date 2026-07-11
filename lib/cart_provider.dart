@@ -154,7 +154,7 @@ class CartItem {
     if (value.startsWith('//')) {
       return resolveApiAssetUrl('https:$value');
     }
-    if (value.startsWith('blackforest3.vseyal.com')) {
+    if (value.startsWith('blackforest4.vseyal.com')) {
       return resolveApiAssetUrl('https://$value');
     }
     if (value.startsWith('/')) {
@@ -1382,7 +1382,7 @@ class CartProvider extends ChangeNotifier {
       final body = jsonEncode(payload);
 
       final response = await http.post(
-        Uri.parse('https://blackforest3.vseyal.com/api/billings'),
+        Uri.parse('https://blackforest4.vseyal.com/api/billings'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
@@ -1477,7 +1477,7 @@ class CartProvider extends ChangeNotifier {
       final itemsPayload = list.map((i) => i.toBillingPayload()).toList();
 
       final response = await http.patch(
-        Uri.parse('https://blackforest3.vseyal.com/api/billings/$billId'),
+        Uri.parse('https://blackforest4.vseyal.com/api/billings/$billId'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
@@ -1575,7 +1575,7 @@ class CartProvider extends ChangeNotifier {
       if (token == null) return;
 
       final response = await http.get(
-        Uri.parse('https://blackforest3.vseyal.com/api/billings/$billId'),
+        Uri.parse('https://blackforest4.vseyal.com/api/billings/$billId'),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
@@ -1836,7 +1836,7 @@ class CartProvider extends ChangeNotifier {
         try {
           final tablesResponse = await http.get(
             Uri.parse(
-              'https://blackforest3.vseyal.com/api/tables?where[branch][equals]=$normalizedBranchId&limit=1&depth=1',
+              'https://blackforest4.vseyal.com/api/tables?where[branch][equals]=$normalizedBranchId&limit=1&depth=1',
             ),
             headers: {'Authorization': 'Bearer $token'},
           ).timeout(const Duration(seconds: 5));
@@ -1943,7 +1943,7 @@ class CartProvider extends ChangeNotifier {
       // Fetch today's active table bills in the branch. Waiter-specific filtering
       // is applied in-app so QR-origin bills can also be matched by table rows.
       String urlString =
-          'https://blackforest3.vseyal.com/api/billings?where[status][in]=pending,ordered,confirmed,prepared&where[createdAt][greater_than_equal]=$todayStart&limit=150&sort=-createdAt&depth=2';
+          'https://blackforest4.vseyal.com/api/billings?where[status][in]=pending,ordered,confirmed,prepared&where[createdAt][greater_than_equal]=$todayStart&limit=150&sort=-createdAt&depth=2';
 
       if (normalizedBranchId.isNotEmpty) {
         urlString += '&where[branch][equals]=$normalizedBranchId';
@@ -2158,7 +2158,7 @@ class CartProvider extends ChangeNotifier {
     if (token == null) throw Exception("No token");
 
     final response = await http.get(
-      Uri.parse('https://blackforest3.vseyal.com/api/billings/$billId?depth=3'),
+      Uri.parse('https://blackforest4.vseyal.com/api/billings/$billId?depth=3'),
       headers: {'Authorization': 'Bearer $token'},
     );
 
@@ -2400,7 +2400,7 @@ class CartProvider extends ChangeNotifier {
         lookupQuery['branchId'] = activeBranchId;
       }
       final lookupUri = Uri.parse(
-        'https://blackforest3.vseyal.com/api/billing/customer-lookup',
+        'https://blackforest4.vseyal.com/api/billing/customer-lookup',
       ).replace(queryParameters: lookupQuery);
       final lookupResponse = await http.get(lookupUri, headers: headers);
       if (lookupResponse.statusCode != 200) {
@@ -4336,7 +4336,7 @@ class CartProvider extends ChangeNotifier {
         }
 
         final lookupUri = Uri.parse(
-          'https://blackforest3.vseyal.com/api/billing/customer-lookup',
+          'https://blackforest4.vseyal.com/api/billing/customer-lookup',
         ).replace(queryParameters: lookupQuery);
         final lookupResponse = await http.get(lookupUri, headers: headers);
         if (lookupResponse.statusCode != 200) return null;
@@ -4612,7 +4612,7 @@ class CartProvider extends ChangeNotifier {
           final query = Map<String, String>.from(baseQuery);
           query['where[$phoneField][equals]'] = normalizedPhone;
           final firstPageUri = Uri.parse(
-            'https://blackforest3.vseyal.com/api/billings',
+            'https://blackforest4.vseyal.com/api/billings',
           ).replace(queryParameters: query);
           final firstPageResponse = await http.get(
             firstPageUri,
@@ -4700,7 +4700,7 @@ class CartProvider extends ChangeNotifier {
             final pagedQuery = Map<String, String>.from(query);
             pagedQuery['page'] = page.toString();
             final pageUri = Uri.parse(
-              'https://blackforest3.vseyal.com/api/billings',
+              'https://blackforest4.vseyal.com/api/billings',
             ).replace(queryParameters: pagedQuery);
             final pageResponse = await http.get(pageUri, headers: headers);
             if (pageResponse.statusCode != 200) break;
@@ -4835,7 +4835,7 @@ class CartProvider extends ChangeNotifier {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest3.vseyal.com/api/globals/customer-offer-settings?depth=0',
+          'https://blackforest4.vseyal.com/api/globals/customer-offer-settings?depth=0',
         ),
         headers: headers,
       );

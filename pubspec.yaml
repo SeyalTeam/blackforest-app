@@ -33,6 +33,8 @@ dependencies:
   print_bluetooth_thermal: ^1.1.7
   flutter_foreground_task: ^9.2.1
   screen_protector: ^1.5.2
+  flutter_cashfree_pg_sdk: ^2.4.0+52
+
 
 
 dev_dependencies:

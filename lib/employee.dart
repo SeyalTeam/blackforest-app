@@ -92,7 +92,7 @@ class _EmployeePageState extends State<EmployeePage> {
   Future<String?> _fetchBranchName(String token, String branchId) async {
     try {
       final response = await http.get(
-        Uri.parse('https://blackforest3.vseyal.com/api/branches/$branchId'),
+        Uri.parse('https://blackforest4.vseyal.com/api/branches/$branchId'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
@@ -135,7 +135,7 @@ class _EmployeePageState extends State<EmployeePage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest3.vseyal.com/api/attendance?where[user][equals]=$userId&where[date][greater_than_equal]=$queryDate&sort=-date&limit=10',
+          'https://blackforest4.vseyal.com/api/attendance?where[user][equals]=$userId&where[date][greater_than_equal]=$queryDate&sort=-date&limit=10',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -306,7 +306,7 @@ class _EmployeePageState extends State<EmployeePage> {
         try {
           final now = DateTime.now();
           final searchUrl =
-              'https://blackforest3.vseyal.com/api/attendance?where[user][equals]=$userId&where[activities.status][equals]=active&limit=1';
+              'https://blackforest4.vseyal.com/api/attendance?where[user][equals]=$userId&where[activities.status][equals]=active&limit=1';
           final searchResp = await http
               .get(
                 Uri.parse(searchUrl),
@@ -341,7 +341,7 @@ class _EmployeePageState extends State<EmployeePage> {
                 final updateResp = await http
                     .patch(
                       Uri.parse(
-                        'https://blackforest3.vseyal.com/api/attendance/$sessionId',
+                        'https://blackforest4.vseyal.com/api/attendance/$sessionId',
                       ),
                       headers: {
                         'Authorization': 'Bearer $token',

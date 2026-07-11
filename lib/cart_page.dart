@@ -24,6 +24,12 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
 import 'package:blackforest_app/printer/unified_printer.dart';
+import 'package:flutter_cashfree_pg_sdk/api/cfsession/cfsession.dart';
+import 'package:flutter_cashfree_pg_sdk/api/cfpayment/cfwebcheckoutpayment.dart';
+import 'package:flutter_cashfree_pg_sdk/api/cfpaymentgateway/cfpaymentgatewayservice.dart';
+import 'package:flutter_cashfree_pg_sdk/api/cferrorresponse/cferrorresponse.dart';
+import 'package:flutter_cashfree_pg_sdk/utils/cfenums.dart';
+
 
 class CartPage extends StatefulWidget {
   const CartPage({super.key});
@@ -200,7 +206,7 @@ class _CartPageState extends State<CartPage> {
       if (token == null) return;
 
       final response = await http.get(
-        Uri.parse('https://blackforest3.vseyal.com/api/users/me?depth=2'),
+        Uri.parse('https://blackforest4.vseyal.com/api/users/me?depth=2'),
         headers: {'Authorization': 'Bearer $token'},
       );
 
@@ -237,7 +243,7 @@ class _CartPageState extends State<CartPage> {
       try {
         final gRes = await http.get(
           Uri.parse(
-            'https://blackforest3.vseyal.com/api/globals/branch-geo-settings',
+            'https://blackforest4.vseyal.com/api/globals/branch-geo-settings',
           ),
           headers: {
             'Authorization': 'Bearer $token',
@@ -306,7 +312,7 @@ class _CartPageState extends State<CartPage> {
       // 2. Fetch from Branches Collection
       final response = await http.get(
         Uri.parse(
-          'https://blackforest3.vseyal.com/api/branches/$branchId?depth=1',
+          'https://blackforest4.vseyal.com/api/branches/$branchId?depth=1',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -649,7 +655,7 @@ class _CartPageState extends State<CartPage> {
       final token = prefs.getString('token');
       final response = await http.get(
         Uri.parse(
-          'https://blackforest3.vseyal.com/api/kitchens?where[branches][contains]=$_branchId&limit=100',
+          'https://blackforest4.vseyal.com/api/kitchens?where[branches][contains]=$_branchId&limit=100',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -682,7 +688,7 @@ class _CartPageState extends State<CartPage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest3.vseyal.com/api/companies/$companyId?depth=1',
+          'https://blackforest4.vseyal.com/api/companies/$companyId?depth=1',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -715,7 +721,7 @@ class _CartPageState extends State<CartPage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest3.vseyal.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
+          'https://blackforest4.vseyal.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -793,7 +799,7 @@ class _CartPageState extends State<CartPage> {
       };
 
       final response = await http.get(
-        Uri.https('blackforest3.vseyal.com', '/api/billings', lookupParams),
+        Uri.https('blackforest4.vseyal.com', '/api/billings', lookupParams),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode != 200) return false;
@@ -885,7 +891,7 @@ class _CartPageState extends State<CartPage> {
     if (trimmedName.isEmpty && trimmedPhone.isEmpty) return;
 
     final url = Uri.parse(
-      'https://blackforest3.vseyal.com/api/billings/$trimmedBillId?depth=0',
+      'https://blackforest4.vseyal.com/api/billings/$trimmedBillId?depth=0',
     );
     final payload = <String, dynamic>{
       'customerDetails': {
@@ -1017,7 +1023,7 @@ class _CartPageState extends State<CartPage> {
     }
 
     final patchUrl = Uri.parse(
-      'https://blackforest3.vseyal.com/api/billings/$trimmedBillId?depth=0',
+      'https://blackforest4.vseyal.com/api/billings/$trimmedBillId?depth=0',
     );
     final patchPayload = <String, dynamic>{
       'customerDetails': {
@@ -1042,7 +1048,7 @@ class _CartPageState extends State<CartPage> {
         final response = await http
             .get(
               Uri.parse(
-                'https://blackforest3.vseyal.com/api/billings/$trimmedBillId?depth=0',
+                'https://blackforest4.vseyal.com/api/billings/$trimmedBillId?depth=0',
               ),
               headers: {
                 'Content-Type': 'application/json',
@@ -1281,7 +1287,7 @@ class _CartPageState extends State<CartPage> {
       // 1. Try Global Settings first
       final gRes = await http.get(
         Uri.parse(
-          'https://blackforest3.vseyal.com/api/globals/branch-geo-settings',
+          'https://blackforest4.vseyal.com/api/globals/branch-geo-settings',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -1313,7 +1319,7 @@ class _CartPageState extends State<CartPage> {
 
       // 2. Fallback to Branches Collection
       final allBranchesResponse = await http.get(
-        Uri.parse('https://blackforest3.vseyal.com/api/branches?depth=1'),
+        Uri.parse('https://blackforest4.vseyal.com/api/branches?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
 
@@ -1377,7 +1383,7 @@ class _CartPageState extends State<CartPage> {
 
       final response = await http.get(
         Uri.parse(
-          'https://blackforest3.vseyal.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=2',
+          'https://blackforest4.vseyal.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=2',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -1561,9 +1567,9 @@ class _CartPageState extends State<CartPage> {
                     .toUtc()
                     .toIso8601String();
             final urlString =
-                'https://blackforest3.vseyal.com/api/billings?where[branch][equals]=$resolvedBranchId&where[status][in]=pending,ordered,confirmed,prepared&where[createdAt][greater_than_equal]=$todayStart&limit=150&depth=2';
+                'https://blackforest4.vseyal.com/api/billings?where[branch][equals]=$resolvedBranchId&where[status][in]=pending,ordered,confirmed,prepared&where[createdAt][greater_than_equal]=$todayStart&limit=150&depth=2';
             final tablesUrlString =
-                'https://blackforest3.vseyal.com/api/tables?where[branch][equals]=$resolvedBranchId&limit=1&depth=1';
+                'https://blackforest4.vseyal.com/api/tables?where[branch][equals]=$resolvedBranchId&limit=1&depth=1';
 
             final results = await Future.wait([
               http.get(
@@ -4396,7 +4402,7 @@ class _CartPageState extends State<CartPage> {
           try {
             final lookupResponse = await http.get(
               Uri.https(
-                'blackforest3.vseyal.com',
+                'blackforest4.vseyal.com',
                 '/api/billings',
                 lookupParams,
               ),
@@ -4550,9 +4556,9 @@ class _CartPageState extends State<CartPage> {
 
       final url = billId != null
           ? Uri.parse(
-              'https://blackforest3.vseyal.com/api/billings/$billId?depth=0',
+              'https://blackforest4.vseyal.com/api/billings/$billId?depth=0',
             )
-          : Uri.parse('https://blackforest3.vseyal.com/api/billings?depth=0');
+          : Uri.parse('https://blackforest4.vseyal.com/api/billings?depth=0');
       final billingWriteHeaders = {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
@@ -4602,32 +4608,128 @@ class _CartPageState extends State<CartPage> {
       }
 
       http.Response response;
-      var lockRetryCount = 0;
-      while (true) {
+      if (_selectedPaymentMethod == 'cashfree') {
+        final completer = Completer<http.Response>();
         try {
-          response = await sendBillingRequestWithTimeout(billingWriteTimeout);
-        } on TimeoutException catch (error) {
-          if (billId == null) rethrow;
-          debugPrint(
-            '📦 BILL API TIMEOUT on PATCH after ${billingWriteTimeout.inSeconds}s. Retrying once with 60s timeout. Error: $error',
+          // 1. Create Cashfree order on backend
+          final createUrl = Uri.parse('https://blackforest4.vseyal.com/api/cashfree/create-order');
+          final createResponse = await http.post(
+            createUrl,
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $token',
+            },
+            body: jsonEncode({
+              'totalAmount': cartProvider.total,
+              'customerName': billingCustomerName,
+              'customerPhone': billingCustomerPhone,
+              'billId': billId,
+            }),
           );
-          response = await sendBillingRequestWithTimeout(
-            const Duration(seconds: 60),
+
+          if (createResponse.statusCode != 200) {
+            String errorMsg = 'Failed to create online payment order';
+            try {
+              final decoded = jsonDecode(createResponse.body);
+              if (decoded is Map && decoded['message'] != null) {
+                errorMsg = decoded['message'];
+              }
+            } catch (_) {}
+            throw Exception(errorMsg);
+          }
+
+          final createData = jsonDecode(createResponse.body);
+          final String paymentSessionId = createData['paymentSessionId'];
+          final String cfOrderId = createData['orderId'];
+          final String environmentStr = createData['environment'];
+
+          final CFEnvironment environment = environmentStr == 'production'
+              ? CFEnvironment.PRODUCTION
+              : CFEnvironment.SANDBOX;
+
+          final session = CFSessionBuilder()
+              .setEnvironment(environment)
+              .setOrderId(cfOrderId)
+              .setPaymentSessionId(paymentSessionId)
+              .build();
+
+          final cfPaymentGatewayService = CFPaymentGatewayService();
+
+          cfPaymentGatewayService.setCallback(
+            (String orderId) async {
+              // SDK callback indicates success: Verify payment status on backend & save/complete bill
+              try {
+                final verifyUrl = Uri.parse('https://blackforest4.vseyal.com/api/cashfree/verify-order');
+                final verifyResponse = await http.post(
+                  verifyUrl,
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer $token',
+                  },
+                  body: jsonEncode({
+                    'cfOrderId': orderId,
+                    'recalledBillId': billId,
+                    'billingData': billingData,
+                  }),
+                );
+
+                completer.complete(verifyResponse);
+              } catch (e) {
+                completer.complete(http.Response(
+                  jsonEncode({'message': 'Online payment verified, but backend bill update failed: $e'}),
+                  500,
+                ));
+              }
+            },
+            (CFErrorResponse errorResponse, String orderId) {
+              completer.complete(http.Response(
+                jsonEncode({'message': errorResponse.getMessage() ?? 'Payment failed or cancelled.'}),
+                400,
+              ));
+            },
           );
+
+          final paymentParams = CFWebCheckoutPaymentBuilder()
+              .setSession(session)
+              .build();
+
+          cfPaymentGatewayService.doPayment(paymentParams);
+        } catch (e) {
+          completer.complete(http.Response(
+            jsonEncode({'message': 'Online payment initiation failed: $e'}),
+            500,
+          ));
         }
 
-        if (billId != null &&
-            isDocumentLockResponse(response) &&
-            lockRetryCount < 3) {
-          lockRetryCount += 1;
-          final delayMs = 500 * lockRetryCount;
-          debugPrint(
-            '📦 BILL API temporary lock (${response.statusCode}). Retrying in ${delayMs}ms (attempt $lockRetryCount/3).',
-          );
-          await Future.delayed(Duration(milliseconds: delayMs));
-          continue;
+        response = await completer.future;
+      } else {
+        var lockRetryCount = 0;
+        while (true) {
+          try {
+            response = await sendBillingRequestWithTimeout(billingWriteTimeout);
+          } on TimeoutException catch (error) {
+            if (billId == null) rethrow;
+            debugPrint(
+              '📦 BILL API TIMEOUT on PATCH after ${billingWriteTimeout.inSeconds}s. Retrying once with 60s timeout. Error: $error',
+            );
+            response = await sendBillingRequestWithTimeout(
+              const Duration(seconds: 60),
+            );
+          }
+
+          if (billId != null &&
+              isDocumentLockResponse(response) &&
+              lockRetryCount < 3) {
+            lockRetryCount += 1;
+            final delayMs = 500 * lockRetryCount;
+            debugPrint(
+              '📦 BILL API temporary lock (${response.statusCode}). Retrying in ${delayMs}ms (attempt $lockRetryCount/3).',
+            );
+            await Future.delayed(Duration(milliseconds: delayMs));
+            continue;
+          }
+          break;
         }
-        break;
       }
       billApiDurationMs = stopwatch.elapsedMilliseconds - billApiStartMs;
 
@@ -5472,7 +5574,7 @@ class _CartPageState extends State<CartPage> {
               if (token != null) {
                 final userResponse = await http.get(
                   Uri.parse(
-                    'https://blackforest3.vseyal.com/api/users/$userId?depth=1',
+                    'https://blackforest4.vseyal.com/api/users/$userId?depth=1',
                   ),
                   headers: {'Authorization': 'Bearer $token'},
                 );
@@ -5495,7 +5597,7 @@ class _CartPageState extends State<CartPage> {
         final token = prefs.getString('token');
         if (token != null) {
           final meResponse = await http.get(
-            Uri.parse('https://blackforest3.vseyal.com/api/users/me'),
+            Uri.parse('https://blackforest4.vseyal.com/api/users/me'),
             headers: {'Authorization': 'Bearer $token'},
           );
           if (meResponse.statusCode == 200) {
@@ -6088,7 +6190,7 @@ class _CartPageState extends State<CartPage> {
 
           printer.feed(1); // Added space after feedback image as requested
         }
-        String billingUrl = 'http://blackforest3.vseyal.com/billings';
+        String billingUrl = 'http://blackforest4.vseyal.com/billings';
         String? billingId =
             billingResponse['id'] ??
             billingResponse['doc']?['id'] ??
@@ -6427,7 +6529,7 @@ class _CartPageState extends State<CartPage> {
         final token = prefs.getString('token');
         if (token != null) {
           final meResponse = await http.get(
-            Uri.parse('https://blackforest3.vseyal.com/api/users/me'),
+            Uri.parse('https://blackforest4.vseyal.com/api/users/me'),
             headers: {'Authorization': 'Bearer $token'},
           );
           if (meResponse.statusCode == 200) {
@@ -6663,8 +6765,10 @@ class _CartPageState extends State<CartPage> {
   }
 
   Widget _buildPaymentChips({bool lightMode = false}) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return Wrap(
+      spacing: 6.0,
+      runSpacing: 6.0,
+      alignment: WrapAlignment.start,
       children: [
         _PaymentChip(
           label: 'Cash',
@@ -6686,7 +6790,7 @@ class _CartPageState extends State<CartPage> {
           inactiveForegroundColor: lightMode
               ? const Color(0xFF5F6775)
               : Colors.white70,
-          width: 95, // increase width
+          width: 80,
         ),
         _PaymentChip(
           label: 'UPI',
@@ -6708,7 +6812,7 @@ class _CartPageState extends State<CartPage> {
           inactiveForegroundColor: lightMode
               ? const Color(0xFF5F6775)
               : Colors.white70,
-          width: 95,
+          width: 80,
         ),
         _PaymentChip(
           label: 'Card',
@@ -6730,7 +6834,29 @@ class _CartPageState extends State<CartPage> {
           inactiveForegroundColor: lightMode
               ? const Color(0xFF5F6775)
               : Colors.white70,
-          width: 95,
+          width: 80,
+        ),
+        _PaymentChip(
+          label: 'Online',
+          icon: Icons.payment,
+          selected: _selectedPaymentMethod == 'cashfree',
+          onTap: () => setState(
+            () => _selectedPaymentMethod = _selectedPaymentMethod == 'cashfree'
+                ? null
+                : 'cashfree',
+          ),
+          activeColor: const Color(0xFF8A2BE2),
+          chipBg: lightMode ? Colors.white : _chipBg,
+          activeBackgroundColor: lightMode
+              ? const Color(0xFFF5EEFF)
+              : const Color(0xFF8A2BE2).withValues(alpha: 0.18),
+          inactiveBorderColor: lightMode
+              ? const Color(0xFFDADDE5)
+              : Colors.transparent,
+          inactiveForegroundColor: lightMode
+              ? const Color(0xFF5F6775)
+              : Colors.white70,
+          width: 85,
         ),
       ],
     );

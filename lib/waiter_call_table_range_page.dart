@@ -14,7 +14,7 @@ class WaiterCallTableRangePage extends StatefulWidget {
 }
 
 class _WaiterCallTableRangePageState extends State<WaiterCallTableRangePage> {
-  static const String _apiBase = 'https://blackforest3.vseyal.com/api';
+  static const String _apiBase = 'https://blackforest4.vseyal.com/api';
   static const Color _selectedTileColor = Color(0xFFFFE082);
   static const String _tablePageCachedTablesPrefix = 'cached_tables_';
 

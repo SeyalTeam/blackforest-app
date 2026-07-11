@@ -241,7 +241,7 @@ class _OfferBannerState extends State<OfferBanner> {
     try {
       final metadataResponse = await http.get(
         Uri.parse(
-          'https://blackforest3.vseyal.com/api/globals/customer-offer-settings?depth=0',
+          'https://blackforest4.vseyal.com/api/globals/customer-offer-settings?depth=0',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -299,7 +299,7 @@ class _OfferBannerState extends State<OfferBanner> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest3.vseyal.com/api/globals/customer-offer-settings?depth=1',
+          'https://blackforest4.vseyal.com/api/globals/customer-offer-settings?depth=1',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -410,7 +410,7 @@ class _OfferBannerState extends State<OfferBanner> {
     final url = rawUrl.trim();
     if (url.isEmpty) return null;
     if (url.startsWith('/')) {
-      return 'https://blackforest3.vseyal.com$url';
+      return 'https://blackforest4.vseyal.com$url';
     }
     if (url.startsWith('http://') || url.startsWith('https://')) {
       return url;
@@ -481,7 +481,7 @@ class _OfferBannerState extends State<OfferBanner> {
 
     try {
       final response = await http.get(
-        Uri.parse('https://blackforest3.vseyal.com/api/media').replace(
+        Uri.parse('https://blackforest4.vseyal.com/api/media').replace(
           queryParameters: <String, String>{
             'where[id][in]': missingMediaIds.join(','),
             'limit': missingMediaIds.length.toString(),
