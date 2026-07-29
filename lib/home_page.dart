@@ -1,6 +1,8 @@
+// ignore_for_file: unused_element
 import 'dart:async';
 import 'dart:convert';
 import 'package:blackforest_app/app_http.dart' as http;
+import 'package:blackforest_app/raw_material_dealer_list_page.dart';
 import 'package:blackforest_app/category_popularity_service.dart';
 import 'package:blackforest_app/categories_page.dart';
 import 'package:blackforest_app/cart_page.dart';
@@ -269,7 +271,7 @@ class _HomeSearchOverlayState extends State<_HomeSearchOverlay> {
     }
 
     final response = await http.get(
-      Uri.parse('https://blackforest4.vseyal.com/api/categories?$filterQuery'),
+      Uri.parse('https://dev-blacforest.vseyal.com/api/categories?$filterQuery'),
       headers: {
         'Authorization': 'Bearer $token',
         'Content-Type': 'application/json',
@@ -317,7 +319,7 @@ class _HomeSearchOverlayState extends State<_HomeSearchOverlay> {
   }) async {
     final response = await http.get(
       Uri.parse(
-        'https://blackforest4.vseyal.com/api/products?where[name][like]=$query&limit=12&depth=2&sort=name',
+        'https://dev-blacforest.vseyal.com/api/products?where[name][like]=$query&limit=12&depth=2&sort=name',
       ),
       headers: {
         'Authorization': 'Bearer $token',
@@ -507,7 +509,7 @@ class _HomeSearchOverlayState extends State<_HomeSearchOverlay> {
       return resolveApiAssetUrl(value);
     }
     if (value.startsWith('//')) return resolveApiAssetUrl('https:$value');
-    if (value.startsWith('blackforest4.vseyal.com')) {
+    if (value.startsWith('dev-blacforest.vseyal.com')) {
       return resolveApiAssetUrl('https://$value');
     }
     if (value.startsWith('/')) return resolveApiAssetUrl(value);
@@ -1111,7 +1113,7 @@ class _HomePageState extends State<HomePage> {
   }) async {
     try {
       final response = await http.get(
-        Uri.parse('https://blackforest4.vseyal.com/api/branches/$branchId'),
+        Uri.parse('https://dev-blacforest.vseyal.com/api/branches/$branchId'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode != 200) return null;
@@ -1792,7 +1794,7 @@ class _HomePageState extends State<HomePage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest4.vseyal.com/api/globals/widget-settings?depth=1',
+          'https://dev-blacforest.vseyal.com/api/globals/widget-settings?depth=1',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -1913,7 +1915,7 @@ class _HomePageState extends State<HomePage> {
   }) async {
     final rulesResponse = await http.get(
       Uri.parse(
-        'https://blackforest4.vseyal.com/api/globals/widget-settings?depth=1',
+        'https://dev-blacforest.vseyal.com/api/globals/widget-settings?depth=1',
       ),
       headers: {
         'Authorization': 'Bearer $token',
@@ -1962,7 +1964,7 @@ class _HomePageState extends State<HomePage> {
     final idsParam = favoriteProductIds.join(',');
     final optionsResponse = await http.get(
       Uri.parse(
-        'https://blackforest4.vseyal.com/api/widgets/product-options?ids=$idsParam',
+        'https://dev-blacforest.vseyal.com/api/widgets/product-options?ids=$idsParam',
       ),
       headers: {
         'Authorization': 'Bearer $token',
@@ -2169,7 +2171,7 @@ class _HomePageState extends State<HomePage> {
       final idsParam = Uri.encodeQueryComponent(ids.join(','));
       final response = await http.get(
         Uri.parse(
-          'https://blackforest4.vseyal.com/api/categories?where[id][in]=$idsParam&depth=1&limit=${ids.length}',
+          'https://dev-blacforest.vseyal.com/api/categories?where[id][in]=$idsParam&depth=1&limit=${ids.length}',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -2288,7 +2290,7 @@ class _HomePageState extends State<HomePage> {
       final idsParam = Uri.encodeQueryComponent(productIds.join(','));
       final response = await http.get(
         Uri.parse(
-          'https://blackforest4.vseyal.com/api/products?where[id][in]=$idsParam&depth=2&limit=100',
+          'https://dev-blacforest.vseyal.com/api/products?where[id][in]=$idsParam&depth=2&limit=100',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -2616,11 +2618,11 @@ class _HomePageState extends State<HomePage> {
     if (value.startsWith('//')) {
       return 'https:$value';
     }
-    if (value.startsWith('blackforest4.vseyal.com')) {
+    if (value.startsWith('dev-blacforest.vseyal.com')) {
       return 'https://$value';
     }
     if (value.startsWith('/')) {
-      return 'https://blackforest4.vseyal.com$value';
+      return 'https://dev-blacforest.vseyal.com$value';
     }
     final lower = value.toLowerCase();
     final maybeFilePath =
@@ -2636,7 +2638,7 @@ class _HomePageState extends State<HomePage> {
         value.startsWith('files/') ||
         value.startsWith('api/') ||
         maybeFilePath) {
-      return 'https://blackforest4.vseyal.com/$value';
+      return 'https://dev-blacforest.vseyal.com/$value';
     }
     return null;
   }
@@ -3075,38 +3077,10 @@ class _HomePageState extends State<HomePage> {
                   child: Column(
                     children: [
                       _buildTopSection(context),
-                      const SizedBox(height: 14),
-                      _buildBillingCategoriesStrip(),
-                      if (_billingCategories.isNotEmpty)
-                        const SizedBox(height: 6),
-                      _buildFastMovementSection(),
-                      const SizedBox(height: 10),
-                      _buildRecommendedSection(),
-                      if (_favoriteCategories.isNotEmpty)
-                        const SizedBox(height: 8),
-                      _buildFavoriteCategoriesSection(),
+                      const SizedBox(height: 20),
+                      _buildRawMaterialBillingSection(),
                       const SizedBox(height: 30),
                     ],
-                  ),
-                ),
-              ),
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: IgnorePointer(
-                  ignoring: !_showStickyHomeHeader,
-                  child: AnimatedSlide(
-                    duration: const Duration(milliseconds: 220),
-                    curve: Curves.easeOutCubic,
-                    offset: _showStickyHomeHeader
-                        ? Offset.zero
-                        : const Offset(0, -1),
-                    child: AnimatedOpacity(
-                      duration: const Duration(milliseconds: 180),
-                      opacity: _showStickyHomeHeader ? 1 : 0,
-                      child: _buildStickyHomeHeader(),
-                    ),
                   ),
                 ),
               ),
@@ -3334,6 +3308,87 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 6),
         ],
+      ),
+    );
+  }
+
+  Widget _buildRawMaterialBillingSection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: GestureDetector(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const RawMaterialDealerListPage(),
+            ),
+          );
+        },
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF2E7D32), Color(0xFF43A047)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF2E7D32).withValues(alpha: 0.25),
+                blurRadius: 12,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.receipt_long,
+                  color: Colors.white,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 16),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Raw Material Billing',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Upload & manage dealer bills',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.white70,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.arrow_forward_ios,
+                color: Colors.white70,
+                size: 18,
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -4314,14 +4369,12 @@ class _HomePageState extends State<HomePage> {
           SafeArea(
             bottom: false,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 10, 20, 12),
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   _buildTopHeaderRow(context),
-                  const SizedBox(height: 12),
-                  _buildHomeSearchBar(),
                 ],
               ),
             ),
@@ -4401,8 +4454,6 @@ class _HomePageState extends State<HomePage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _buildTopHeaderRow(context),
-                    const SizedBox(height: 15),
-                    _buildHomeSearchBar(),
                   ],
                 ),
               ),

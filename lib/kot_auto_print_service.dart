@@ -33,6 +33,12 @@ class PrintTaskHandler extends TaskHandler {
 
   @override
   Future<void> onRepeatEvent(DateTime timestamp) async {
+    try {
+      await KotAutoPrintService.syncChatNotifications();
+    } catch (e) {
+      debugPrint('🛎️ Error syncing chat notifications in background: $e');
+    }
+
     final alerts = await KotAutoPrintService.syncPendingWebsiteKots(isBackground: true);
 
     try {
@@ -112,7 +118,7 @@ class PrintTaskHandler extends TaskHandler {
 }
 
 class KotAutoPrintService {
-  static const String _apiBase = 'https://blackforest4.vseyal.com/api';
+  static const String _apiBase = 'https://dev-blacforest.vseyal.com/api';
   static const Duration _configCacheTtl = Duration(minutes: 2);
   static const int _maxRememberedItems = 1200;
   static const String _autoCompletedReceiptPrefKey =
@@ -179,6 +185,156 @@ class KotAutoPrintService {
       return alerts;
     } finally {
       _isWaiterAlertSyncing = false;
+    }
+  }
+
+  static Future<void> syncChatNotifications() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token')?.trim() ?? '';
+      final userId = prefs.getString('user_id')?.trim() ?? '';
+
+      if (token.isEmpty || userId.isEmpty) {
+        return;
+      }
+
+      // If user is actively viewing chat screen, do not show notification
+      final isChatPageActive = prefs.getBool('is_chat_page_active') ?? false;
+      if (isChatPageActive) {
+        return;
+      }
+
+      // Fetch or use cached thread ID
+      var threadId = prefs.getString('cached_chat_thread_id')?.trim() ?? '';
+      var participantName = prefs.getString('cached_chat_participant_name')?.trim() ?? 'Admin';
+
+      final headers = {
+        'Authorization': 'Bearer $token',
+        'Content-Type': 'application/json',
+      };
+
+      if (threadId.isEmpty) {
+        final threadUrl = Uri.parse(
+          '$_apiBase/message-threads'
+          '?limit=1'
+          '&depth=0'
+          '&where[staffUser][equals]=$userId'
+        );
+        final response = await http.get(threadUrl, headers: headers);
+        if (response.statusCode == 200) {
+          final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+          final docs = decoded['docs'] as List?;
+          if (docs != null && docs.isNotEmpty) {
+            final threadDoc = docs.first;
+            threadId = (threadDoc['id'] ?? threadDoc['_id']) as String? ?? '';
+            participantName = threadDoc['participantName'] as String? ?? 'Admin';
+            if (threadId.isNotEmpty) {
+              await prefs.setString('cached_chat_thread_id', threadId);
+              await prefs.setString('cached_chat_participant_name', participantName);
+            }
+          }
+        }
+      }
+
+      if (threadId.isEmpty) {
+        return;
+      }
+
+      final messagesUrl = Uri.parse(
+        '$_apiBase/messages'
+        '?limit=10'
+        '&depth=1'
+        '&sort=-seq'
+        '&where[thread][equals]=$threadId'
+      );
+      final msgResponse = await http.get(messagesUrl, headers: headers);
+      if (msgResponse.statusCode == 200) {
+        final msgDecoded = jsonDecode(utf8.decode(msgResponse.bodyBytes));
+        final msgDocs = msgDecoded['docs'] as List?;
+        if (msgDocs != null && msgDocs.isNotEmpty) {
+          final notifiedKey = 'notified_chat_message_ids_$userId';
+          final seededKey = 'is_chat_notified_seeded_$userId';
+          final notifiedIds = prefs.getStringList(notifiedKey)?.toSet() ?? <String>{};
+          final isSeeded = prefs.getBool(seededKey) ?? false;
+          var didUpdate = false;
+
+          // Messages are sorted -seq (newest first). Process in chronological order
+          final reversedDocs = msgDocs.reversed.toList();
+
+          if (!isSeeded) {
+            // First run for this user: seed all existing messages as notified
+            for (final doc in reversedDocs) {
+              if (doc is! Map<String, dynamic>) continue;
+              final msgId = (doc['id'] ?? doc['_id']) as String? ?? '';
+              if (msgId.isNotEmpty) {
+                notifiedIds.add(msgId);
+              }
+            }
+            await prefs.setBool(seededKey, true);
+            await _persistRememberedIds(
+              prefs: prefs,
+              key: notifiedKey,
+              ids: notifiedIds,
+            );
+            return; // Exit early: do not trigger notifications for historical messages
+          }
+
+          final notificationService = NotificationService();
+          await notificationService.init().timeout(const Duration(seconds: 5)).catchError((_) {});
+
+          for (final doc in reversedDocs) {
+            if (doc is! Map<String, dynamic>) continue;
+            final msgId = (doc['id'] ?? doc['_id']) as String? ?? '';
+            if (msgId.isEmpty) continue;
+
+            final senderRole = doc['senderRole'] as String? ?? '';
+            final isFromAdmin = senderRole == 'admin' || senderRole == 'superadmin';
+            if (!isFromAdmin) {
+              continue;
+            }
+
+            if (notifiedIds.contains(msgId)) {
+              continue;
+            }
+
+            final text = doc['text'] as String? ?? 'New message';
+
+            // Resolve specific sender name if populated, otherwise fallback to thread participant name
+            final senderUser = doc['senderUser'];
+            String senderName = participantName;
+            if (senderUser is Map<String, dynamic>) {
+              final name = (senderUser['name'] as String? ??
+                            senderUser['username'] as String? ??
+                            senderUser['email'] as String? ??
+                            '').trim();
+              if (name.isNotEmpty) {
+                senderName = name;
+              }
+            }
+
+            // Trigger local notification
+            await notificationService.showChatNotification(
+              id: msgId.hashCode,
+              title: senderName,
+              body: text,
+              payload: 'chat:$threadId',
+            );
+
+            notifiedIds.add(msgId);
+            didUpdate = true;
+          }
+
+          if (didUpdate) {
+            await _persistRememberedIds(
+              prefs: prefs,
+              key: notifiedKey,
+              ids: notifiedIds,
+            );
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('🛎️ Error in syncChatNotifications: $e');
     }
   }
 
@@ -1442,7 +1598,10 @@ class KotAutoPrintService {
         }
 
         dept = dept.trim().toLowerCase();
-        return dept.isEmpty || dept != 'others';
+        if (dept.isEmpty) return true;
+        // If it's a 24-character hexadecimal ObjectId, we don't know the human-readable name, so allow it
+        if (RegExp(r'^[0-9a-fA-F]{24}$').hasMatch(dept)) return true;
+        return dept != 'others';
       });
       shouldShowFeedback =
           shouldShowFeedback && isThermalReviewPrintEnabled(prefs);
@@ -1478,7 +1637,7 @@ class KotAutoPrintService {
       }
 
       // QR Code Logic (Same as cart_page.dart)
-      String billingUrl = 'https://blackforest4.vseyal.com/billings';
+      String billingUrl = 'https://dev-blacforest.vseyal.com/billings';
       String? billingId = bill['id'] ?? bill['doc']?['id'] ?? bill['_id'];
       if (billingId != null) {
         billingUrl = '$billingUrl/$billingId';

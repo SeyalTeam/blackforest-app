@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:blackforest_app/app_http.dart' as http;
 import 'package:blackforest_app/category_popularity_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -90,6 +91,40 @@ class _CategoriesPageState extends State<CategoriesPage> {
   String _persistentCategoriesCacheKey(String branchId) =>
       '$_persistentCategoriesCachePrefix${_favoritesScope()}_$branchId';
 
+  Map<String, dynamic> _trimCategory(Map<dynamic, dynamic> cat) {
+    return {
+      'id': cat['id'],
+      'name': cat['name'],
+      'image': cat['image'] is Map 
+          ? {
+              'url': cat['image']['url'],
+              'id': cat['image']['id'],
+              'filename': cat['image']['filename'],
+            }
+          : cat['image'],
+      'imageUrl': cat['imageUrl'],
+      'thumbnail': cat['thumbnail'],
+      'company': cat['company'],
+      'department': cat['department'] is Map
+          ? {
+              'id': cat['department']['id'],
+              '_id': cat['department']['_id'],
+              'name': cat['department']['name'],
+              'company': cat['department']['company'],
+            }
+          : cat['department'],
+    };
+  }
+
+  List<dynamic> _trimCategories(List<dynamic> list) {
+    return list.map((item) {
+      if (item is Map) {
+        return _trimCategory(item);
+      }
+      return item;
+    }).toList();
+  }
+
   Future<void> _hydratePersistentCategoriesCache() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -102,8 +137,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
       final raw = prefs.getString(cacheKey);
       if (raw == null || raw.isEmpty) return;
 
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return;
+      final decoded = await compute(_parseJsonMap, raw);
       final payload = Map<String, dynamic>.from(decoded);
       final cachedAtIso = payload['cachedAt']?.toString();
       final categoriesRaw = payload['categories'];
@@ -150,11 +184,25 @@ class _CategoriesPageState extends State<CategoriesPage> {
       final cacheKey = _persistentCategoriesCacheKey(
         branchId.isEmpty ? 'global' : branchId,
       );
+      
+      final trimmed = _trimCategories(categories);
       final payload = <String, dynamic>{
         'cachedAt': DateTime.now().toIso8601String(),
-        'categories': categories,
+        'categories': trimmed,
       };
-      await prefs.setString(cacheKey, jsonEncode(payload));
+      
+      final jsonPayload = await compute(_serializeJson, payload);
+      await prefs.setString(cacheKey, jsonPayload);
+
+      // LRU Eviction logic for categories
+      List<String> lruKeys = prefs.getStringList('cached_categories_lru_keys') ?? [];
+      lruKeys.remove(cacheKey);
+      lruKeys.add(cacheKey);
+      if (lruKeys.length > 5) {
+        final oldestKey = lruKeys.removeAt(0);
+        await prefs.remove(oldestKey);
+      }
+      await prefs.setStringList('cached_categories_lru_keys', lruKeys);
     } catch (_) {}
   }
 
@@ -163,7 +211,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
     final entry = _categoriesCache[key];
     if (entry == null) return null;
     final bool isExpired =
-        DateTime.now().difference(entry.fetchedAt) > const Duration(hours: 15);
+        DateTime.now().difference(entry.fetchedAt) > _categoriesCacheTtl;
     if (isExpired) {
       _categoriesCache.remove(key);
       return null;
@@ -192,10 +240,16 @@ class _CategoriesPageState extends State<CategoriesPage> {
 
   void _writeCategoriesCache(String filterQuery, List<dynamic> categories) {
     final key = _categoriesCacheKey(filterQuery);
+    final trimmed = _trimCategories(categories);
     _categoriesCache[key] = _CategoriesCacheEntry(
-      categories: List<dynamic>.from(categories),
+      categories: List<dynamic>.from(trimmed),
       fetchedAt: DateTime.now(),
     );
+    // Limit in-memory cache to 5 entries
+    if (_categoriesCache.length > 5) {
+      final oldestKey = _categoriesCache.keys.first;
+      _categoriesCache.remove(oldestKey);
+    }
   }
 
   @override
@@ -1468,7 +1522,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
   Future<void> _fetchUserData(String token) async {
     try {
       final response = await http.get(
-        Uri.parse('https://blackforest4.vseyal.com/api/users/me?depth=2'),
+        Uri.parse('https://dev-blacforest.vseyal.com/api/users/me?depth=2'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
@@ -1604,7 +1658,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest4.vseyal.com/api/branches/$branchId?depth=1',
+          'https://dev-blacforest.vseyal.com/api/branches/$branchId?depth=1',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -1654,7 +1708,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
       try {
         final gRes = await http.get(
           Uri.parse(
-            'https://blackforest4.vseyal.com/api/globals/branch-geo-settings',
+            'https://dev-blacforest.vseyal.com/api/globals/branch-geo-settings',
           ),
           headers: {
             'Authorization': 'Bearer $token',
@@ -1746,7 +1800,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
         try {
           final bRes = await http.get(
             Uri.parse(
-              'https://blackforest4.vseyal.com/api/branches/$branchId?depth=1',
+              'https://dev-blacforest.vseyal.com/api/branches/$branchId?depth=1',
             ),
             headers: {'Authorization': 'Bearer $token'},
           );
@@ -1786,7 +1840,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
       if (uniqueCompanyIds.isEmpty) {
         final allBranchesResponse = await http.get(
           Uri.parse(
-            'https://blackforest4.vseyal.com/api/branches?limit=100&depth=1',
+            'https://dev-blacforest.vseyal.com/api/branches?limit=100&depth=1',
           ),
           headers: {'Authorization': 'Bearer $token'},
         );
@@ -2191,13 +2245,13 @@ class _CategoriesPageState extends State<CategoriesPage> {
     for (final idChunk in _chunked<String>(ids, 60)) {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest4.vseyal.com/api/categories?where[id][in]=${idChunk.join(',')}&depth=1&limit=${idChunk.length}',
+          'https://dev-blacforest.vseyal.com/api/categories?where[id][in]=${idChunk.join(',')}&depth=1&limit=${idChunk.length}',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode != 200) continue;
 
-      final decoded = jsonDecode(response.body);
+      final decoded = await compute(_parseJsonMap, response.body);
       final payload = decoded is Map
           ? Map<String, dynamic>.from(decoded)
           : <String, dynamic>{};
@@ -2245,7 +2299,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest4.vseyal.com/api/widgets/billing-menu',
+          'https://dev-blacforest.vseyal.com/api/widgets/billing-menu',
         ).replace(
           queryParameters: <String, String>{
             'mode': 'categories',
@@ -2257,7 +2311,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
       );
 
       if (response.statusCode == 200) {
-        final decoded = jsonDecode(response.body);
+        final decoded = await compute(_parseJsonMap, response.body);
         final payload = decoded is Map
             ? Map<String, dynamic>.from(decoded)
             : <String, dynamic>{};
@@ -2327,12 +2381,12 @@ class _CategoriesPageState extends State<CategoriesPage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest4.vseyal.com/api/categories?$filterQuery&limit=100&depth=1',
+          'https://dev-blacforest.vseyal.com/api/categories?$filterQuery&limit=100&depth=1',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
-        final Map<String, dynamic> data = jsonDecode(response.body);
+        final Map<String, dynamic> data = await compute(_parseJsonMap, response.body);
         if (!mounted) return;
         final docs = (data['docs'] is List)
             ? (data['docs'] as List)
@@ -2423,7 +2477,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
 
     for (var page = 1; page <= maxPages; page++) {
       final url =
-          'https://blackforest4.vseyal.com/api/products?where[company][equals]=$companyId&limit=$pageSize&page=$page&depth=1';
+          'https://dev-blacforest.vseyal.com/api/products?where[company][equals]=$companyId&limit=$pageSize&page=$page&depth=2';
       final response = await http
           .get(Uri.parse(url), headers: {'Authorization': 'Bearer $token'})
           .timeout(const Duration(seconds: 18));
@@ -2458,7 +2512,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
       final response = await (useBillingMenuApi
           ? http.get(
               Uri.parse(
-                'https://blackforest4.vseyal.com/api/widgets/billing-menu',
+                'https://dev-blacforest.vseyal.com/api/widgets/billing-menu',
               ).replace(
                 queryParameters: <String, String>{
                   'mode': 'products',
@@ -2471,7 +2525,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
             )
           : http.get(
               Uri.parse(
-                'https://blackforest4.vseyal.com/api/products?where[category][equals]=$categoryId&limit=250&depth=1',
+                'https://dev-blacforest.vseyal.com/api/products?where[category][equals]=$categoryId&limit=250&depth=2',
               ),
               headers: {'Authorization': 'Bearer $token'},
             ));
@@ -2502,7 +2556,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
       // Fetch product by UPC globally
       final response = await http.get(
         Uri.parse(
-          'https://blackforest4.vseyal.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=1',
+          'https://dev-blacforest.vseyal.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=2',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -2854,4 +2908,12 @@ class _CategoriesPageState extends State<CategoriesPage> {
             ),
     );
   }
+}
+
+Map<String, dynamic> _parseJsonMap(String source) {
+  return jsonDecode(source) as Map<String, dynamic>;
+}
+
+String _serializeJson(dynamic value) {
+  return jsonEncode(value);
 }

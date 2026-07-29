@@ -120,4 +120,39 @@ class NotificationService {
       payload: payload,
     );
   }
+
+  Future<void> showChatNotification({
+    required int id,
+    required String title,
+    required String body,
+    String? payload,
+  }) async {
+    const AndroidNotificationDetails androidNotificationDetails =
+        AndroidNotificationDetails(
+          'chat_messages',
+          'Chat Messages',
+          channelDescription: 'Notifications for new chat messages',
+          importance: Importance.max,
+          priority: Priority.high,
+          ticker: 'New Message',
+          playSound: true,
+          enableVibration: true,
+          category: AndroidNotificationCategory.message,
+          sound: RawResourceAndroidNotificationSound('message'),
+        );
+
+    const NotificationDetails notificationDetails = NotificationDetails(
+      android: androidNotificationDetails,
+      iOS: DarwinNotificationDetails(presentSound: true, sound: 'message.mp3'),
+      macOS: DarwinNotificationDetails(presentSound: true),
+    );
+
+    await flutterLocalNotificationsPlugin.show(
+      id: id,
+      title: title,
+      body: body,
+      notificationDetails: notificationDetails,
+      payload: payload,
+    );
+  }
 }

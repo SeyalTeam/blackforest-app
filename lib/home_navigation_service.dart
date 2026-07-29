@@ -157,7 +157,7 @@ class HomeNavigationService {
       final response = await http
           .get(
             Uri.parse(
-              'https://blackforest4.vseyal.com/api/globals/widget-settings?depth=1',
+              'https://dev-blacforest.vseyal.com/api/globals/widget-settings?depth=1',
             ),
             headers: {
               'Authorization': 'Bearer $token',
@@ -196,7 +196,7 @@ class HomeNavigationService {
       final response = await http
           .get(
             Uri.parse(
-              'https://blackforest4.vseyal.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
+              'https://dev-blacforest.vseyal.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
             ),
             headers: {
               'Authorization': 'Bearer $token',

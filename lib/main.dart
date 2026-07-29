@@ -16,6 +16,7 @@ import 'package:blackforest_app/app_version.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:screen_protector/screen_protector.dart';
 import 'package:blackforest_app/kot_auto_print_service.dart';
+import 'package:blackforest_app/chat_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -132,13 +133,20 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     }
   }
 
-  void _handleNotificationClick(String billId) {
+  void _handleNotificationClick(String payload) {
     // We need a context that has the CartProvider
     // The navigatorKey's currentContext is usually the root of the app
     final context = _navigatorKey.currentContext;
     if (context != null) {
-      final cartProvider = Provider.of<CartProvider>(context, listen: false);
-      cartProvider.openBillAndNavigate(context, billId);
+      if (payload.startsWith('chat:')) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const ChatPage()),
+          (route) => false,
+        );
+      } else {
+        final cartProvider = Provider.of<CartProvider>(context, listen: false);
+        cartProvider.openBillAndNavigate(context, payload);
+      }
     }
   }
 

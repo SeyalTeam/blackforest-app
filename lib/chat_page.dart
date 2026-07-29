@@ -8,6 +8,9 @@ import 'package:blackforest_app/categories_page.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:blackforest_app/home_navigation_service.dart';
 import 'package:blackforest_app/home_page.dart';
+import 'package:blackforest_app/camera_capture_page.dart';
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -61,6 +64,13 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
   String? _loadError;
   AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
 
+  Future<void> _setChatPageActive(bool active) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('is_chat_page_active', active);
+    } catch (_) {}
+  }
+
   @override
   void initState() {
     super.initState();
@@ -68,10 +78,12 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
     _messageController.addListener(_handleDraftChanged);
     _startPolling();
     _bootstrapConversation();
+    _setChatPageActive(true);
   }
 
   @override
   void dispose() {
+    _setChatPageActive(false);
     WidgetsBinding.instance.removeObserver(this);
     _pollTimer?.cancel();
     _messageController.removeListener(_handleDraftChanged);
@@ -85,7 +97,10 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
     super.didChangeAppLifecycleState(state);
     _appLifecycleState = state;
     if (state == AppLifecycleState.resumed) {
+      _setChatPageActive(true);
       unawaited(_refreshConversation(showLoader: false));
+    } else {
+      _setChatPageActive(false);
     }
   }
 
@@ -736,6 +751,217 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
     }
   }
 
+  Future<void> _handleCameraTap() async {
+    final thread = _thread;
+    if (thread == null || thread.status != 'open') return;
+
+    showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (BuildContext context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: Wrap(
+              children: <Widget>[
+                ListTile(
+                  leading: const Icon(Icons.camera_front_rounded, color: Colors.blueAccent, size: 28),
+                  title: const Text('Take Selfie Photo (Front Camera)', style: TextStyle(fontWeight: FontWeight.w600)),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    final XFile? photo = await Navigator.push<XFile>(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const CameraCapturePage(
+                          preferredLensDirection: CameraLensDirection.front,
+                        ),
+                        fullscreenDialog: true,
+                      ),
+                    );
+                    if (photo != null) {
+                      await _uploadImageAttachment(photo);
+                    }
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.camera_rear_rounded, color: Colors.green, size: 28),
+                  title: const Text('Take Photo (Back Camera)', style: TextStyle(fontWeight: FontWeight.w600)),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    final XFile? photo = await Navigator.push<XFile>(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const CameraCapturePage(
+                          preferredLensDirection: CameraLensDirection.back,
+                        ),
+                        fullscreenDialog: true,
+                      ),
+                    );
+                    if (photo != null) {
+                      await _uploadImageAttachment(photo);
+                    }
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _uploadImageAttachment(XFile file) async {
+    final thread = _thread;
+    if (thread == null) return;
+
+    try {
+      final token = await _readToken();
+      final uri = _apiUri('/api/message-attachments');
+
+      final request = http.MultipartRequest('POST', uri);
+      request.headers.addAll(_authHeaders(token));
+      request.fields['thread'] = thread.id;
+      request.fields['_payload'] = jsonEncode({'thread': thread.id});
+
+      final bytes = await file.readAsBytes();
+      final filename = file.name.isNotEmpty ? file.name : 'photo_${DateTime.now().millisecondsSinceEpoch}.jpg';
+
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          bytes,
+          filename: filename,
+        ),
+      );
+
+      final streamedRes = await request.send();
+      final res = await http.Response.fromStream(streamedRes);
+
+      if (res.statusCode != 200 && res.statusCode != 201) {
+        throw Exception('Failed to upload attachment: ${res.body}');
+      }
+
+      final data = jsonDecode(res.body);
+      final attachmentId = data['doc']?['id'] ?? data['id'];
+
+      if (attachmentId != null) {
+        final msgResponse = await http.post(
+          _apiUri('/api/messages'),
+          headers: _authHeaders(token, json: true),
+          body: jsonEncode({
+            'thread': thread.id,
+            'text': '📷 Photo',
+            'attachment': attachmentId,
+          }),
+        );
+
+        if (msgResponse.statusCode == 200 || msgResponse.statusCode == 201) {
+          await _refreshConversation(showLoader: false, forceScrollToBottom: true);
+        }
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error uploading photo: $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
+
+  Future<void> _handleCallTap() async {
+    showDialog<void>(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(
+            children: [
+              Icon(Icons.phone_in_talk, color: _whatsAppGreen),
+              SizedBox(width: 8),
+              Text('Voice & Video Call'),
+            ],
+          ),
+          content: const Text(
+            'Initiate an audio or video call with the Admin Dashboard.',
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _whatsAppGreen,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: () {
+                Navigator.pop(context);
+                _initiateCallSignal('audio');
+              },
+              icon: const Icon(Icons.phone),
+              label: const Text('Audio Call'),
+            ),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.purple,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: () {
+                Navigator.pop(context);
+                _initiateCallSignal('video');
+              },
+              icon: const Icon(Icons.videocam),
+              label: const Text('Video Call'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _initiateCallSignal(String callType) async {
+    final thread = _thread;
+    if (thread == null) return;
+
+    try {
+      final token = await _readToken();
+      final res = await http.post(
+        _apiUri('/api/call-signal'),
+        headers: _authHeaders(token, json: true),
+        body: jsonEncode({
+          'action': 'initiate',
+          'threadId': thread.id,
+          'calleeId': 'admin',
+          'callType': callType,
+        }),
+      );
+
+      if (res.statusCode == 200) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Calling Admin ($callType)... Ringing...'),
+            backgroundColor: _whatsAppGreen,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Call error: $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final thread = _thread;
@@ -749,9 +975,7 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
             avatarLetters: _avatarLetters,
             isRefreshing: _isRefreshing,
             onBack: _handleBack,
-            onCallTap: () => _showPhaseOneMessage(
-              'Voice calling is not part of chat phase 1.',
-            ),
+            onCallTap: _handleCallTap,
             onMenuSelected: _handleMenuAction,
           ),
           Expanded(
@@ -768,9 +992,7 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
                           isEnabled: thread.status == 'open',
                           hasText: _hasDraftText,
                           onSend: () => unawaited(_sendMessage()),
-                          onCameraTap: () => _showPhaseOneMessage(
-                            'Camera sharing is not part of chat phase 1.',
-                          ),
+                          onCameraTap: _handleCameraTap,
                           onMicTap: () => _showPhaseOneMessage(
                             'Voice messages are not part of chat phase 1.',
                           ),
@@ -1421,37 +1643,41 @@ class _MessageBubble extends StatelessWidget {
               ),
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-                child: showTimeInline
-                    ? Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          Expanded(
-                            child: Text(message.text, style: messageStyle),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (message.attachmentUrl != null && message.attachmentUrl!.isNotEmpty) ...[
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: CachedNetworkImage(
+                          imageUrl: message.attachmentUrl!,
+                          width: 220,
+                          height: 180,
+                          fit: BoxFit.cover,
+                          placeholder: (context, url) => const SizedBox(
+                            width: 220,
+                            height: 180,
+                            child: Center(child: CircularProgressIndicator(color: _whatsAppGreen)),
                           ),
-                          const SizedBox(width: inlineGap),
-                          _MessageMeta(
-                            timeText: timeText,
-                            isOutgoing: isOutgoing,
-                            status: receipt?.status,
-                          ),
-                        ],
-                      )
-                    : Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(message.text, style: messageStyle),
-                          const SizedBox(height: 6),
-                          Align(
-                            alignment: Alignment.centerRight,
-                            child: _MessageMeta(
-                              timeText: timeText,
-                              isOutgoing: isOutgoing,
-                              status: receipt?.status,
-                            ),
-                          ),
-                        ],
+                          errorWidget: (context, url, error) => const Icon(Icons.broken_image, size: 50, color: Colors.grey),
+                        ),
                       ),
+                      const SizedBox(height: 6),
+                    ],
+                    if (message.text.isNotEmpty)
+                      Text(message.text, style: messageStyle),
+                    const SizedBox(height: 6),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: _MessageMeta(
+                        timeText: timeText,
+                        isOutgoing: isOutgoing,
+                        status: receipt?.status,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           );
@@ -1551,6 +1777,7 @@ class _ChatMessage {
   final String threadId;
   final String senderRole;
   final String text;
+  final String? attachmentUrl;
   final int seq;
   final DateTime createdAt;
 
@@ -1559,6 +1786,7 @@ class _ChatMessage {
     required this.threadId,
     required this.senderRole,
     required this.text,
+    this.attachmentUrl,
     required this.seq,
     required this.createdAt,
   });
@@ -1571,10 +1799,15 @@ class _ChatMessage {
     final id = _relationshipId(json);
     final threadId = _relationshipId(json['thread']);
     final createdAt = _parseDate(json['createdAt']);
-    final text = _stringValue(json['text']);
+    final text = _stringValue(json['text']) ?? '';
     final seq = _intValue(json['seq']) ?? 0;
 
-    if (id == null || threadId == null || createdAt == null || text == null) {
+    String? attachmentUrl;
+    if (json['attachment'] is Map<String, dynamic>) {
+      attachmentUrl = _stringValue(json['attachment']['url']);
+    }
+
+    if (id == null || threadId == null || createdAt == null) {
       return null;
     }
 
@@ -1583,6 +1816,7 @@ class _ChatMessage {
       threadId: threadId,
       senderRole: _stringValue(json['senderRole']) ?? '',
       text: text,
+      attachmentUrl: attachmentUrl,
       seq: seq,
       createdAt: createdAt,
     );

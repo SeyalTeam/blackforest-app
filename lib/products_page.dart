@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:blackforest_app/app_http.dart' as http;
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -69,6 +70,146 @@ class ProductsPage extends StatefulWidget {
 
   static final Map<String, _ProductsCacheEntry> _productsCache = {};
 
+  static Map<String, dynamic> _trimProduct(Map<dynamic, dynamic> p) {
+    // Trim nested image
+    dynamic trimImage(dynamic img) {
+      if (img is Map) {
+        return {
+          'url': img['url'],
+          'id': img['id'],
+          'filename': img['filename'],
+        };
+      }
+      return img;
+    }
+
+    // Trim nested category
+    dynamic trimCategory(dynamic cat) {
+      if (cat is Map) {
+        return {
+          'id': cat['id'],
+          '_id': cat['_id'],
+          'name': cat['name'],
+          'department': cat['department'] is Map 
+              ? {'name': cat['department']['name'], 'id': cat['department']['id']}
+              : cat['department'],
+        };
+      }
+      return cat;
+    }
+
+    // Trim nested department
+    dynamic trimDepartment(dynamic dept) {
+      if (dept is Map) {
+        return {
+          'id': dept['id'],
+          '_id': dept['_id'],
+          'name': dept['name'],
+          'company': dept['company'],
+        };
+      }
+      return dept;
+    }
+
+    // Trim defaultPriceDetails
+    dynamic trimPriceDetails(dynamic details) {
+      if (details is Map) {
+        return {
+          'unit': details['unit'],
+          'price': details['price'],
+        };
+      }
+      return details;
+    }
+
+    // Trim branchOverrides
+    dynamic trimBranchOverrides(dynamic overrides) {
+      if (overrides is List) {
+        return overrides.map((o) {
+          if (o is Map) {
+            return {
+              'branch': o['branch'],
+              'unit': o['unit'],
+              'price': o['price'],
+              'isAvailable': o['isAvailable'],
+              'isKg': o['isKg'],
+              'sellByWeight': o['sellByWeight'],
+              'gstPercent': o['gstPercent'],
+              'gst': o['gst'],
+            };
+          }
+          return o;
+        }).toList();
+      }
+      return overrides;
+    }
+
+    return {
+      'id': p['id'],
+      '_id': p['_id'],
+      'name': p['name'],
+      'category': trimCategory(p['category']),
+      'categoryId': p['categoryId'],
+      'categories': p['categories'],
+      'defaultCategory': p['defaultCategory'],
+      'categoryName': p['categoryName'],
+      'label': p['label'],
+      'department': trimDepartment(p['department']),
+      'branchOverrides': trimBranchOverrides(p['branchOverrides']),
+      'defaultPriceDetails': trimPriceDetails(p['defaultPriceDetails']),
+      'price': p['price'],
+      'unit': p['unit'],
+      'gstPercent': p['gstPercent'],
+      'gst': p['gst'],
+      'imageUrl': p['imageUrl'],
+      'thumbnail': p['thumbnail'],
+      'image': trimImage(p['image']),
+      'images': p['images'] is List 
+          ? (p['images'] as List).map(trimImage).toList()
+          : p['images'],
+      'status': p['status'],
+      'isAvailable': p['isAvailable'],
+      'inactiveBranches': p['inactiveBranches'],
+      'isVeg': p['isVeg'],
+      'is_veg': p['is_veg'],
+      'veg': p['veg'],
+      'isKg': p['isKg'],
+      'sellByWeight': p['sellByWeight'],
+      'rating': p['rating'],
+      'avgRating': p['avgRating'],
+      'averageRating': p['averageRating'],
+      'ratingValue': p['ratingValue'],
+      'reviewRating': p['reviewRating'],
+      'ratings': p['ratings'] is Map 
+          ? {'average': p['ratings']['average'], 'count': p['ratings']['count']}
+          : p['ratings'],
+      'reviews': p['reviews'] is Map 
+          ? {'average': p['reviews']['average'], 'count': p['reviews']['count']}
+          : p['reviews'],
+      'ratingCount': p['ratingCount'],
+      'ratingsCount': p['ratingsCount'],
+      'reviewCount': p['reviewCount'],
+      'reviewsCount': p['reviewsCount'],
+      'totalRatings': p['totalRatings'],
+      'totalReviews': p['totalReviews'],
+      'upc': p['upc'],
+      'value': p['value'],
+      'productId': p['productId'],
+      'product': p['product'] is Map 
+          ? {'id': p['product']['id'], '_id': p['product']['_id']}
+          : p['product'],
+    };
+  }
+
+  static List<dynamic> _trimProducts(List<dynamic> list) {
+    return list.map((item) {
+      if (item is Map) {
+        return _trimProduct(item);
+      }
+      return item;
+    }).toList();
+  }
+
   /// Pre-populates the product cache for multiple categories at once.
   /// Used by the pre-fetcher to avoid 5-10s delays when tapping categories.
   static void bulkCacheProducts(List<dynamic> allProducts, String? branchId) {
@@ -92,8 +233,9 @@ class ProductsPage extends StatefulWidget {
     final normalizedBranchId = branchId?.trim() ?? '';
     final bId = normalizedBranchId.isEmpty ? 'no-branch' : normalizedBranchId;
     grouped.forEach((catId, products) {
+      final trimmed = _trimProducts(products);
       _productsCache['${catId}_$bId'] = _ProductsCacheEntry(
-        products: products,
+        products: trimmed,
         fetchedAt: now,
       );
     });
@@ -148,10 +290,16 @@ class ProductsPage extends StatefulWidget {
     if (normalizedCategoryId.isEmpty) return;
     final normalizedBranchId = branchId?.trim() ?? '';
     final bId = normalizedBranchId.isEmpty ? 'no-branch' : normalizedBranchId;
+    final trimmed = _trimProducts(products);
     _productsCache['${normalizedCategoryId}_$bId'] = _ProductsCacheEntry(
-      products: List<dynamic>.from(products),
+      products: List<dynamic>.from(trimmed),
       fetchedAt: DateTime.now(),
     );
+    // Limit in-memory cache size to 10 entries
+    if (_productsCache.length > 10) {
+      final oldestKey = _productsCache.keys.first;
+      _productsCache.remove(oldestKey);
+    }
   }
 
   final int delayMinutes;
@@ -258,8 +406,7 @@ class _ProductsPageState extends State<ProductsPage> {
       final raw = prefs.getString(cacheKey);
       if (raw == null || raw.isEmpty) return;
 
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return;
+      final decoded = await compute(_parseJsonMap, raw);
       final payload = Map<String, dynamic>.from(decoded);
       final cachedAt = DateTime.tryParse(payload['cachedAt'] ?? '') ?? DateTime(2000);
       
@@ -284,11 +431,25 @@ class _ProductsPageState extends State<ProductsPage> {
       final prefs = await SharedPreferences.getInstance();
       final branchId = prefs.getString('branchId')?.trim();
       final cacheKey = 'cached_products_${widget.categoryId}_${branchId ?? 'no-branch'}';
+      
+      final trimmed = ProductsPage._trimProducts(products);
       final payload = <String, dynamic>{
         'cachedAt': DateTime.now().toIso8601String(),
-        'products': products,
+        'products': trimmed,
       };
-      await prefs.setString(cacheKey, jsonEncode(payload));
+      
+      final jsonPayload = await compute(_serializeJson, payload);
+      await prefs.setString(cacheKey, jsonPayload);
+
+      // LRU Eviction logic
+      List<String> lruKeys = prefs.getStringList('cached_products_lru_keys') ?? [];
+      lruKeys.remove(cacheKey);
+      lruKeys.add(cacheKey);
+      if (lruKeys.length > 10) {
+        final oldestKey = lruKeys.removeAt(0);
+        await prefs.remove(oldestKey);
+      }
+      await prefs.setStringList('cached_products_lru_keys', lruKeys);
     } catch (_) {}
   }
 
@@ -634,7 +795,7 @@ class _ProductsPageState extends State<ProductsPage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest4.vseyal.com/api/globals/widget-settings?depth=1',
+          'https://dev-blacforest.vseyal.com/api/globals/widget-settings?depth=1',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -645,7 +806,7 @@ class _ProductsPageState extends State<ProductsPage> {
         return const <_HomeTopCategoryChip>[];
       }
 
-      final decoded = jsonDecode(response.body);
+      final decoded = await compute(_parseJsonMap, response.body);
       return _readHomeTopCategoriesForBranch(
         decoded,
         normalizedBranchId,
@@ -800,7 +961,7 @@ class _ProductsPageState extends State<ProductsPage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest4.vseyal.com/api/categories?where[id][in]=${ids.join(',')}&depth=1&limit=100',
+          'https://dev-blacforest.vseyal.com/api/categories?where[id][in]=${ids.join(',')}&depth=1&limit=100',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -809,7 +970,7 @@ class _ProductsPageState extends State<ProductsPage> {
       );
       if (response.statusCode != 200) return categories;
 
-      final decoded = jsonDecode(response.body);
+      final decoded = await compute(_parseJsonMap, response.body);
       final docs = _toDynamicList(decoded);
       final byId = <String, Map<String, dynamic>>{};
       for (final rawDoc in docs) {
@@ -868,7 +1029,7 @@ class _ProductsPageState extends State<ProductsPage> {
   Future<void> _fetchUserData(String token) async {
     try {
       final response = await http.get(
-        Uri.parse('https://blackforest4.vseyal.com/api/users/me?depth=2'),
+        Uri.parse('https://dev-blacforest.vseyal.com/api/users/me?depth=2'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
@@ -953,7 +1114,7 @@ class _ProductsPageState extends State<ProductsPage> {
       try {
         final gRes = await http.get(
           Uri.parse(
-            'https://blackforest4.vseyal.com/api/globals/branch-geo-settings',
+            'https://dev-blacforest.vseyal.com/api/globals/branch-geo-settings',
           ),
           headers: {
             'Authorization': 'Bearer $token',
@@ -994,7 +1155,7 @@ class _ProductsPageState extends State<ProductsPage> {
 
       // 2. Fallback to Branches Collection
       final allBranchesResponse = await http.get(
-        Uri.parse('https://blackforest4.vseyal.com/api/branches?depth=1'),
+        Uri.parse('https://dev-blacforest.vseyal.com/api/branches?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (allBranchesResponse.statusCode == 200) {
@@ -1105,13 +1266,13 @@ class _ProductsPageState extends State<ProductsPage> {
     for (final idChunk in _chunked<String>(ids, 60)) {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest4.vseyal.com/api/products?where[id][in]=${idChunk.join(',')}&depth=2&limit=${idChunk.length}',
+          'https://dev-blacforest.vseyal.com/api/products?where[id][in]=${idChunk.join(',')}&depth=2&limit=${idChunk.length}',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode != 200) continue;
 
-      final decoded = jsonDecode(response.body);
+      final decoded = await compute(_parseJsonMap, response.body);
       final payload = decoded is Map
           ? Map<String, dynamic>.from(decoded)
           : <String, dynamic>{};
@@ -1224,7 +1385,7 @@ class _ProductsPageState extends State<ProductsPage> {
 
         final response = await http.get(
           Uri.parse(
-            'https://blackforest4.vseyal.com/api/widgets/billing-menu',
+            'https://dev-blacforest.vseyal.com/api/widgets/billing-menu',
           ).replace(
             queryParameters: <String, String>{
               'mode': 'products',
@@ -1237,7 +1398,7 @@ class _ProductsPageState extends State<ProductsPage> {
         );
 
         if (response.statusCode == 200) {
-          final decoded = jsonDecode(response.body);
+          final decoded = await compute(_parseJsonMap, response.body);
           final payload = decoded is Map
               ? Map<String, dynamic>.from(decoded)
               : <String, dynamic>{};
@@ -1283,13 +1444,13 @@ class _ProductsPageState extends State<ProductsPage> {
       }
 
       final url =
-          'https://blackforest4.vseyal.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=1';
+          'https://dev-blacforest.vseyal.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=2';
       final response = await http.get(
         Uri.parse(url),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
-        final Map<String, dynamic> data = jsonDecode(response.body);
+        final Map<String, dynamic> data = await compute(_parseJsonMap, response.body);
 
         var fetchedProducts = data['docs'] ?? [];
 
@@ -1474,7 +1635,7 @@ class _ProductsPageState extends State<ProductsPage> {
       return resolveApiAssetUrl(value);
     }
     if (value.startsWith('//')) return resolveApiAssetUrl('https:$value');
-    if (value.startsWith('blackforest4.vseyal.com')) {
+    if (value.startsWith('dev-blacforest.vseyal.com')) {
       return resolveApiAssetUrl('https://$value');
     }
     if (value.startsWith('/')) return resolveApiAssetUrl(value);
@@ -3094,4 +3255,12 @@ class SpokeLoaderPainter extends CustomPainter {
   bool shouldRepaint(covariant SpokeLoaderPainter oldDelegate) {
     return oldDelegate.rotationOffset != rotationOffset;
   }
+}
+
+Map<String, dynamic> _parseJsonMap(String source) {
+  return jsonDecode(source) as Map<String, dynamic>;
+}
+
+String _serializeJson(dynamic value) {
+  return jsonEncode(value);
 }

@@ -629,7 +629,7 @@ class _CustomerSearchPageState extends State<CustomerSearchPage> {
       if (token == null) return userId;
 
       final response = await http.get(
-        Uri.parse('https://blackforest4.vseyal.com/api/users/$userId?depth=2'),
+        Uri.parse('https://dev-blacforest.vseyal.com/api/users/$userId?depth=2'),
         headers: {'Authorization': 'Bearer $token'},
       );
 

@@ -142,7 +142,7 @@ class ProductPopularityService {
           'page': currentPage.toString(),
         };
         final uri = Uri.parse(
-          'https://blackforest4.vseyal.com/api/billings',
+          'https://dev-blacforest.vseyal.com/api/billings',
         ).replace(queryParameters: pagedQuery);
 
         final response = await http.get(

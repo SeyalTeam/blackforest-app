@@ -31,25 +31,18 @@ class _EmployeeSettingsPageState extends State<EmployeeSettingsPage> {
   bool _isCheckingWifiPrinter = true;
   bool _isWifiPrinterConnected = false;
   bool _isCheckingLocation = true;
-  bool _isCheckingApiRouting = true;
   bool _isLocationEnabled = false;
   bool _hasLocationPermission = false;
   bool _hasBranchGeoFenceConfig = false;
-  bool _isUsingRuntimeApiDomainConfig = false;
-  bool _isApiRoutingPrimaryOnlyMode = false;
   double? _branchGeoRadiusMeters;
   double? _distanceFromBranchMeters;
   bool? _isInsideBranchGeoFence;
   bool _isReviewPrintEnabled = true;
-  String _activeApiHost = '';
   String? _branchName;
   String? _branchIpRange;
   String? _deviceWifiIp;
-  String? _apiRoutingError;
   String? _printerName;
   String? _wifiPrinterIp;
-  List<String> _apiFallbackHosts = const [];
-  List<String> _apiDefaultHosts = const [];
   int _selectedWaiterCallTablesCount = 0;
   String _kotStatusSource = kotStatusSourceConfirmed;
 
@@ -79,48 +72,9 @@ class _EmployeeSettingsPageState extends State<EmployeeSettingsPage> {
     await Future.wait<void>([
       _refreshBluetoothStatus(prefs: prefs),
       _refreshWifiPrinterStatus(prefs: prefs),
-      _refreshApiRoutingStatus(),
       _refreshLocationStatus(),
       _loadWaiterCallTableSelectionSummary(prefs: prefs),
     ]);
-  }
-
-  Future<void> _refreshApiRoutingStatus({bool showLoader = true}) async {
-    if (mounted && showLoader) {
-      setState(() {
-        _isCheckingApiRouting = true;
-      });
-    }
-
-    try {
-      await ensureApiHostRoutingReady();
-
-      if (!mounted) return;
-      setState(() {
-        _activeApiHost = apiHostActive.trim();
-        _isUsingRuntimeApiDomainConfig = isUsingRuntimeApiDomainConfig;
-        _isApiRoutingPrimaryOnlyMode = isApiRoutingPrimaryOnlyMode;
-        _apiFallbackHosts = runtimeApiFallbackHosts
-            .where((host) => host.trim().isNotEmpty && host != _activeApiHost)
-            .toList(growable: false);
-        _apiDefaultHosts = defaultApiHostCandidates
-            .where((host) => host.trim().isNotEmpty)
-            .toList(growable: false);
-        _apiRoutingError = null;
-        _isCheckingApiRouting = false;
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _activeApiHost = apiHostActive.trim();
-        _isUsingRuntimeApiDomainConfig = isUsingRuntimeApiDomainConfig;
-        _isApiRoutingPrimaryOnlyMode = isApiRoutingPrimaryOnlyMode;
-        _apiFallbackHosts = runtimeApiFallbackHosts;
-        _apiDefaultHosts = defaultApiHostCandidates;
-        _apiRoutingError = error.toString();
-        _isCheckingApiRouting = false;
-      });
-    }
   }
 
   Future<void> _refreshWifiPrinterStatus({
@@ -872,114 +826,7 @@ class _EmployeeSettingsPageState extends State<EmployeeSettingsPage> {
     );
   }
 
-  Widget _buildApiRoutingStatusCard() {
-    final activeHost = _activeApiHost.trim().isEmpty
-        ? apiHostActive.trim()
-        : _activeApiHost.trim();
-    final modeLabel = _isApiRoutingPrimaryOnlyMode
-        ? 'Mode: Primary domain only'
-        : 'Mode: Auto failover enabled';
-    final sourceLabel = _isUsingRuntimeApiDomainConfig
-        ? 'Source: Billing App API Domains'
-        : 'Source: Default app hosts';
-    final hostsLabel = _isUsingRuntimeApiDomainConfig
-        ? (_apiFallbackHosts.isEmpty
-              ? 'Fallback: No secondary domains configured'
-              : 'Fallback: ${_apiFallbackHosts.map((host) => 'https://$host').join(', ')}')
-        : 'Defaults: ${_apiDefaultHosts.map((host) => 'https://$host').join(', ')}';
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey[200]!),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.03),
-            blurRadius: 10,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.cloud_outlined, color: Color(0xFF1BA672), size: 24),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Billing API Host',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.black87,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _isCheckingApiRouting
-                      ? 'Checking API routing...'
-                      : '$sourceLabel • $modeLabel',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: Colors.grey[600],
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  'Active: https://$activeHost',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[700],
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  hostsLabel,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[700],
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                if (_apiRoutingError != null && _apiRoutingError!.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      'Status: unable to refresh right now',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.orange[700],
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          if (_isCheckingApiRouting)
-            const Padding(
-              padding: EdgeInsets.only(top: 4),
-              child: SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Color(0xFF1BA672),
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
 
   Widget _buildBranchRadiusStatusCard() {
     final isLocationReady =
@@ -1350,8 +1197,6 @@ class _EmployeeSettingsPageState extends State<EmployeeSettingsPage> {
             _buildBluetoothStatusCard(),
             const SizedBox(height: 16),
             _buildWifiPrinterStatusCard(),
-            const SizedBox(height: 16),
-            _buildApiRoutingStatusCard(),
             const SizedBox(height: 16),
             _buildLocationStatusCard(),
             const SizedBox(height: 16),
