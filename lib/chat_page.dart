@@ -54,6 +54,7 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
   List<_ChatMessage> _messages = const [];
   List<_ChatMessage> _optimisticMessages = const [];
   Map<String, _MessageReceiptSummary> _outgoingReceiptsByMessageId = const {};
+  bool _isCallDialogShowing = false;
 
   Timer? _pollTimer;
   bool _isBootstrapping = true;
@@ -81,11 +82,14 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
     _setChatPageActive(true);
   }
 
+  Timer? _callSignalTimer;
+
   @override
   void dispose() {
     _setChatPageActive(false);
     WidgetsBinding.instance.removeObserver(this);
     _pollTimer?.cancel();
+    _callSignalTimer?.cancel();
     _messageController.removeListener(_handleDraftChanged);
     _messageController.dispose();
     _scrollController.dispose();
@@ -960,6 +964,109 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
         ),
       );
     }
+  }
+  Future<void> _checkIncomingCallSignal() async {
+    try {
+      final token = await _readToken();
+      final thread = _thread;
+
+      final res = await http.post(
+        _apiUri('/api/call-signal'),
+        headers: _authHeaders(token, json: true),
+        body: jsonEncode({
+          'action': 'check_incoming',
+          if (thread != null) 'threadId': thread.id,
+        }),
+      );
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        final session = data['session'];
+        if (session != null && session['status'] == 'ringing') {
+          _showIncomingCallDialog(session);
+        }
+      }
+    } catch (_) {}
+  }
+
+  void _showIncomingCallDialog(Map<String, dynamic> session) {
+    if (_isCallDialogShowing) return;
+    _isCallDialogShowing = true;
+
+    final callId = session['callId']?.toString() ?? '';
+    final callType = session['callType']?.toString() ?? 'audio';
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(
+            children: [
+              Icon(
+                callType == 'video' ? Icons.videocam : Icons.phone_in_talk,
+                color: _whatsAppGreen,
+                size: 28,
+              ),
+              const SizedBox(width: 10),
+              Text('Incoming ${callType == 'video' ? 'Video' : 'Audio'} Call'),
+            ],
+          ),
+          content: const Text(
+            'Admin Dashboard is calling you right now. Accept or decline the call.',
+            style: TextStyle(fontSize: 15),
+          ),
+          actions: <Widget>[
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: () async {
+                _isCallDialogShowing = false;
+                Navigator.pop(context);
+                final token = await _readToken();
+                await http.post(
+                  _apiUri('/api/call-signal'),
+                  headers: _authHeaders(token, json: true),
+                  body: jsonEncode({'action': 'reject', 'callId': callId}),
+                );
+              },
+              icon: const Icon(Icons.call_end),
+              label: const Text('Decline'),
+            ),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _whatsAppGreen,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: () async {
+                _isCallDialogShowing = false;
+                Navigator.pop(context);
+                final token = await _readToken();
+                await http.post(
+                  _apiUri('/api/call-signal'),
+                  headers: _authHeaders(token, json: true),
+                  body: jsonEncode({'action': 'accept', 'callId': callId}),
+                );
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Call Connected! Audio/Video call active.'),
+                    backgroundColor: _whatsAppGreen,
+                  ),
+                );
+              },
+              icon: const Icon(Icons.call),
+              label: const Text('Accept'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
