@@ -29,6 +29,7 @@ class _EmployeePageState extends State<EmployeePage> {
   String? _branchName;
   bool _isLoggingOut = false;
   bool _isPunchedIn = false;
+  bool _autoCameraLaunched = false;
 
   Timer? _timer;
   Duration _workDuration = Duration.zero;
@@ -257,6 +258,13 @@ class _EmployeePageState extends State<EmployeePage> {
             _breakDuration = totalBreak;
             _isPunchedIn = hasActive;
           });
+          
+          if (!_isPunchedIn && !_autoCameraLaunched) {
+            _autoCameraLaunched = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _punchIn();
+            });
+          }
         }
       }
     } catch (e) {
@@ -414,7 +422,7 @@ class _EmployeePageState extends State<EmployeePage> {
       
       final request = http.MultipartRequest(
         'POST',
-        Uri.parse('https://dev1-blacforest.vseyal.com/api/media'),
+        Uri.parse('https://dev-blacforest.vseyal.com/api/media'),
       );
       request.headers['Authorization'] = 'Bearer $token';
       request.files.add(await http.MultipartFile.fromPath('file', file.path));
@@ -428,7 +436,7 @@ class _EmployeePageState extends State<EmployeePage> {
         final userId = prefs.getString('user_id');
         final now = DateTime.now();
         final istDateStr = DateFormat('yyyy-MM-dd').format(now);
-        final searchUrl = 'https://dev1-blacforest.vseyal.com/api/attendance?where[user][equals]=$userId&where[dateString][equals]=$istDateStr';
+        final searchUrl = 'https://dev-blacforest.vseyal.com/api/attendance?where[user][equals]=$userId&where[dateString][equals]=$istDateStr';
         
         final searchResp = await http.get(Uri.parse(searchUrl), headers: {'Authorization': 'Bearer $token'});
         if (searchResp.statusCode == 200) {
@@ -446,13 +454,13 @@ class _EmployeePageState extends State<EmployeePage> {
              });
              
              await http.patch(
-               Uri.parse('https://dev1-blacforest.vseyal.com/api/attendance/${doc['id']}'),
+               Uri.parse('https://dev-blacforest.vseyal.com/api/attendance/${doc['id']}'),
                headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
                body: jsonEncode({'activities': activities}),
              );
            } else {
              await http.post(
-               Uri.parse('https://dev1-blacforest.vseyal.com/api/attendance'),
+               Uri.parse('https://dev-blacforest.vseyal.com/api/attendance'),
                headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
                body: jsonEncode({
                  'user': userId,
