@@ -9,6 +9,9 @@ import 'package:intl/intl.dart';
 import 'package:blackforest_app/session_prefs.dart';
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:blackforest_app/camera_capture_page.dart';
+import 'package:camera/camera.dart';
+import 'package:blackforest_app/home_page.dart';
 
 class EmployeePage extends StatefulWidget {
   const EmployeePage({super.key});
@@ -25,6 +28,7 @@ class _EmployeePageState extends State<EmployeePage> {
   String? _employeePhotoUrl;
   String? _branchName;
   bool _isLoggingOut = false;
+  bool _isPunchedIn = false;
 
   Timer? _timer;
   Duration _workDuration = Duration.zero;
@@ -241,6 +245,7 @@ class _EmployeePageState extends State<EmployeePage> {
         }
 
         if (mounted) {
+          final hasActive = allActivities.any((s) => s['isActive'] == true);
           setState(() {
             allActivities.sort(
               (a, b) => (b['startTime'] as DateTime).compareTo(
@@ -250,6 +255,7 @@ class _EmployeePageState extends State<EmployeePage> {
             _activities = allActivities;
             _workDuration = totalWork;
             _breakDuration = totalBreak;
+            _isPunchedIn = hasActive;
           });
         }
       }
@@ -385,19 +391,105 @@ class _EmployeePageState extends State<EmployeePage> {
     }
   }
 
+
+  Future<void> _punchIn() async {
+    if (_isPunchedIn) return;
+    final file = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const CameraCapturePage(
+          preferredLensDirection: CameraLensDirection.front,
+        ),
+      ),
+    );
+    if (file == null) return; // cancelled
+
+    setState(() {
+      _profileLoading = true;
+    });
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token') ?? '';
+      
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('https://dev1-blacforest.vseyal.com/api/media'),
+      );
+      request.headers['Authorization'] = 'Bearer $token';
+      request.files.add(await http.MultipartFile.fromPath('file', file.path));
+      
+      final uploadRes = await request.send();
+      if (uploadRes.statusCode == 201 || uploadRes.statusCode == 200) {
+        final respStr = await uploadRes.stream.bytesToString();
+        final mediaDoc = jsonDecode(respStr)['doc'];
+        final mediaId = mediaDoc['id'];
+        
+        final userId = prefs.getString('user_id');
+        final now = DateTime.now();
+        final istDateStr = DateFormat('yyyy-MM-dd').format(now);
+        final searchUrl = 'https://dev1-blacforest.vseyal.com/api/attendance?where[user][equals]=$userId&where[dateString][equals]=$istDateStr';
+        
+        final searchResp = await http.get(Uri.parse(searchUrl), headers: {'Authorization': 'Bearer $token'});
+        if (searchResp.statusCode == 200) {
+           final data = jsonDecode(searchResp.body);
+           final docs = data['docs'] as List;
+           if (docs.isNotEmpty) {
+             final doc = docs[0];
+             final activities = List<Map<String, dynamic>>.from(doc['activities'] ?? []);
+             
+             activities.add({
+               'type': 'session',
+               'punchIn': now.toUtc().toIso8601String(),
+               'status': 'active',
+               'capturedImage': mediaId,
+             });
+             
+             await http.patch(
+               Uri.parse('https://dev1-blacforest.vseyal.com/api/attendance/${doc['id']}'),
+               headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+               body: jsonEncode({'activities': activities}),
+             );
+           } else {
+             await http.post(
+               Uri.parse('https://dev1-blacforest.vseyal.com/api/attendance'),
+               headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+               body: jsonEncode({
+                 'user': userId,
+                 'date': DateTime(now.year, now.month, now.day).toUtc().toIso8601String(),
+                 'dateString': istDateStr,
+                 'activities': [{
+                   'type': 'session',
+                   'punchIn': now.toUtc().toIso8601String(),
+                   'status': 'active',
+                   'capturedImage': mediaId,
+                 }]
+               }),
+             );
+           }
+        }
+      }
+      
+      await _fetchAttendance();
+      if (_isPunchedIn) {
+         if (mounted) {
+             Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomePage()));
+         }
+      }
+    } catch (e) {
+      debugPrint("Punch in error: $e");
+    } finally {
+      if (mounted) {
+          setState(() {
+            _profileLoading = false;
+          });
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return CommonScaffold(
-      title: 'Profile',
-      pageType: PageType.employee,
-      appBarActions: [
-        IconButton(
-          icon: const Icon(Icons.settings_outlined),
-          tooltip: 'Settings',
-          onPressed: _openSettingsPage,
-        ),
-      ],
-      body: Container(
+    final bodyContent = Container(
         width: double.infinity,
         height: double.infinity,
         color: const Color(0xFFF8F9FA),
@@ -422,23 +514,43 @@ class _EmployeePageState extends State<EmployeePage> {
                         ],
                       ),
                       child: Center(
-                        child: CircleAvatar(
-                          radius: 50,
-                          backgroundColor: Colors.white,
-                          backgroundImage:
-                              _employeePhotoUrl != null &&
-                                  _employeePhotoUrl!.isNotEmpty
-                              ? NetworkImage(_employeePhotoUrl!)
-                              : null,
-                          child:
-                              _employeePhotoUrl == null ||
-                                  _employeePhotoUrl!.isEmpty
-                              ? Icon(
-                                  Icons.person,
-                                  size: 50,
-                                  color: Colors.grey[400],
-                                )
-                              : null,
+                        child: Stack(
+                          children: [
+                            CircleAvatar(
+                              radius: 50,
+                              backgroundColor: Colors.white,
+                              backgroundImage:
+                                  _employeePhotoUrl != null &&
+                                      _employeePhotoUrl!.isNotEmpty
+                                  ? NetworkImage(_employeePhotoUrl!)
+                                  : null,
+                              child:
+                                  _employeePhotoUrl == null ||
+                                      _employeePhotoUrl!.isEmpty
+                                  ? Icon(
+                                      Icons.person,
+                                      size: 50,
+                                      color: Colors.grey[400],
+                                    )
+                                  : null,
+                            ),
+                            if (!_profileLoading && !_isPunchedIn)
+                              Positioned(
+                                bottom: 0,
+                                right: 0,
+                                child: GestureDetector(
+                                  onTap: _punchIn,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: const BoxDecoration(
+                                      color: Colors.blue,
+                                      shape: BoxShape.circle,
+                                    ),
+                                    child: const Icon(Icons.camera_alt, color: Colors.white, size: 20),
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                     ),
@@ -869,7 +981,35 @@ class _EmployeePageState extends State<EmployeePage> {
                   ],
                 ),
               ),
-      ),
+      );
+
+    if (!_isPunchedIn) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Profile'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.settings_outlined),
+              tooltip: 'Settings',
+              onPressed: _openSettingsPage,
+            ),
+          ],
+        ),
+        body: bodyContent,
+      );
+    }
+
+    return CommonScaffold(
+      title: 'Profile',
+      pageType: PageType.employee,
+      appBarActions: [
+        IconButton(
+          icon: const Icon(Icons.settings_outlined),
+          tooltip: 'Settings',
+          onPressed: _openSettingsPage,
+        ),
+      ],
+      body: bodyContent,
     );
   }
 }

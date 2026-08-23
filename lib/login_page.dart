@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:blackforest_app/categories_page.dart';
 import 'package:flutter/material.dart';
+import 'package:blackforest_app/employee.dart';
 import 'package:flutter/services.dart';
 import 'package:blackforest_app/app_http.dart' as http;
 import 'package:blackforest_app/api_server_prefs.dart';
@@ -1566,10 +1567,9 @@ class _LoginPageState extends State<LoginPage> {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (_) => IdleTimeoutWrapper(
-              child: showHomeNavigation
-                  ? const HomePage()
-                  : const CategoriesPage(),
+            builder: (_) => const IdleTimeoutWrapper(
+              // ALWAYS open profile page directly after login
+              child: EmployeePage(),
             ),
           ),
         );
