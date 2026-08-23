@@ -978,7 +978,7 @@ class _EmployeePageState extends State<EmployeePage> {
                         );
                       }
                     }),
-                  ],
+                  ], // end of _isPunchedIn
                 ),
               ),
       );
