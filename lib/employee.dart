@@ -1,5 +1,7 @@
+import 'dart:io';
 import 'dart:convert';
 import 'dart:async';
+import 'package:blackforest_app/api_server_prefs.dart';
 import 'package:flutter/material.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:blackforest_app/employee_settings_page.dart';
@@ -30,6 +32,8 @@ class _EmployeePageState extends State<EmployeePage> {
   bool _isLoggingOut = false;
   bool _isPunchedIn = false;
   bool _autoCameraLaunched = false;
+  File? _capturedPunchInPhoto;
+  bool _isPunchingIn = false;
 
   Timer? _timer;
   Duration _workDuration = Duration.zero;
@@ -71,11 +75,8 @@ class _EmployeePageState extends State<EmployeePage> {
       _profileLoading = false;
 
       if (loginTimeMs != null) {
-        // Fallback or initial set
-        final loginTime = DateTime.fromMillisecondsSinceEpoch(loginTimeMs);
-        if (_workDuration == Duration.zero) {
-          _workDuration = DateTime.now().difference(loginTime);
-        }
+        // We no longer calculate _workDuration from login time.
+        // It will strictly rely on actual attendance session duration.
       }
     });
 
@@ -97,7 +98,7 @@ class _EmployeePageState extends State<EmployeePage> {
   Future<String?> _fetchBranchName(String token, String branchId) async {
     try {
       final response = await http.get(
-        Uri.parse('https://dev-blacforest.vseyal.com/api/branches/$branchId'),
+        Uri.parse('https://$apiHostPrimary/api/branches/$branchId'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
@@ -140,7 +141,7 @@ class _EmployeePageState extends State<EmployeePage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://dev-blacforest.vseyal.com/api/attendance?where[user][equals]=$userId&where[date][greater_than_equal]=$queryDate&sort=-date&limit=10',
+          'https://$apiHostPrimary/api/attendance?where[user][equals]=$userId&where[date][greater_than_equal]=$queryDate&sort=-date&limit=10',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -262,7 +263,7 @@ class _EmployeePageState extends State<EmployeePage> {
           if (!_isPunchedIn && !_autoCameraLaunched) {
             _autoCameraLaunched = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              _punchIn();
+              _capturePhoto();
             });
           }
         }
@@ -320,7 +321,7 @@ class _EmployeePageState extends State<EmployeePage> {
         try {
           final now = DateTime.now();
           final searchUrl =
-              'https://dev-blacforest.vseyal.com/api/attendance?where[user][equals]=$userId&where[activities.status][equals]=active&limit=1';
+              'https://$apiHostPrimary/api/attendance?where[user][equals]=$userId&where[activities.status][equals]=active&limit=1';
           final searchResp = await http
               .get(
                 Uri.parse(searchUrl),
@@ -355,7 +356,7 @@ class _EmployeePageState extends State<EmployeePage> {
                 final updateResp = await http
                     .patch(
                       Uri.parse(
-                        'https://dev-blacforest.vseyal.com/api/attendance/$sessionId',
+                        'https://$apiHostPrimary/api/attendance/$sessionId',
                       ),
                       headers: {
                         'Authorization': 'Bearer $token',
@@ -400,7 +401,7 @@ class _EmployeePageState extends State<EmployeePage> {
   }
 
 
-  Future<void> _punchIn() async {
+  Future<void> _capturePhoto() async {
     if (_isPunchedIn) return;
     final file = await Navigator.push(
       context,
@@ -413,7 +414,15 @@ class _EmployeePageState extends State<EmployeePage> {
     if (file == null) return; // cancelled
 
     setState(() {
-      _profileLoading = true;
+      _capturedPunchInPhoto = File(file.path);
+    });
+  }
+
+  Future<void> _submitPunchIn() async {
+    if (_isPunchedIn || _capturedPunchInPhoto == null) return;
+
+    setState(() {
+      _isPunchingIn = true;
     });
 
     try {
@@ -422,10 +431,10 @@ class _EmployeePageState extends State<EmployeePage> {
       
       final request = http.MultipartRequest(
         'POST',
-        Uri.parse('https://dev-blacforest.vseyal.com/api/media'),
+        Uri.parse('https://$apiHostPrimary/api/media'),
       );
       request.headers['Authorization'] = 'Bearer $token';
-      request.files.add(await http.MultipartFile.fromPath('file', file.path));
+      request.files.add(await http.MultipartFile.fromPath('file', _capturedPunchInPhoto!.path));
       
       final uploadRes = await request.send();
       if (uploadRes.statusCode == 201 || uploadRes.statusCode == 200) {
@@ -436,7 +445,7 @@ class _EmployeePageState extends State<EmployeePage> {
         final userId = prefs.getString('user_id');
         final now = DateTime.now();
         final istDateStr = DateFormat('yyyy-MM-dd').format(now);
-        final searchUrl = 'https://dev-blacforest.vseyal.com/api/attendance?where[user][equals]=$userId&where[dateString][equals]=$istDateStr';
+        final searchUrl = 'https://$apiHostPrimary/api/attendance?where[user][equals]=$userId&where[dateString][equals]=$istDateStr';
         
         final searchResp = await http.get(Uri.parse(searchUrl), headers: {'Authorization': 'Bearer $token'});
         if (searchResp.statusCode == 200) {
@@ -454,13 +463,13 @@ class _EmployeePageState extends State<EmployeePage> {
              });
              
              await http.patch(
-               Uri.parse('https://dev-blacforest.vseyal.com/api/attendance/${doc['id']}'),
+               Uri.parse('https://$apiHostPrimary/api/attendance/${doc['id']}'),
                headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
                body: jsonEncode({'activities': activities}),
              );
            } else {
              await http.post(
-               Uri.parse('https://dev-blacforest.vseyal.com/api/attendance'),
+               Uri.parse('https://$apiHostPrimary/api/attendance'),
                headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
                body: jsonEncode({
                  'user': userId,
@@ -489,7 +498,7 @@ class _EmployeePageState extends State<EmployeePage> {
     } finally {
       if (mounted) {
           setState(() {
-            _profileLoading = false;
+            _isPunchingIn = false;
           });
       }
     }
@@ -512,7 +521,10 @@ class _EmployeePageState extends State<EmployeePage> {
                       padding: const EdgeInsets.all(4),
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        border: Border.all(color: Colors.grey[300]!, width: 2),
+                        border: Border.all(
+                          color: _capturedPunchInPhoto != null ? Colors.green : Colors.grey[300]!, 
+                          width: _capturedPunchInPhoto != null ? 3 : 2
+                        ),
                         boxShadow: [
                           BoxShadow(
                             color: Colors.black.withValues(alpha: 0.05),
@@ -527,14 +539,15 @@ class _EmployeePageState extends State<EmployeePage> {
                             CircleAvatar(
                               radius: 50,
                               backgroundColor: Colors.white,
-                              backgroundImage:
-                                  _employeePhotoUrl != null &&
-                                      _employeePhotoUrl!.isNotEmpty
-                                  ? NetworkImage(_employeePhotoUrl!)
-                                  : null,
-                              child:
-                                  _employeePhotoUrl == null ||
-                                      _employeePhotoUrl!.isEmpty
+                              backgroundImage: _capturedPunchInPhoto != null
+                                  ? FileImage(_capturedPunchInPhoto!) as ImageProvider
+                                  : (_employeePhotoUrl != null &&
+                                          _employeePhotoUrl!.isNotEmpty
+                                      ? NetworkImage(_employeePhotoUrl!)
+                                      : null),
+                              child: _capturedPunchInPhoto == null &&
+                                      (_employeePhotoUrl == null ||
+                                          _employeePhotoUrl!.isEmpty)
                                   ? Icon(
                                       Icons.person,
                                       size: 50,
@@ -547,7 +560,7 @@ class _EmployeePageState extends State<EmployeePage> {
                                 bottom: 0,
                                 right: 0,
                                 child: GestureDetector(
-                                  onTap: _punchIn,
+                                  onTap: _capturePhoto,
                                   child: Container(
                                     padding: const EdgeInsets.all(8),
                                     decoration: const BoxDecoration(
@@ -639,12 +652,13 @@ class _EmployeePageState extends State<EmployeePage> {
                     const SizedBox(height: 16),
 
                     // Working Hours Card
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 10,
-                        horizontal: 20,
-                      ),
+                    if (_isPunchedIn || _activities.isNotEmpty) ...[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          vertical: 10,
+                          horizontal: 20,
+                        ),
                       decoration: BoxDecoration(
                         color: Colors.black,
                         borderRadius: BorderRadius.circular(16),
@@ -784,6 +798,43 @@ class _EmployeePageState extends State<EmployeePage> {
                       ),
                     ),
                     const SizedBox(height: 16),
+                    ],
+                    if (!_isPunchedIn && _capturedPunchInPhoto != null) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                            minimumSize: const Size.fromHeight(52),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          onPressed: _isPunchingIn ? null : _submitPunchIn,
+                          icon: _isPunchingIn
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      Colors.white,
+                                    ),
+                                  ),
+                                )
+                              : const Icon(Icons.login, size: 20),
+                          label: Text(
+                            _isPunchingIn ? 'Punching in...' : 'Punch In',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton.icon(
@@ -817,19 +868,21 @@ class _EmployeePageState extends State<EmployeePage> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 24),
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Your activity',
-                        style: TextStyle(
-                          fontSize: 20,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
+                    if (_isPunchedIn || _activities.isNotEmpty) ...[
+                      const SizedBox(height: 24),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Your activity',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 12),
+                      const SizedBox(height: 12),
+                    ],
 
                     // Activity List
                     ..._activities.map((activity) {
@@ -986,7 +1039,7 @@ class _EmployeePageState extends State<EmployeePage> {
                         );
                       }
                     }),
-                  ], // end of _isPunchedIn
+                  ], // end of children
                 ),
               ),
       );
