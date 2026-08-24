@@ -11,7 +11,7 @@ import 'package:image/image.dart' as img_lib;
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:blackforest_app/camera_capture_page.dart';
+import 'package:blackforest_app/camera_page.dart';
 import 'package:blackforest_app/session_prefs.dart';
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:provider/provider.dart';
@@ -437,7 +437,7 @@ class _EmployeePageState extends State<EmployeePage> {
     final XFile? capturedFile = await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => CameraCapturePage(preferredLensDirection: CameraLensDirection.front),
+        builder: (context) => const CameraPage(isFaceCapture: true),
       ),
     );
 
