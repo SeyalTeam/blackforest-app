@@ -202,7 +202,7 @@ class _LoginPageState extends State<LoginPage> {
         final res = await http
             .get(
               Uri.parse(
-                "https://dev-blacforest.vseyal.com/api/users/me?depth=5&showHiddenFields=true",
+                "https://dev1-blacforest.vseyal.com/api/users/me?depth=5&showHiddenFields=true",
               ),
               headers: {"Authorization": "Bearer $token"},
             )
@@ -538,7 +538,7 @@ class _LoginPageState extends State<LoginPage> {
       final gRes = await http
           .get(
             Uri.parse(
-              "https://dev-blacforest.vseyal.com/api/globals/branch-geo-settings",
+              "https://dev1-blacforest.vseyal.com/api/globals/branch-geo-settings",
             ),
             headers: {
               "Authorization": "Bearer $normalizedToken",
@@ -606,7 +606,7 @@ class _LoginPageState extends State<LoginPage> {
       final bRes = await http
           .get(
             Uri.parse(
-              "https://dev-blacforest.vseyal.com/api/branches/$normalizedBranchId",
+              "https://dev1-blacforest.vseyal.com/api/branches/$normalizedBranchId",
             ),
             headers: {
               "Authorization": "Bearer $normalizedToken",
@@ -709,7 +709,7 @@ class _LoginPageState extends State<LoginPage> {
       final gRes = await http
           .get(
             Uri.parse(
-              "https://dev-blacforest.vseyal.com/api/globals/branch-geo-settings",
+              "https://dev1-blacforest.vseyal.com/api/globals/branch-geo-settings",
             ),
             headers: {
               "Authorization": "Bearer $normalizedToken",
@@ -755,7 +755,7 @@ class _LoginPageState extends State<LoginPage> {
       final bRes = await http
           .get(
             Uri.parse(
-              "https://dev-blacforest.vseyal.com/api/branches/$normalizedBranchId",
+              "https://dev1-blacforest.vseyal.com/api/branches/$normalizedBranchId",
             ),
             headers: {
               "Authorization": "Bearer $normalizedToken",
@@ -935,7 +935,7 @@ class _LoginPageState extends State<LoginPage> {
       final response = await http
           .get(
             Uri.parse(
-              "https://dev-blacforest.vseyal.com/api/branches/$normalizedBranchId",
+              "https://dev1-blacforest.vseyal.com/api/branches/$normalizedBranchId",
             ),
             headers: {
               "Authorization": "Bearer $normalizedToken",

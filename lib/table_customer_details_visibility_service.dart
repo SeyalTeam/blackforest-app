@@ -77,7 +77,7 @@ class TableCustomerDetailsVisibilityConfig {
 class TableCustomerDetailsVisibilityService {
   TableCustomerDetailsVisibilityService._();
 
-  static const String _apiHost = 'dev-blacforest.vseyal.com';
+  static const String _apiHost = 'dev1-blacforest.vseyal.com';
   static final Map<String, TableCustomerDetailsVisibilityConfig>
   _cacheByBranch = {};
   static final Map<String, Future<TableCustomerDetailsVisibilityConfig>>

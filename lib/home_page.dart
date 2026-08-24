@@ -271,7 +271,7 @@ class _HomeSearchOverlayState extends State<_HomeSearchOverlay> {
     }
 
     final response = await http.get(
-      Uri.parse('https://dev-blacforest.vseyal.com/api/categories?$filterQuery'),
+      Uri.parse('https://dev1-blacforest.vseyal.com/api/categories?$filterQuery'),
       headers: {
         'Authorization': 'Bearer $token',
         'Content-Type': 'application/json',
@@ -319,7 +319,7 @@ class _HomeSearchOverlayState extends State<_HomeSearchOverlay> {
   }) async {
     final response = await http.get(
       Uri.parse(
-        'https://dev-blacforest.vseyal.com/api/products?where[name][like]=$query&limit=12&depth=2&sort=name',
+        'https://dev1-blacforest.vseyal.com/api/products?where[name][like]=$query&limit=12&depth=2&sort=name',
       ),
       headers: {
         'Authorization': 'Bearer $token',
@@ -509,7 +509,7 @@ class _HomeSearchOverlayState extends State<_HomeSearchOverlay> {
       return resolveApiAssetUrl(value);
     }
     if (value.startsWith('//')) return resolveApiAssetUrl('https:$value');
-    if (value.startsWith('dev-blacforest.vseyal.com')) {
+    if (value.startsWith('dev1-blacforest.vseyal.com')) {
       return resolveApiAssetUrl('https://$value');
     }
     if (value.startsWith('/')) return resolveApiAssetUrl(value);
@@ -1113,7 +1113,7 @@ class _HomePageState extends State<HomePage> {
   }) async {
     try {
       final response = await http.get(
-        Uri.parse('https://dev-blacforest.vseyal.com/api/branches/$branchId'),
+        Uri.parse('https://dev1-blacforest.vseyal.com/api/branches/$branchId'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode != 200) return null;
@@ -1794,7 +1794,7 @@ class _HomePageState extends State<HomePage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://dev-blacforest.vseyal.com/api/globals/widget-settings?depth=1',
+          'https://dev1-blacforest.vseyal.com/api/globals/widget-settings?depth=1',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -1915,7 +1915,7 @@ class _HomePageState extends State<HomePage> {
   }) async {
     final rulesResponse = await http.get(
       Uri.parse(
-        'https://dev-blacforest.vseyal.com/api/globals/widget-settings?depth=1',
+        'https://dev1-blacforest.vseyal.com/api/globals/widget-settings?depth=1',
       ),
       headers: {
         'Authorization': 'Bearer $token',
@@ -1964,7 +1964,7 @@ class _HomePageState extends State<HomePage> {
     final idsParam = favoriteProductIds.join(',');
     final optionsResponse = await http.get(
       Uri.parse(
-        'https://dev-blacforest.vseyal.com/api/widgets/product-options?ids=$idsParam',
+        'https://dev1-blacforest.vseyal.com/api/widgets/product-options?ids=$idsParam',
       ),
       headers: {
         'Authorization': 'Bearer $token',
@@ -2171,7 +2171,7 @@ class _HomePageState extends State<HomePage> {
       final idsParam = Uri.encodeQueryComponent(ids.join(','));
       final response = await http.get(
         Uri.parse(
-          'https://dev-blacforest.vseyal.com/api/categories?where[id][in]=$idsParam&depth=1&limit=${ids.length}',
+          'https://dev1-blacforest.vseyal.com/api/categories?where[id][in]=$idsParam&depth=1&limit=${ids.length}',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -2290,7 +2290,7 @@ class _HomePageState extends State<HomePage> {
       final idsParam = Uri.encodeQueryComponent(productIds.join(','));
       final response = await http.get(
         Uri.parse(
-          'https://dev-blacforest.vseyal.com/api/products?where[id][in]=$idsParam&depth=2&limit=100',
+          'https://dev1-blacforest.vseyal.com/api/products?where[id][in]=$idsParam&depth=2&limit=100',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -2618,11 +2618,11 @@ class _HomePageState extends State<HomePage> {
     if (value.startsWith('//')) {
       return 'https:$value';
     }
-    if (value.startsWith('dev-blacforest.vseyal.com')) {
+    if (value.startsWith('dev1-blacforest.vseyal.com')) {
       return 'https://$value';
     }
     if (value.startsWith('/')) {
-      return 'https://dev-blacforest.vseyal.com$value';
+      return 'https://dev1-blacforest.vseyal.com$value';
     }
     final lower = value.toLowerCase();
     final maybeFilePath =
@@ -2638,7 +2638,7 @@ class _HomePageState extends State<HomePage> {
         value.startsWith('files/') ||
         value.startsWith('api/') ||
         maybeFilePath) {
-      return 'https://dev-blacforest.vseyal.com/$value';
+      return 'https://dev1-blacforest.vseyal.com/$value';
     }
     return null;
   }
