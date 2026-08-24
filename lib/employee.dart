@@ -1,22 +1,27 @@
-import 'dart:io';
-import 'dart:convert';
 import 'dart:async';
-import 'package:blackforest_app/api_server_prefs.dart';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:camera/camera.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:blackforest_app/common_scaffold.dart';
-import 'package:blackforest_app/employee_settings_page.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/app_http.dart' as http;
+import 'package:http_parser/http_parser.dart';
+import 'package:image/image.dart' as img_lib;
 import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:blackforest_app/camera_capture_page.dart';
 import 'package:blackforest_app/session_prefs.dart';
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:provider/provider.dart';
-import 'package:blackforest_app/camera_capture_page.dart';
-import 'package:camera/camera.dart';
-import 'package:blackforest_app/home_page.dart';
+
+import 'package:blackforest_app/api_server_prefs.dart';
+import 'package:blackforest_app/common_scaffold.dart';
+import 'package:blackforest_app/employee_settings_page.dart';
 
 class EmployeePage extends StatefulWidget {
-  const EmployeePage({super.key});
+  const ProfilePage({super.key});
 
   @override
   State<EmployeePage> createState() => _EmployeePageState();
@@ -30,20 +35,33 @@ class _EmployeePageState extends State<EmployeePage> {
   String? _employeePhotoUrl;
   String? _branchName;
   bool _isLoggingOut = false;
-  bool _isPunchedIn = false;
-  bool _autoCameraLaunched = false;
+  bool _isProcessingPunch = false;
+  String? _attendanceDocId;
+  bool _hasActiveSession = false;
   File? _capturedPunchInPhoto;
-  bool _isPunchingIn = false;
+  List<dynamic> _rawActivities = [];
 
   Timer? _timer;
   Duration _workDuration = Duration.zero;
   Duration _breakDuration = Duration.zero;
   List<Map<String, dynamic>> _activities = [];
 
-  Future<void> _openSettingsPage() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (context) => const EmployeeSettingsPage()),
-    );
+  @override
+  void initState() {
+    super.initState();
+    _loadEmployeeData();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _openEmployeeSettingsPage() async {
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const EmployeeSettingsPage()));
   }
 
   Future<void> _loadEmployeeData() async {
@@ -65,6 +83,7 @@ class _EmployeePageState extends State<EmployeePage> {
       }
     }
 
+    if (!mounted) return;
     setState(() {
       _employeeName =
           prefs.getString('employee_name') ?? prefs.getString('user_name');
@@ -74,32 +93,21 @@ class _EmployeePageState extends State<EmployeePage> {
       _branchName = branchName;
       _profileLoading = false;
 
-      if (loginTimeMs != null) {
+      if (loginTimeMs != null && _workDuration == Duration.zero) {
         // We no longer calculate _workDuration from login time.
         // It will strictly rely on actual attendance session duration.
       }
     });
 
+    await _fetchEmployeeProfile();
     await _fetchAttendance();
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _loadEmployeeData();
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
   }
 
   Future<String?> _fetchBranchName(String token, String branchId) async {
     try {
       final response = await http.get(
-        Uri.parse('https://$apiHostPrimary/api/branches/$branchId'),
-        headers: {'Authorization': 'Bearer $token'},
+        Uri.parse('${(await ApiServerPrefs.getApiBaseUrl())}/branches/$branchId?depth=1'),
+        headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
       );
       if (response.statusCode == 200) {
         final decoded = jsonDecode(response.body);
@@ -117,13 +125,60 @@ class _EmployeePageState extends State<EmployeePage> {
           }
         }
       }
-    } catch (e) {
-      debugPrint('Error fetching branch name for employee page: $e');
-    }
+    } catch (_) {}
     return null;
   }
 
+  int _toInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
+  }
+
+
+  Future<void> _fetchEmployeeProfile() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    final employeeId = prefs.getString('employee_id');
+
+    if (token == null || employeeId == null) return;
+
+    try {
+      final response = await http.get(
+        Uri.parse('${(await ApiServerPrefs.getApiBaseUrl())}/employees/$employeeId'),
+        headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final photo = data['photo'];
+        String? photoUrl;
+        if (photo is Map) {
+          photoUrl = photo['thumbnailURL']?.toString() ??
+                     photo['thumbnailUrl']?.toString() ??
+                     photo['url']?.toString();
+        } else if (photo is String) {
+          photoUrl = photo;
+        }
+
+        if (photoUrl != null && photoUrl.isNotEmpty) {
+          final resolvedUrl = resolveApiAssetUrl(photoUrl);
+          await prefs.setString('employee_photo_url', resolvedUrl);
+          if (mounted) {
+            setState(() {
+              _employeePhotoUrl = resolvedUrl;
+            });
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching employee profile: $e');
+    }
+  }
+
   Future<void> _fetchAttendance() async {
+
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
     final userId = prefs.getString('user_id');
@@ -132,7 +187,6 @@ class _EmployeePageState extends State<EmployeePage> {
 
     final now = DateTime.now();
     final localMidnight = DateTime(now.year, now.month, now.day);
-    // Fetch logs from today and yesterday to be safe
     final queryDate = localMidnight
         .subtract(const Duration(days: 1))
         .toUtc()
@@ -141,140 +195,417 @@ class _EmployeePageState extends State<EmployeePage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://$apiHostPrimary/api/attendance?where[user][equals]=$userId&where[date][greater_than_equal]=$queryDate&sort=-date&limit=10',
+          '${(await ApiServerPrefs.getApiBaseUrl())}/attendance?where[user][equals]=$userId&where[date][greater_than_equal]=$queryDate&sort=-date&limit=10',
         ),
-        headers: {'Authorization': 'Bearer $token'},
+        headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
       );
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        final docs = data['docs'] as List;
+      if (response.statusCode != 200) return;
 
-        List<Map<String, dynamic>> allActivities = [];
-        Duration totalWork = Duration.zero;
-        Duration totalBreak = Duration.zero;
+      final data = jsonDecode(response.body);
+      final docs = (data is Map<String, dynamic> ? data['docs'] : null) as List?;
+      if (docs == null) return;
 
-        // docs here will be the Daily Log documents (usually just one for today)
-        for (var doc in docs) {
-          final activities = doc['activities'] as List? ?? [];
+      final allActivities = <Map<String, dynamic>>[];
+      var totalWork = Duration.zero;
+      var totalBreak = Duration.zero;
+      var activeSessionFound = false;
 
-          for (var activity in activities) {
-            final type = activity['type'];
-            final punchInStr = activity['punchIn'];
-            final punchOutStr = activity['punchOut'];
-            final status = activity['status'];
-            final durationSeconds = activity['durationSeconds'] as int? ?? 0;
+      // Extract raw activities from the first doc (today's doc) to use for Punch In/Out updates.
+      if (docs.isNotEmpty && docs.first is Map<String, dynamic>) {
+        final firstDoc = docs.first as Map<String, dynamic>;
+        final docDateStr = firstDoc['dateString']?.toString() ?? '';
+        final queryDateStr = localMidnight.toIso8601String().split('T')[0];
+        
+        // Ensure the doc we found is actually for today
+        if (docDateStr == queryDateStr || 
+            (firstDoc['date']?.toString().startsWith(queryDateStr) == true)) {
+          _attendanceDocId = firstDoc['id']?.toString();
+          _rawActivities = (firstDoc['activities'] as List?) ?? [];
+        } else {
+          _attendanceDocId = null;
+          _rawActivities = [];
+        }
+      } else {
+        _attendanceDocId = null;
+        _rawActivities = [];
+      }
 
-            if (punchInStr == null) continue;
+      for (final dynamic doc in docs) {
+        final activities = (doc is Map<String, dynamic> ? doc['activities'] : null)
+            as List?;
+        if (activities == null) continue;
 
-            final punchIn = DateTime.parse(punchInStr).toLocal();
-            final punchOut = punchOutStr != null
-                ? DateTime.parse(punchOutStr).toLocal()
-                : null;
-            final inTimeStr = DateFormat('hh:mm a').format(punchIn);
-            final outTimeStr = punchOut != null
-                ? DateFormat('hh:mm a').format(punchOut)
-                : 'Active';
+        for (final dynamic rawActivity in activities) {
+          if (rawActivity is! Map<String, dynamic>) continue;
+          final type = rawActivity['type'];
+          final punchInStr = rawActivity['punchIn']?.toString();
+          final punchOutStr = rawActivity['punchOut']?.toString();
+          final status = rawActivity['status']?.toString();
+          final durationSeconds = _toInt(rawActivity['durationSeconds']);
 
-            if (type == 'session') {
-              final duration = punchOut != null
-                  ? Duration(
-                      seconds: durationSeconds > 0
-                          ? durationSeconds
-                          : punchOut.difference(punchIn).inSeconds,
-                    )
-                  : DateTime.now().difference(punchIn);
+          if (punchInStr == null || punchInStr.isEmpty) continue;
 
-              totalWork += duration;
+          final punchIn = DateTime.tryParse(punchInStr)?.toLocal();
+          if (punchIn == null) continue;
+          final punchOut = punchOutStr != null && punchOutStr.isNotEmpty
+              ? DateTime.tryParse(punchOutStr)?.toLocal()
+              : null;
 
-              // Only show if it overlaps with today
-              if (punchIn.isAfter(localMidnight) ||
-                  (punchOut != null && punchOut.isAfter(localMidnight))) {
-                allActivities.add({
-                  'type': 'session',
-                  'inTime': inTimeStr,
-                  'outTime': outTimeStr,
-                  'color': Colors.white,
-                  'startTime': punchIn,
-                  'isActive': status == 'active',
+          final inTimeStr = DateFormat('hh:mm a').format(punchIn);
+          final outTimeStr =
+              punchOut != null ? DateFormat('hh:mm a').format(punchOut) : 'Active';
+
+          if (type == 'session') {
+            final duration = punchOut != null
+                ? Duration(
+                    seconds: durationSeconds > 0
+                        ? durationSeconds
+                        : punchOut.difference(punchIn).inSeconds,
+                  )
+                : DateTime.now().difference(punchIn);
+
+            totalWork += duration;
+
+            if (punchIn.isAfter(localMidnight) ||
+                (punchOut != null && punchOut.isAfter(localMidnight))) {
+              allActivities.add({
+                'type': 'session',
+                'inTime': inTimeStr,
+                'outTime': outTimeStr,
+                'color': Colors.white,
+                'startTime': punchIn,
+                'isActive': status == 'active',
+              });
+            }
+
+            if (status == 'active') {
+              activeSessionFound = true;
+              final activeStart = punchIn;
+              final pastWork = totalWork - DateTime.now().difference(activeStart);
+              _timer?.cancel();
+              _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+                if (!mounted) return;
+                setState(() {
+                  _workDuration = pastWork + DateTime.now().difference(activeStart);
                 });
-              }
+              });
+            }
+          } else if (type == 'break') {
+            final duration = punchOut != null
+                ? Duration(
+                    seconds: durationSeconds > 0
+                        ? durationSeconds
+                        : punchOut.difference(punchIn).inSeconds,
+                  )
+                : Duration.zero;
 
-              // If active, start the timer
-              if (status == 'active') {
-                final activeStart = punchIn;
-                final pastWork =
-                    totalWork - DateTime.now().difference(activeStart);
+            totalBreak += duration;
 
-                _timer?.cancel();
-                _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-                  if (mounted) {
-                    setState(() {
-                      _workDuration =
-                          pastWork + DateTime.now().difference(activeStart);
-                    });
-                  }
-                });
-              }
-            } else if (type == 'break') {
-              final duration = punchOut != null
-                  ? Duration(
-                      seconds: durationSeconds > 0
-                          ? durationSeconds
-                          : punchOut.difference(punchIn).inSeconds,
-                    )
-                  : Duration.zero;
-
-              totalBreak += duration;
-
-              if (punchIn.isAfter(localMidnight)) {
-                allActivities.add({
-                  'type': 'break',
-                  'title': duration.inMinutes > 0
-                      ? '${duration.inMinutes} Min Break'
-                      : '${duration.inSeconds} Sec Break',
-                  'color': const Color(0xFFFFE0B2),
-                  'textColor': Colors.orange[900],
-                  'startTime': punchIn,
-                });
-              }
+            if (punchIn.isAfter(localMidnight)) {
+              allActivities.add({
+                'type': 'break',
+                'title': duration.inMinutes > 0
+                    ? '${duration.inMinutes} Min Break'
+                    : '${duration.inSeconds} Sec Break',
+                'color': const Color(0xFFFFE0B2),
+                'textColor': Colors.orange[900],
+                'startTime': punchIn,
+              });
             }
           }
         }
+      }
 
-        if (allActivities.where((s) => s['isActive'] == true).isEmpty) {
-          _timer?.cancel();
-        }
+      if (!activeSessionFound) {
+        _timer?.cancel();
+      }
 
-        if (mounted) {
-          final hasActive = allActivities.any((s) => s['isActive'] == true);
-          setState(() {
-            allActivities.sort(
-              (a, b) => (b['startTime'] as DateTime).compareTo(
-                a['startTime'] as DateTime,
-              ),
-            );
-            _activities = allActivities;
-            _workDuration = totalWork;
-            _breakDuration = totalBreak;
-            _isPunchedIn = hasActive;
-          });
-          
-          if (!_isPunchedIn && !_autoCameraLaunched) {
-            _autoCameraLaunched = true;
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              _capturePhoto();
-            });
-          }
+      if (!mounted) return;
+      setState(() {
+        allActivities.sort(
+          (a, b) =>
+              (b['startTime'] as DateTime).compareTo(a['startTime'] as DateTime),
+        );
+        _activities = allActivities;
+        _workDuration = totalWork;
+        _breakDuration = totalBreak;
+        _hasActiveSession = activeSessionFound;
+      });
+    } catch (_) {}
+  }
+
+  String _formatTwoDigits(int n) => n.toString().padLeft(2, '0');
+
+  static Future<List<int>?> _compressImageIsolate(List<int> bytes) async {
+    try {
+      final image = img_lib.decodeImage(Uint8List.fromList(bytes));
+      if (image == null) return null;
+
+      img_lib.Image resized = image;
+      if (image.width > 1280 || image.height > 1280) {
+        if (image.width > image.height) {
+          resized = img_lib.copyResize(image, width: 1280);
+        } else {
+          resized = img_lib.copyResize(image, height: 1280);
         }
       }
-    } catch (e) {
-      debugPrint("Error fetching attendance: $e");
+      return img_lib.encodeJpg(resized, quality: 70);
+    } catch (_) {
+      return null;
     }
   }
 
-  String _formatTwoDigits(int n) {
-    return n.toString().padLeft(2, '0');
+  Future<File> _prepareImageForUpload(File originalFile) async {
+    try {
+      if (!await originalFile.exists()) return originalFile;
+      final length = await originalFile.length();
+      if (length < 1500 * 1024) return originalFile;
+
+      final bytes = await originalFile.readAsBytes();
+      
+      final compressedBytes = await compute(_compressImageIsolate, bytes);
+      
+      if (compressedBytes == null) return originalFile;
+
+      final tempDir = await getTemporaryDirectory();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final tempFile = File('${tempDir.path}/opt_selfie_$timestamp.jpg');
+      await tempFile.writeAsBytes(compressedBytes);
+      return tempFile;
+    } catch (_) {
+      return originalFile;
+    }
+  }
+
+  Future<String?> _uploadMedia(File file) async {
+    final uploadFile = await _prepareImageForUpload(file);
+    if (!await uploadFile.exists()) return null;
+
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    if (token == null) return null;
+
+    final filename = 'selfie_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final urlStr = '${(await ApiServerPrefs.getApiBaseUrl())}/media?prefix=attendance';
+
+    try {
+      final request = http.MultipartRequest('POST', Uri.parse(urlStr));
+      request.headers['Authorization'] = 'Bearer $token';
+      request.fields['alt'] = 'Attendance Selfie';
+      request.fields['prefix'] = 'attendance';
+
+      final multipartFile = await http.MultipartFile.fromPath(
+        'file',
+        uploadFile.path,
+        filename: filename,
+        contentType: MediaType('image', 'jpeg'),
+      );
+      request.files.add(multipartFile);
+
+      final response = await request.send();
+      final body = await response.stream.bytesToString();
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = jsonDecode(body);
+        final doc = data['doc'] ?? data;
+        return doc['id']?.toString();
+      }
+    } catch (e) {
+      debugPrint('Upload error: $e');
+    }
+    return null;
+  }
+
+  
+  Future<void> _capturePhoto() async {
+    if (_hasActiveSession || _isProcessingPunch) {
+       ScaffoldMessenger.of(context).showSnackBar(
+         const SnackBar(content: Text('You are already punched in.')),
+       );
+       return;
+    }
+
+    final cameras = await availableCameras();
+    if (cameras.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No camera found')),
+      );
+      return;
+    }
+
+    final XFile? capturedFile = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => CameraPage(cameras: cameras, isFaceCapture: true),
+      ),
+    );
+
+    if (capturedFile != null) {
+      setState(() {
+        _capturedPunchInPhoto = File(capturedFile.path);
+      });
+    }
+  }
+
+  Future<void> _submitPunchIn() async {
+    if (_capturedPunchInPhoto == null || _hasActiveSession || _isProcessingPunch) return;
+    
+    setState(() {
+      _isProcessingPunch = true;
+    });
+
+    try {
+      final mediaId = await _uploadMedia(_capturedPunchInPhoto!);
+      if (mediaId != null) {
+        await _punchIn(mediaId);
+        if (mounted) {
+          setState(() {
+            _capturedPunchInPhoto = null;
+          });
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to upload selfie.')),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('Submit Punch In Error: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessingPunch = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _punchIn(String mediaId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    final userId = prefs.getString('user_id');
+    if (token == null || userId == null) return;
+
+    final now = DateTime.now();
+    final newActivity = {
+      'type': 'session',
+      'punchIn': now.toUtc().toIso8601String(),
+      'status': 'active',
+      'capturedImage': mediaId,
+    };
+
+    try {
+      if (_attendanceDocId != null) {
+        // PATCH existing
+        final updatedActivities = List.from(_rawActivities)..add(newActivity);
+        final url = '${(await ApiServerPrefs.getApiBaseUrl())}/attendance/$_attendanceDocId';
+        final response = await http.patch(
+          Uri.parse(url),
+          headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+          body: jsonEncode({'activities': updatedActivities}),
+        );
+        if (response.statusCode == 200) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Successfully punched in!')),
+          );
+          await _fetchEmployeeProfile();
+    await _fetchAttendance();
+
+
+        }
+      } else {
+        // POST new
+        final localMidnight = DateTime(now.year, now.month, now.day);
+        final dateString = DateFormat('yyyy-MM-dd').format(localMidnight);
+        
+        // Find employee id from current user if needed, but attendance can just have user and no employee, or we fetch employee id.
+        // Actually the backend payload config creates attendance with `user`. We will just omit `employee` if we don't have it.
+        final url = '${(await ApiServerPrefs.getApiBaseUrl())}/attendance';
+        final response = await http.post(
+          Uri.parse(url),
+          headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'user': userId,
+            'date': localMidnight.toUtc().toIso8601String(),
+            'dateString': dateString,
+            'activities': [newActivity],
+          }),
+        );
+        if (response.statusCode == 200 || response.statusCode == 201) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Successfully punched in!')),
+          );
+          await _fetchEmployeeProfile();
+    await _fetchAttendance();
+
+
+        }
+      }
+    } catch (e) {
+      debugPrint('Punch In Error: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessingPunch = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _punchOut() async {
+    if (!_hasActiveSession || _attendanceDocId == null || _isProcessingPunch) return;
+    
+    setState(() {
+      _isProcessingPunch = true;
+    });
+
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    if (token == null) return;
+
+    try {
+      final updatedActivities = List.from(_rawActivities);
+      
+      // Find the active session and close it
+      for (var i = updatedActivities.length - 1; i >= 0; i--) {
+        final activity = updatedActivities[i];
+        if (activity['type'] == 'session' && activity['status'] == 'active') {
+           final punchInTime = DateTime.parse(activity['punchIn']);
+           final punchOutTime = DateTime.now();
+           final durationSecs = punchOutTime.difference(punchInTime).inSeconds;
+           
+           activity['punchOut'] = punchOutTime.toUtc().toIso8601String();
+           activity['status'] = 'closed';
+           activity['durationSeconds'] = durationSecs;
+           break;
+        }
+      }
+
+      final url = '${(await ApiServerPrefs.getApiBaseUrl())}/attendance/$_attendanceDocId';
+      final response = await http.patch(
+        Uri.parse(url),
+        headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+        body: jsonEncode({'activities': updatedActivities}),
+      );
+
+      if (response.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Successfully punched out!')),
+        );
+        await _fetchEmployeeProfile();
+    await _fetchAttendance();
+      }
+    } catch (e) {
+      debugPrint('Punch Out Error: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessingPunch = false;
+        });
+      }
+    }
   }
 
   Future<void> _confirmLogout() async {
@@ -315,76 +646,7 @@ class _EmployeePageState extends State<EmployeePage> {
     });
     try {
       final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('token');
-      final userId = prefs.getString('user_id');
-      if (token != null && userId != null) {
-        try {
-          final now = DateTime.now();
-          final searchUrl =
-              'https://$apiHostPrimary/api/attendance?where[user][equals]=$userId&where[activities.status][equals]=active&limit=1';
-          final searchResp = await http
-              .get(
-                Uri.parse(searchUrl),
-                headers: {'Authorization': 'Bearer $token'},
-              )
-              .timeout(const Duration(seconds: 3));
-
-          if (searchResp.statusCode == 200) {
-            final data = jsonDecode(searchResp.body);
-            final docs = data['docs'] as List;
-            if (docs.isNotEmpty) {
-              final attendanceDoc = docs[0];
-              final sessionId = attendanceDoc['id'];
-              final activities = List<Map<String, dynamic>>.from(
-                attendanceDoc['activities'] ?? [],
-              );
-
-              if (activities.isNotEmpty) {
-                for (int i = activities.length - 1; i >= 0; i--) {
-                  if (activities[i]['type'] == 'session' &&
-                      activities[i]['status'] == 'active') {
-                    activities[i]['punchOut'] = now.toUtc().toIso8601String();
-                    activities[i]['status'] = 'closed';
-                    final punchIn = DateTime.parse(activities[i]['punchIn']);
-                    activities[i]['durationSeconds'] = now
-                        .difference(punchIn)
-                        .inSeconds;
-                    break;
-                  }
-                }
-
-                final updateResp = await http
-                    .patch(
-                      Uri.parse(
-                        'https://$apiHostPrimary/api/attendance/$sessionId',
-                      ),
-                      headers: {
-                        'Authorization': 'Bearer $token',
-                        'Content-Type': 'application/json',
-                      },
-                      body: jsonEncode({'activities': activities}),
-                    )
-                    .timeout(const Duration(seconds: 3));
-
-                if (updateResp.statusCode != 200) {
-                  debugPrint(
-                    'Failed to update daily log: ${updateResp.statusCode} ${updateResp.body}',
-                  );
-                }
-              }
-            }
-          }
-        } catch (e) {
-          debugPrint('Employee page logout attendance error: $e');
-        }
-      }
-
-      if (mounted) {
-        await Provider.of<CartProvider>(
-          context,
-          listen: false,
-        ).clearAllDrafts(notify: false);
-      }
+      await Provider.of<CartProvider>(context, listen: false).clearAllDrafts(notify: false);
       await clearSessionPreservingFavorites(prefs);
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/login');
@@ -400,187 +662,86 @@ class _EmployeePageState extends State<EmployeePage> {
     }
   }
 
-
-  Future<void> _capturePhoto() async {
-    if (_isPunchedIn) return;
-    final file = await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const CameraCapturePage(
-          preferredLensDirection: CameraLensDirection.front,
-        ),
-      ),
-    );
-    if (file == null) return; // cancelled
-
-    setState(() {
-      _capturedPunchInPhoto = File(file.path);
-    });
-  }
-
-  Future<void> _submitPunchIn() async {
-    if (_isPunchedIn || _capturedPunchInPhoto == null) return;
-
-    setState(() {
-      _isPunchingIn = true;
-    });
-
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('token') ?? '';
-      
-      final request = http.MultipartRequest(
-        'POST',
-        Uri.parse('https://$apiHostPrimary/api/media'),
-      );
-      request.headers['Authorization'] = 'Bearer $token';
-      request.files.add(await http.MultipartFile.fromPath('file', _capturedPunchInPhoto!.path));
-      
-      final uploadRes = await request.send();
-      if (uploadRes.statusCode == 201 || uploadRes.statusCode == 200) {
-        final respStr = await uploadRes.stream.bytesToString();
-        final mediaDoc = jsonDecode(respStr)['doc'];
-        final mediaId = mediaDoc['id'];
-        
-        final userId = prefs.getString('user_id');
-        final now = DateTime.now();
-        final istDateStr = DateFormat('yyyy-MM-dd').format(now);
-        final searchUrl = 'https://$apiHostPrimary/api/attendance?where[user][equals]=$userId&where[dateString][equals]=$istDateStr';
-        
-        final searchResp = await http.get(Uri.parse(searchUrl), headers: {'Authorization': 'Bearer $token'});
-        if (searchResp.statusCode == 200) {
-           final data = jsonDecode(searchResp.body);
-           final docs = data['docs'] as List;
-           if (docs.isNotEmpty) {
-             final doc = docs[0];
-             final activities = List<Map<String, dynamic>>.from(doc['activities'] ?? []);
-             
-             activities.add({
-               'type': 'session',
-               'punchIn': now.toUtc().toIso8601String(),
-               'status': 'active',
-               'capturedImage': mediaId,
-             });
-             
-             await http.patch(
-               Uri.parse('https://$apiHostPrimary/api/attendance/${doc['id']}'),
-               headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
-               body: jsonEncode({'activities': activities}),
-             );
-           } else {
-             await http.post(
-               Uri.parse('https://$apiHostPrimary/api/attendance'),
-               headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
-               body: jsonEncode({
-                 'user': userId,
-                 'date': DateTime(now.year, now.month, now.day).toUtc().toIso8601String(),
-                 'dateString': istDateStr,
-                 'activities': [{
-                   'type': 'session',
-                   'punchIn': now.toUtc().toIso8601String(),
-                   'status': 'active',
-                   'capturedImage': mediaId,
-                 }]
-               }),
-             );
-           }
-           
-        }
-      }
-      
-      await _fetchAttendance();
-      if (_isPunchedIn) {
-         if (mounted) {
-             Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const HomePage()));
-         }
-      }
-    } catch (e) {
-      debugPrint("Punch in error: $e");
-    } finally {
-      if (mounted) {
-          setState(() {
-            _isPunchingIn = false;
-          });
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final bodyContent = Container(
+    return CommonScaffold(
+      title: 'Profile',
+      pageType: PageType.employee,
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.settings_outlined),
+          tooltip: 'Settings',
+          onPressed: _openEmployeeSettingsPage,
+        ),
+      ],
+      body: Container(
         width: double.infinity,
         height: double.infinity,
         color: const Color(0xFFF8F9FA),
         child: _profileLoading
             ? const Center(child: CircularProgressIndicator(color: Colors.blue))
             : SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(24.0, 10.0, 24.0, 40.0),
+                padding: const EdgeInsets.fromLTRB(24, 10, 24, 40),
                 child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: _capturedPunchInPhoto != null ? Colors.green : Colors.grey[300]!, 
-                          width: _capturedPunchInPhoto != null ? 3 : 2
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.05),
-                            blurRadius: 20,
-                            spreadRadius: 5,
-                          ),
-                        ],
-                      ),
-                      child: Center(
-                        child: Stack(
-                          children: [
-                            CircleAvatar(
+                    GestureDetector(
+                      onTap: _hasActiveSession ? null : _capturePhoto,
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: _hasActiveSession ? Colors.green : Colors.grey[300]!,
+                                width: _hasActiveSession ? 3 : 2,
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.05),
+                                  blurRadius: 20,
+                                  spreadRadius: 5,
+                                ),
+                              ],
+                            ),
+                            child: CircleAvatar(
                               radius: 50,
                               backgroundColor: Colors.white,
                               backgroundImage: _capturedPunchInPhoto != null
                                   ? FileImage(_capturedPunchInPhoto!) as ImageProvider
-                                  : (_employeePhotoUrl != null &&
-                                          _employeePhotoUrl!.isNotEmpty
+                                  : (_employeePhotoUrl != null && _employeePhotoUrl!.isNotEmpty
                                       ? NetworkImage(_employeePhotoUrl!)
                                       : null),
-                              child: _capturedPunchInPhoto == null &&
-                                      (_employeePhotoUrl == null ||
-                                          _employeePhotoUrl!.isEmpty)
-                                  ? Icon(
-                                      Icons.person,
-                                      size: 50,
-                                      color: Colors.grey[400],
-                                    )
+                              child: _capturedPunchInPhoto == null && (_employeePhotoUrl == null || _employeePhotoUrl!.isEmpty)
+                                  ? Icon(Icons.person, size: 50, color: Colors.grey[400])
                                   : null,
                             ),
-                            if (!_profileLoading && !_isPunchedIn)
-                              Positioned(
-                                bottom: 0,
-                                right: 0,
-                                child: GestureDetector(
-                                  onTap: _capturePhoto,
-                                  child: Container(
-                                    padding: const EdgeInsets.all(8),
-                                    decoration: const BoxDecoration(
-                                      color: Colors.blue,
-                                      shape: BoxShape.circle,
-                                    ),
-                                    child: const Icon(Icons.camera_alt, color: Colors.white, size: 20),
-                                  ),
+                          ),
+                          if (!_hasActiveSession && !_isProcessingPunch)
+                            Positioned(
+                              bottom: 0,
+                              right: 0,
+                              child: Container(
+                                padding: const EdgeInsets.all(4),
+                                decoration: const BoxDecoration(
+                                  color: Colors.blue,
+                                  shape: BoxShape.circle,
                                 ),
+                                child: const Icon(Icons.camera_alt, color: Colors.white, size: 18),
                               ),
-                          ],
-                        ),
+                            ),
+                        ],
                       ),
                     ),
                     const SizedBox(height: 15),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 8,
+                      runSpacing: 8,
                       children: [
-                        if (_employeeId != null && _employeeId!.isNotEmpty) ...[
+                        if (_employeeId != null && _employeeId!.isNotEmpty)
                           Text(
                             'ID: $_employeeId',
                             style: TextStyle(
@@ -589,16 +750,6 @@ class _EmployeePageState extends State<EmployeePage> {
                               fontWeight: FontWeight.w500,
                             ),
                           ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '|',
-                            style: TextStyle(
-                              color: Colors.grey[400],
-                              fontSize: 14,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                        ],
                         Text(
                           _employeeName ?? 'User',
                           style: const TextStyle(
@@ -608,15 +759,6 @@ class _EmployeePageState extends State<EmployeePage> {
                             letterSpacing: 0.5,
                           ),
                         ),
-                        const SizedBox(width: 8),
-                        Text(
-                          '|',
-                          style: TextStyle(
-                            color: Colors.grey[400],
-                            fontSize: 14,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 8,
@@ -640,26 +782,56 @@ class _EmployeePageState extends State<EmployeePage> {
                     ),
                     const SizedBox(height: 8),
                     if (_branchName != null && _branchName!.isNotEmpty)
-                      Center(
-                        child: Text(
-                          _branchName!,
-                          style: const TextStyle(
-                            color: Colors.blue,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
+                      Text(
+                        _branchName!,
+                        style: const TextStyle(
+                          color: Colors.blue,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+
+                    const SizedBox(height: 16),
+                    if (!_hasActiveSession && _capturedPunchInPhoto != null) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton.icon(
+                          onPressed: _isProcessingPunch ? null : _submitPunchIn,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          icon: _isProcessingPunch
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.login, size: 20),
+                          label: Text(
+                            _isProcessingPunch ? 'Punching in...' : 'Punch In',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                         ),
                       ),
-                    const SizedBox(height: 16),
-
-                    // Working Hours Card
-                    if (_isPunchedIn || _activities.isNotEmpty) ...[
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(
-                          vertical: 10,
-                          horizontal: 20,
-                        ),
+                      const SizedBox(height: 16),
+                    ],
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 10,
+                        horizontal: 20,
+                      ),
                       decoration: BoxDecoration(
                         color: Colors.black,
                         borderRadius: BorderRadius.circular(16),
@@ -763,9 +935,42 @@ class _EmployeePageState extends State<EmployeePage> {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 16),
 
-                    // Break Time & Shift
+                    const SizedBox(height: 16),
+                    if (!_hasActiveSession && _capturedPunchInPhoto != null) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton.icon(
+                          onPressed: _isProcessingPunch ? null : _submitPunchIn,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          icon: _isProcessingPunch
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.login, size: 20),
+                          label: Text(
+                            _isProcessingPunch ? 'Punching in...' : 'Punch In',
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                    ],
                     Container(
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(
@@ -773,7 +978,7 @@ class _EmployeePageState extends State<EmployeePage> {
                         horizontal: 16,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFFE0B2), // Light Orange
+                        color: const Color(0xFFFFE0B2),
                         borderRadius: BorderRadius.circular(12),
                         boxShadow: [
                           BoxShadow(
@@ -787,68 +992,35 @@ class _EmployeePageState extends State<EmployeePage> {
                         children: [
                           Icon(Icons.coffee, color: Colors.orange[800]),
                           const SizedBox(width: 12),
-                          Text(
-                            'Total Break Time ${_formatTwoDigits(_breakDuration.inHours)}h:${_formatTwoDigits(_breakDuration.inMinutes % 60)}m',
-                            style: const TextStyle(
-                              color: Colors.black87,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
+                          Expanded(
+                            child: Text(
+                              'Total Break Time ${_formatTwoDigits(_breakDuration.inHours)}h:${_formatTwoDigits(_breakDuration.inMinutes % 60)}m',
+                              style: const TextStyle(
+                                color: Colors.black87,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
                             ),
                           ),
                         ],
                       ),
                     ),
                     const SizedBox(height: 16),
-                    ],
-                    if (!_isPunchedIn && _capturedPunchInPhoto != null) ...[
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                          style: FilledButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            foregroundColor: Colors.white,
-                            minimumSize: const Size.fromHeight(52),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                          ),
-                          onPressed: _isPunchingIn ? null : _submitPunchIn,
-                          icon: _isPunchingIn
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                      Colors.white,
-                                    ),
-                                  ),
-                                )
-                              : const Icon(Icons.login, size: 20),
-                          label: Text(
-                            _isPunchingIn ? 'Punching in...' : 'Punch In',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                    ],
                     SizedBox(
                       width: double.infinity,
                       child: FilledButton.icon(
                         style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFFD32F2F),
+                          backgroundColor: _hasActiveSession ? Colors.orange[800] : const Color(0xFFD32F2F),
                           foregroundColor: Colors.white,
                           minimumSize: const Size.fromHeight(52),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14),
                           ),
                         ),
-                        onPressed: _isLoggingOut ? null : _confirmLogout,
-                        icon: _isLoggingOut
+                        onPressed: (_isLoggingOut || _isProcessingPunch) 
+                            ? null 
+                            : (_hasActiveSession ? _punchOut : _confirmLogout),
+                        icon: (_isLoggingOut || _isProcessingPunch)
                             ? const SizedBox(
                                 width: 18,
                                 height: 18,
@@ -859,9 +1031,16 @@ class _EmployeePageState extends State<EmployeePage> {
                                   ),
                                 ),
                               )
-                            : const Icon(Icons.logout_rounded, size: 20),
+                            : Icon(
+                                _hasActiveSession ? Icons.punch_clock : Icons.logout_rounded, 
+                                size: 20
+                              ),
                         label: Text(
-                          _isLoggingOut ? 'Logging out...' : 'Logout',
+                          _isProcessingPunch 
+                              ? 'Processing...' 
+                              : _isLoggingOut 
+                                  ? 'Logging out...' 
+                                  : (_hasActiveSession ? 'Punch Out' : 'Logout'),
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w700,
@@ -869,209 +1048,183 @@ class _EmployeePageState extends State<EmployeePage> {
                         ),
                       ),
                     ),
-                    if (_isPunchedIn || _activities.isNotEmpty) ...[
-                      const SizedBox(height: 24),
-                      const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Your activity',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87,
+                    const SizedBox(height: 24),
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'Your activity',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    if (_activities.isEmpty)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Center(
+                          child: Text(
+                            'No activity for today',
+                            style: TextStyle(color: Colors.black54),
                           ),
                         ),
                       ),
-                      const SizedBox(height: 12),
-                    ],
-
-                    // Activity List
                     ..._activities.map((activity) {
                       if (activity['type'] == 'break') {
-                        // Break Box
                         return Container(
                           margin: const EdgeInsets.only(bottom: 12),
                           padding: const EdgeInsets.symmetric(vertical: 12),
                           width: double.infinity,
                           decoration: BoxDecoration(
-                            color: activity['color'],
+                            color: activity['color'] as Color,
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Center(
                             child: Text(
-                              activity['title'],
+                              activity['title']?.toString() ?? '',
                               style: TextStyle(
-                                color: activity['textColor'],
+                                color:
+                                    (activity['textColor'] as Color?) ??
+                                    Colors.orange[900],
                                 fontWeight: FontWeight.bold,
                                 fontSize: 15,
                               ),
                             ),
                           ),
                         );
-                      } else {
-                        // Session Box (In + Out)
-                        return Container(
-                          margin: const EdgeInsets.only(bottom: 12),
-                          width: double.infinity,
-                          decoration: BoxDecoration(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: Colors.grey[200]!),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withValues(alpha: 0.03),
-                                blurRadius: 10,
-                                offset: const Offset(0, 2),
+                      }
+
+                      return Container(
+                        margin: const EdgeInsets.only(bottom: 12),
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.grey[200]!),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.03),
+                              blurRadius: 10,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: IntrinsicHeight(
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: Colors.green.withValues(alpha: 0.1),
+                                    borderRadius: const BorderRadius.only(
+                                      topLeft: Radius.circular(12),
+                                      bottomLeft: Radius.circular(12),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          const Icon(
+                                            Icons.login,
+                                            size: 18,
+                                            color: Colors.green,
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            'Punch In',
+                                            style: TextStyle(
+                                              color: Colors.green[800],
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 14,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        activity['inTime']?.toString() ?? '-',
+                                        style: const TextStyle(
+                                          color: Colors.black87,
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                              Container(width: 1, color: Colors.grey[300]),
+                              Expanded(
+                                child: Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: activity['isActive'] == true
+                                        ? Colors.white
+                                        : Colors.red.withValues(alpha: 0.08),
+                                    borderRadius: const BorderRadius.only(
+                                      topRight: Radius.circular(12),
+                                      bottomRight: Radius.circular(12),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            Icons.logout,
+                                            size: 18,
+                                            color: activity['isActive'] == true
+                                                ? Colors.grey
+                                                : Colors.red,
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            'Punch Out',
+                                            style: TextStyle(
+                                              color: activity['isActive'] == true
+                                                  ? Colors.grey[600]
+                                                  : Colors.red[800],
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 14,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 6),
+                                      Text(
+                                        activity['outTime']?.toString() ?? '-',
+                                        style: TextStyle(
+                                          color: activity['isActive'] == true
+                                              ? Colors.green[700]
+                                              : Colors.red[700],
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 16,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
                               ),
                             ],
                           ),
-                          child: IntrinsicHeight(
-                            child: Row(
-                              children: [
-                                // Left: Punch In
-                                Expanded(
-                                  child: Container(
-                                    padding: const EdgeInsets.all(16),
-                                    decoration: BoxDecoration(
-                                      color: Colors.green.withValues(
-                                        alpha: 0.1,
-                                      ),
-                                      borderRadius: const BorderRadius.only(
-                                        topLeft: Radius.circular(12),
-                                        bottomLeft: Radius.circular(12),
-                                      ),
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
-                                          children: [
-                                            const Icon(
-                                              Icons.login,
-                                              size: 18,
-                                              color: Colors.green,
-                                            ),
-                                            const SizedBox(width: 6),
-                                            Text(
-                                              "Punch In",
-                                              style: TextStyle(
-                                                color: Colors.green[800],
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 14,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 6),
-                                        Text(
-                                          activity['inTime'],
-                                          style: const TextStyle(
-                                            color: Colors.black87,
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 16,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                // Divider
-                                Container(width: 1, color: Colors.grey[300]),
-                                // Right: Punch Out
-                                Expanded(
-                                  child: Container(
-                                    padding: const EdgeInsets.all(16),
-                                    decoration: BoxDecoration(
-                                      color: activity['isActive'] == true
-                                          ? Colors.white
-                                          : Colors.red.withValues(alpha: 0.08),
-                                      borderRadius: const BorderRadius.only(
-                                        topRight: Radius.circular(12),
-                                        bottomRight: Radius.circular(12),
-                                      ),
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
-                                          children: [
-                                            Icon(
-                                              Icons.logout,
-                                              size: 18,
-                                              color:
-                                                  activity['isActive'] == true
-                                                  ? Colors.grey
-                                                  : Colors.red,
-                                            ),
-                                            const SizedBox(width: 6),
-                                            Text(
-                                              "Punch Out",
-                                              style: TextStyle(
-                                                color:
-                                                    activity['isActive'] == true
-                                                    ? Colors.grey[600]
-                                                    : Colors.red[800],
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 14,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 6),
-                                        Text(
-                                          activity['outTime'],
-                                          style: TextStyle(
-                                            color: activity['isActive'] == true
-                                                ? Colors.green[700]
-                                                : Colors.red[700],
-                                            fontWeight: FontWeight.w600,
-                                            fontSize: 16,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      }
+                        ),
+                      );
                     }),
-                  ], // end of children
+                  ],
                 ),
               ),
-      );
-
-    if (!_isPunchedIn) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('Profile'),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.settings_outlined),
-              tooltip: 'Settings',
-              onPressed: _openSettingsPage,
-            ),
-          ],
-        ),
-        body: bodyContent,
-      );
-    }
-
-    return CommonScaffold(
-      title: 'Profile',
-      pageType: PageType.employee,
-      appBarActions: [
-        IconButton(
-          icon: const Icon(Icons.settings_outlined),
-          tooltip: 'Settings',
-          onPressed: _openSettingsPage,
-        ),
-      ],
-      body: bodyContent,
+      ),
     );
   }
 }
