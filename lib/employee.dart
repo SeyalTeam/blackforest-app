@@ -485,20 +485,6 @@ class _EmployeePageState extends State<EmployeePage> {
              );
            }
            
-           // POST to new punchin collection
-           try {
-             await http.post(
-               Uri.parse('https://$apiHostPrimary/api/punchin'),
-               headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
-               body: jsonEncode({
-                 'user': userId,
-                 'date': now.toUtc().toIso8601String(),
-                 'photo': mediaId,
-               }),
-             );
-           } catch (e) {
-             debugPrint('Error creating punchin record: $e');
-           }
         }
       }
       
