@@ -437,7 +437,7 @@ class _EmployeePageState extends State<EmployeePage> {
     final XFile? capturedFile = await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => const CameraPage(isFaceCapture: true),
+        builder: (context) => CameraPage(cameras: cameras, isFaceCapture: true),
       ),
     );
 
