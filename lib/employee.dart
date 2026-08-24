@@ -667,7 +667,7 @@ class _EmployeePageState extends State<EmployeePage> {
     return CommonScaffold(
       title: 'Profile',
       pageType: PageType.employee,
-      actions: [
+      appBarActions: [
         IconButton(
           icon: const Icon(Icons.settings_outlined),
           tooltip: 'Settings',
