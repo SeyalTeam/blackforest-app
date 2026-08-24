@@ -21,7 +21,7 @@ import 'package:blackforest_app/common_scaffold.dart';
 import 'package:blackforest_app/employee_settings_page.dart';
 
 class EmployeePage extends StatefulWidget {
-  const ProfilePage({super.key});
+  const EmployeePage({super.key});
 
   @override
   State<EmployeePage> createState() => _EmployeePageState();
@@ -106,7 +106,7 @@ class _EmployeePageState extends State<EmployeePage> {
   Future<String?> _fetchBranchName(String token, String branchId) async {
     try {
       final response = await http.get(
-        Uri.parse('${(await ApiServerPrefs.getApiBaseUrl())}/branches/$branchId?depth=1'),
+        Uri.parse('https://$apiHostPrimary/api/branches/$branchId?depth=1'),
         headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
       );
       if (response.statusCode == 200) {
@@ -146,7 +146,7 @@ class _EmployeePageState extends State<EmployeePage> {
 
     try {
       final response = await http.get(
-        Uri.parse('${(await ApiServerPrefs.getApiBaseUrl())}/employees/$employeeId'),
+        Uri.parse('https://$apiHostPrimary/api/employees/$employeeId'),
         headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
       );
 
@@ -195,7 +195,7 @@ class _EmployeePageState extends State<EmployeePage> {
     try {
       final response = await http.get(
         Uri.parse(
-          '${(await ApiServerPrefs.getApiBaseUrl())}/attendance?where[user][equals]=$userId&where[date][greater_than_equal]=$queryDate&sort=-date&limit=10',
+          'https://$apiHostPrimary/api/attendance?where[user][equals]=$userId&where[date][greater_than_equal]=$queryDate&sort=-date&limit=10',
         ),
         headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
       );
@@ -387,7 +387,7 @@ class _EmployeePageState extends State<EmployeePage> {
     if (token == null) return null;
 
     final filename = 'selfie_${DateTime.now().millisecondsSinceEpoch}.jpg';
-    final urlStr = '${(await ApiServerPrefs.getApiBaseUrl())}/media?prefix=attendance';
+    final urlStr = 'https://$apiHostPrimary/api/media?prefix=attendance';
 
     try {
       final request = http.MultipartRequest('POST', Uri.parse(urlStr));
@@ -437,7 +437,7 @@ class _EmployeePageState extends State<EmployeePage> {
     final XFile? capturedFile = await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => CameraPage(cameras: cameras, isFaceCapture: true),
+        builder: (context) => CameraCapturePage(preferredLensDirection: CameraLensDirection.front),
       ),
     );
 
@@ -500,7 +500,7 @@ class _EmployeePageState extends State<EmployeePage> {
       if (_attendanceDocId != null) {
         // PATCH existing
         final updatedActivities = List.from(_rawActivities)..add(newActivity);
-        final url = '${(await ApiServerPrefs.getApiBaseUrl())}/attendance/$_attendanceDocId';
+        final url = 'https://$apiHostPrimary/api/attendance/$_attendanceDocId';
         final response = await http.patch(
           Uri.parse(url),
           headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
@@ -522,7 +522,7 @@ class _EmployeePageState extends State<EmployeePage> {
         
         // Find employee id from current user if needed, but attendance can just have user and no employee, or we fetch employee id.
         // Actually the backend payload config creates attendance with `user`. We will just omit `employee` if we don't have it.
-        final url = '${(await ApiServerPrefs.getApiBaseUrl())}/attendance';
+        final url = 'https://$apiHostPrimary/api/attendance';
         final response = await http.post(
           Uri.parse(url),
           headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
@@ -583,7 +583,7 @@ class _EmployeePageState extends State<EmployeePage> {
         }
       }
 
-      final url = '${(await ApiServerPrefs.getApiBaseUrl())}/attendance/$_attendanceDocId';
+      final url = 'https://$apiHostPrimary/api/attendance/$_attendanceDocId';
       final response = await http.patch(
         Uri.parse(url),
         headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
