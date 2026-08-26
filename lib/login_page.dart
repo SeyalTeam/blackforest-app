@@ -142,13 +142,6 @@ class _LoginPageState extends State<LoginPage> {
   static const int _loginTimeoutRetryCount = 2;
   static const Set<String> _staffRoles = <String>{
     'waiter',
-    'cashier',
-    'supervisor',
-    'branch',
-    'kitchen',
-    'delivery',
-    'driver',
-    'chef',
   };
   static const String _waiterDefaultPassword = '12345';
 
@@ -257,6 +250,16 @@ class _LoginPageState extends State<LoginPage> {
             }
 
             final role = user['role']?.toString();
+            final normalizedRole = (role ?? '').trim().toLowerCase();
+            if (normalizedRole != 'waiter') {
+              await clearSessionPreservingFavorites(prefs);
+              if (mounted) {
+                _showError(
+                  "Access denied: only waiter accounts are allowed to login.",
+                );
+              }
+              return;
+            }
             if (role != null && role.isNotEmpty) {
               await prefs.setString('role', role);
             }
@@ -1296,9 +1299,11 @@ class _LoginPageState extends State<LoginPage> {
           setState(() => _isLoading = false);
           return;
         }
-        // Allowed roles
+        // Allowed roles - only waiter allowed
         if (!_staffRoles.contains(normalizedRole)) {
-          _showError("Access denied: only branch-related users allowed.");
+          _showError(
+            "Access denied: only waiter accounts are allowed to login.",
+          );
           setState(() => _isLoading = false);
           return;
         }
@@ -1661,8 +1666,12 @@ class _LoginPageState extends State<LoginPage> {
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [Color(0xFF1C0908), Color(0xFF4A1A12), Color(0xFF7A2D1C)],
-            stops: [0, 0.55, 1],
+            colors: [
+              Color(0xFFFFF9F6),
+              Color(0xFFF7ECE6),
+              Color(0xFFEFE2DB),
+            ],
+            stops: [0.0, 0.55, 1.0],
           ),
         ),
         child: Stack(
@@ -1675,7 +1684,7 @@ class _LoginPageState extends State<LoginPage> {
                 height: 260,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: const Color(0xFFF6D365).withValues(alpha: 0.2),
+                  color: const Color(0xFFE30E10).withValues(alpha: 0.08),
                 ),
               ),
             ),
@@ -1687,7 +1696,7 @@ class _LoginPageState extends State<LoginPage> {
                 height: 300,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: const Color(0xFFFFA07A).withValues(alpha: 0.16),
+                  color: const Color(0xFF380104).withValues(alpha: 0.06),
                 ),
               ),
             ),
@@ -1708,21 +1717,25 @@ class _LoginPageState extends State<LoginPage> {
                         return Transform.scale(scale: scale, child: child);
                       },
                       child: Container(
-                        padding: const EdgeInsets.fromLTRB(24, 22, 24, 18),
+                        padding: const EdgeInsets.fromLTRB(24, 24, 24, 20),
                         decoration: BoxDecoration(
                           color: const Color(
-                            0xFFF8EFE6,
-                          ).withValues(alpha: 0.96),
+                            0xFF280204,
+                          ).withValues(alpha: 0.97),
                           borderRadius: BorderRadius.circular(28),
                           border: Border.all(
-                            color: Colors.white.withValues(alpha: 0.62),
+                            color: const Color(
+                              0xFFE30E10,
+                            ).withValues(alpha: 0.45),
                             width: 1.4,
                           ),
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.22),
-                              blurRadius: 30,
-                              offset: const Offset(0, 14),
+                              color: const Color(
+                                0xFF380104,
+                              ).withValues(alpha: 0.28),
+                              blurRadius: 40,
+                              offset: const Offset(0, 18),
                             ),
                           ],
                         ),
@@ -1732,32 +1745,52 @@ class _LoginPageState extends State<LoginPage> {
                             mainAxisSize: MainAxisSize.min,
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
-                                'BLACKFOREST CAKES',
-                                style: TextStyle(
-                                  color: Color(0xFF6A2A1A),
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                  letterSpacing: 1.6,
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFE30E10),
+                                  borderRadius: BorderRadius.circular(8),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: const Color(
+                                        0xFFE30E10,
+                                      ).withValues(alpha: 0.4),
+                                      blurRadius: 8,
+                                      offset: const Offset(0, 2),
+                                    ),
+                                  ],
+                                ),
+                                child: const Text(
+                                  'BLACKFOREST CAKES',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: 1.4,
+                                  ),
                                 ),
                               ),
-                              const SizedBox(height: 8),
+                              const SizedBox(height: 10),
                               const Text(
-                                'Branch Login',
+                                'Billing App Login',
                                 style: TextStyle(
-                                  color: Color(0xFF2E170F),
-                                  fontSize: 30,
+                                  color: Colors.white,
+                                  fontSize: 28,
                                   fontWeight: FontWeight.w700,
-                                  height: 1.1,
+                                  height: 1.15,
                                 ),
                               ),
                               const SizedBox(height: 6),
                               const Text(
                                 'Sign in with your username. Location must be enabled. Enter your 4-digit branch PIN.',
                                 style: TextStyle(
-                                  color: Color(0xFF7B5A49),
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w500,
+                                  color: Color(0xFFEAD4D0),
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w400,
+                                  height: 1.3,
                                 ),
                               ),
                               const SizedBox(height: 16),
@@ -1766,7 +1799,17 @@ class _LoginPageState extends State<LoginPage> {
                                 child: Container(
                                   height: 110,
                                   width: double.infinity,
-                                  color: const Color(0xFF2D0A0A),
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF380104),
+                                    borderRadius: BorderRadius.circular(18),
+                                    border: Border.all(
+                                      color: const Color(
+                                        0xFFE30E10,
+                                      ).withValues(alpha: 0.4),
+                                      width: 1.2,
+                                    ),
+                                  ),
                                   child: Image.asset(
                                     'assets/logo.png',
                                     fit: BoxFit.contain,
@@ -1816,11 +1859,13 @@ class _LoginPageState extends State<LoginPage> {
                                   ),
                                   decoration: BoxDecoration(
                                     color: const Color(
-                                      0xFFFFF1E7,
-                                    ).withValues(alpha: 0.92),
+                                      0xFFE30E10,
+                                    ).withValues(alpha: 0.15),
                                     borderRadius: BorderRadius.circular(12),
                                     border: Border.all(
-                                      color: const Color(0xFFEAB089),
+                                      color: const Color(
+                                        0xFFE30E10,
+                                      ).withValues(alpha: 0.6),
                                       width: 1,
                                     ),
                                   ),
@@ -1828,7 +1873,7 @@ class _LoginPageState extends State<LoginPage> {
                                     children: [
                                       Icon(
                                         Icons.info_outline,
-                                        color: Color(0xFF9A4A23),
+                                        color: Color(0xFFFF6B6D),
                                         size: 18,
                                       ),
                                       SizedBox(width: 8),
@@ -1836,7 +1881,7 @@ class _LoginPageState extends State<LoginPage> {
                                         child: Text(
                                           "Enter your 4-digit branch PIN.",
                                           style: TextStyle(
-                                            color: Color(0xFF9A4A23),
+                                            color: Color(0xFFFF6B6D),
                                             fontSize: 12,
                                             fontWeight: FontWeight.w600,
                                           ),
@@ -1855,11 +1900,11 @@ class _LoginPageState extends State<LoginPage> {
                                     _login();
                                   },
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF2D0A0A),
+                                    backgroundColor: const Color(0xFFE30E10),
                                     foregroundColor: Colors.white,
                                     shadowColor: const Color(
-                                      0xFF2D0A0A,
-                                    ).withValues(alpha: 0.45),
+                                      0xFFE30E10,
+                                    ).withValues(alpha: 0.50),
                                     elevation: 8,
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(18),
@@ -1910,7 +1955,7 @@ class _LoginPageState extends State<LoginPage> {
                                 child: Text(
                                   'Version $_appVersion',
                                   style: const TextStyle(
-                                    color: Color(0xFF8A6B59),
+                                    color: Color(0xFFA67D78),
                                     fontSize: 11,
                                     fontWeight: FontWeight.w500,
                                   ),
@@ -1938,13 +1983,13 @@ class _LoginPageState extends State<LoginPage> {
       children: [
         const Row(
           children: [
-            Icon(Icons.pin_outlined, color: Color(0xFF7B513A), size: 18),
+            Icon(Icons.pin_outlined, color: Color(0xFFE30E10), size: 18),
             SizedBox(width: 8),
             Expanded(
               child: Text(
                 "Branch PIN (Required, 4 digits)",
                 style: TextStyle(
-                  color: Color(0xFF553325),
+                  color: Colors.white,
                   fontSize: 14,
                   fontWeight: FontWeight.w700,
                 ),
@@ -1954,9 +1999,9 @@ class _LoginPageState extends State<LoginPage> {
         ),
         const SizedBox(height: 5),
         const Text(
-          "Mandatory for branch/waiter/cashier login",
+          "Mandatory for waiter login",
           style: TextStyle(
-            color: Color(0xFF8A6B59),
+            color: Color(0xFFD4A8A2),
             fontSize: 12,
             fontWeight: FontWeight.w500,
           ),
@@ -2021,7 +2066,7 @@ class _LoginPageState extends State<LoginPage> {
               : TextInputAction.next,
           textAlign: TextAlign.center,
           style: const TextStyle(
-            color: Color(0xFF3D2217),
+            color: Colors.white,
             fontWeight: FontWeight.w700,
             fontSize: 22,
           ),
@@ -2032,19 +2077,19 @@ class _LoginPageState extends State<LoginPage> {
           decoration: InputDecoration(
             counterText: '',
             filled: true,
-            fillColor: const Color(0xFFFDF8F2),
+            fillColor: const Color(0xFF1D0102),
             contentPadding: const EdgeInsets.symmetric(vertical: 12),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(18),
               borderSide: const BorderSide(
-                color: Color(0xFFD8C3B4),
+                color: Color(0xFF5A1414),
                 width: 1.4,
               ),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(18),
               borderSide: const BorderSide(
-                color: Color(0xFF7A2D1C),
+                color: Color(0xFFE30E10),
                 width: 2.2,
               ),
             ),
@@ -2069,14 +2114,14 @@ class _LoginPageState extends State<LoginPage> {
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFFFDF8F2),
+        color: const Color(0xFF1D0102),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFD8C3B4), width: 1.2),
+        border: Border.all(color: const Color(0xFF5A1414), width: 1.2),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.06),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
+            color: Colors.black.withValues(alpha: 0.15),
+            blurRadius: 8,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
@@ -2088,16 +2133,17 @@ class _LoginPageState extends State<LoginPage> {
         inputFormatters: inputFormatters,
         onChanged: onChanged,
         style: const TextStyle(
-          color: Color(0xFF4E3022),
+          color: Colors.white,
           fontWeight: FontWeight.w600,
+          fontSize: 15,
         ),
         decoration: InputDecoration(
-          prefixIcon: Icon(icon, color: const Color(0xFF8A6B59)),
+          prefixIcon: Icon(icon, color: const Color(0xFFE30E10)),
           suffixIcon: suffix,
           hintText: hint,
           hintStyle: const TextStyle(
-            color: Color(0xFFB19888),
-            fontWeight: FontWeight.w500,
+            color: Color(0xFFA67D78),
+            fontWeight: FontWeight.w400,
           ),
           border: InputBorder.none,
           contentPadding: const EdgeInsets.symmetric(

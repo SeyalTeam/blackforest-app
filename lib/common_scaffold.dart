@@ -46,6 +46,12 @@ enum PageType {
 }
 
 class CommonScaffold extends StatefulWidget {
+  static final ValueNotifier<int> unreadChatNotifier = ValueNotifier<int>(0);
+
+  static void setUnreadChatCount(int count) {
+    unreadChatNotifier.value = count;
+  }
+
   final String title;
   final Widget body;
   final Function(String)? onScanCallback;
@@ -79,6 +85,8 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   static const Color _chatNavColor = Color(0xFF2AABEE);
   Timer? _inactivityTimer;
   Timer? _kitchenSyncTimer;
+  Timer? _chatUnreadTimer;
+  static String? _cachedChatThreadId;
   String _username = 'Menu';
   String _employeeId = '';
   String? _photoUrl;
@@ -94,8 +102,6 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   final Set<String> _pendingWaiterEventKeys = <String>{};
   final Set<String> _resolvedWaiterEventKeys = <String>{};
   static const MethodChannel _volumeChannel = MethodChannel('blackforest.app/volume');
-  int? _originalAlarmVolume;
-  int? _originalMusicVolume;
   final AudioPlayer _waiterCallPlayer = AudioPlayer();
   WaiterCallAlertPayload? _activeWaiterCallPayload;
   Completer<void>? _activeWaiterCallCompleter;
@@ -116,6 +122,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     _resetTimer(); // Changed from _startTimer() to _resetTimer() as per original code
     _startKitchenSync();
     _startSessionCheck();
+    _initChatUnreadCheck();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final cartProvider = Provider.of<CartProvider>(context, listen: false);
@@ -143,6 +150,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     _kitchenSyncTimer?.cancel();
     _sessionCheckTimer?.cancel();
     _activeWaiterAutoCloseTimer?.cancel();
+    _chatUnreadTimer?.cancel();
     _isOverlayDisposedByNavigation = true;
     final waiterCompleter = _activeWaiterCallCompleter;
     if (waiterCompleter != null && !waiterCompleter.isCompleted) {
@@ -150,6 +158,93 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     }
     unawaited(_waiterCallPlayer.dispose());
     super.dispose();
+  }
+
+  Future<void> _initChatUnreadCheck() async {
+    if (widget.pageType == PageType.chat) {
+      CommonScaffold.setUnreadChatCount(0);
+      return;
+    }
+    await _checkUnreadChatMessages();
+    _chatUnreadTimer?.cancel();
+    _chatUnreadTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (mounted && widget.pageType != PageType.chat) {
+        _checkUnreadChatMessages();
+      }
+    });
+  }
+
+  Future<void> _checkUnreadChatMessages() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token')?.trim();
+      if (token == null || token.isEmpty) return;
+
+      var userId = prefs.getString('user_id')?.trim();
+      if (userId == null || userId.isEmpty) {
+        final meRes = await http.get(
+          Uri.https(apiHostPrimary, '/api/users/me', {'depth': '0'}),
+          headers: {'Authorization': 'Bearer $token'},
+        );
+        if (meRes.statusCode == 200) {
+          final decoded = jsonDecode(meRes.body);
+          final rawUser = decoded is Map ? (decoded['user'] ?? decoded) : null;
+          if (rawUser is Map) {
+            userId = (rawUser['id'] ?? rawUser['_id'])?.toString().trim();
+            if (userId != null && userId.isNotEmpty) {
+              await prefs.setString('user_id', userId);
+            }
+          }
+        }
+      }
+
+      if (userId == null || userId.isEmpty) return;
+
+      if (_cachedChatThreadId == null || _cachedChatThreadId!.isEmpty) {
+        final threadRes = await http.get(
+          Uri.https(apiHostPrimary, '/api/message-threads', {
+            'limit': '1',
+            'depth': '0',
+            'where[staffUser][equals]': userId,
+          }),
+          headers: {'Authorization': 'Bearer $token'},
+        );
+        if (threadRes.statusCode == 200) {
+          final data = jsonDecode(threadRes.body);
+          final docs = data['docs'] as List?;
+          if (docs != null && docs.isNotEmpty) {
+            _cachedChatThreadId =
+                (docs.first['id'] ?? docs.first['_id'])?.toString().trim();
+          }
+        }
+      }
+
+      final queryParams = <String, String>{
+        'limit': '100',
+        'depth': '0',
+        'where[recipientAudience][equals]': 'staff',
+        'where[status][not_equals]': 'read',
+      };
+      if (_cachedChatThreadId != null && _cachedChatThreadId!.isNotEmpty) {
+        queryParams['where[thread][equals]'] = _cachedChatThreadId!;
+      }
+
+      final receiptsRes = await http.get(
+        Uri.https(apiHostPrimary, '/api/message-receipts', queryParams),
+        headers: {'Authorization': 'Bearer $token'},
+      );
+
+      if (receiptsRes.statusCode == 200) {
+        final data = jsonDecode(receiptsRes.body);
+        final count =
+            data['totalDocs'] as int? ?? (data['docs'] as List?)?.length ?? 0;
+        if (mounted && widget.pageType != PageType.chat) {
+          CommonScaffold.setUnreadChatCount(count);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error checking unread chat messages: $e');
+    }
   }
 
   void _startKitchenSync() {
@@ -277,18 +372,29 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   Future<void> _startWaiterRingtone() async {
     try {
       await _waiterCallPlayer.stop();
+
+      // Start native alarm mode (forces max volume, locks hardware volume keys, wakes screen)
+      try {
+        await _volumeChannel.invokeMethod('startAlarmMode');
+      } catch (volumeError) {
+        debugPrint('Failed to invoke native startAlarmMode: $volumeError');
+      }
+
       try {
         await _waiterCallPlayer.setAudioContext(
           AudioContext(
             android: const AudioContextAndroid(
-              usageType: AndroidUsageType.alarm,
+              isSpeakerphoneOn: true,
+              stayAwake: true,
               contentType: AndroidContentType.sonification,
-              audioMode: AndroidAudioMode.normal,
+              usageType: AndroidUsageType.alarm,
+              audioFocus: AndroidAudioFocus.gainTransientExclusive,
             ),
             iOS: AudioContextIOS(
               category: AVAudioSessionCategory.playback,
               options: const {
-                AVAudioSessionOptions.mixWithOthers,
+                AVAudioSessionOptions.duckOthers,
+                AVAudioSessionOptions.defaultToSpeaker,
               },
             ),
           ),
@@ -297,30 +403,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
         debugPrint('Failed to set AudioContext: $contextError');
       }
 
-      try {
-        // Override alarm volume
-        final int? currentAlarmVol = await _volumeChannel.invokeMethod<int>('getAlarmVolume');
-        if (currentAlarmVol != null) {
-          _originalAlarmVolume = currentAlarmVol;
-        }
-        final int? maxAlarmVol = await _volumeChannel.invokeMethod<int>('getMaxAlarmVolume');
-        if (maxAlarmVol != null) {
-          await _volumeChannel.invokeMethod('setAlarmVolume', {'volume': maxAlarmVol});
-        }
-
-        // Override music/media volume as well (in case audioplayers uses media stream on some devices)
-        final int? currentMusicVol = await _volumeChannel.invokeMethod<int>('getMusicVolume');
-        if (currentMusicVol != null) {
-          _originalMusicVolume = currentMusicVol;
-        }
-        final int? maxMusicVol = await _volumeChannel.invokeMethod<int>('getMaxMusicVolume');
-        if (maxMusicVol != null) {
-          await _volumeChannel.invokeMethod('setMusicVolume', {'volume': maxMusicVol});
-        }
-      } catch (volumeError) {
-        debugPrint('Failed to override stream volume: $volumeError');
-      }
-
+      await _waiterCallPlayer.setVolume(1.0);
       await _waiterCallPlayer.setReleaseMode(ReleaseMode.loop);
       await _waiterCallPlayer.play(AssetSource('sounds/table.mp3'));
     } catch (error) {
@@ -331,29 +414,13 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   Future<void> _stopWaiterRingtone() async {
     try {
       await _waiterCallPlayer.stop();
-      
-      // Restore alarm volume
-      final restoreAlarmVol = _originalAlarmVolume;
-      if (restoreAlarmVol != null) {
-        _originalAlarmVolume = null;
-        try {
-          await _volumeChannel.invokeMethod('setAlarmVolume', {'volume': restoreAlarmVol});
-        } catch (volumeError) {
-          debugPrint('Failed to restore alarm volume: $volumeError');
-        }
-      }
-
-      // Restore music/media volume
-      final restoreMusicVol = _originalMusicVolume;
-      if (restoreMusicVol != null) {
-        _originalMusicVolume = null;
-        try {
-          await _volumeChannel.invokeMethod('setMusicVolume', {'volume': restoreMusicVol});
-        } catch (volumeError) {
-          debugPrint('Failed to restore music volume: $volumeError');
-        }
-      }
     } catch (_) {}
+
+    try {
+      await _volumeChannel.invokeMethod('stopAlarmMode');
+    } catch (volumeError) {
+      debugPrint('Failed to invoke native stopAlarmMode: $volumeError');
+    }
   }
 
   Future<void> _showWaiterCallDialog(WaiterCallAlertPayload payload) async {
@@ -1868,12 +1935,18 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                 page: const KotPage(),
                 type: PageType.kot,
               ),
-              _buildNavItem(
-                icon: Icons.forum_rounded,
-                label: 'Chat',
-                page: const ChatPage(),
-                type: PageType.chat,
-                activeColor: _chatNavColor,
+              ValueListenableBuilder<int>(
+                valueListenable: CommonScaffold.unreadChatNotifier,
+                builder: (context, unreadCount, _) {
+                  return _buildNavItem(
+                    icon: Icons.forum_rounded,
+                    label: 'Chat',
+                    page: const ChatPage(),
+                    type: PageType.chat,
+                    activeColor: _chatNavColor,
+                    badgeCount: unreadCount,
+                  );
+                },
               ),
             ],
           ),
@@ -1890,6 +1963,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     VoidCallback? onTap,
     Color? activeColor,
     Color? inactiveColor,
+    int badgeCount = 0,
   }) {
     final bool isSelected = type != null && _isNavItemSelected(type);
     final Color foregroundColor = isSelected
@@ -1920,12 +1994,54 @@ class _CommonScaffoldState extends State<CommonScaffold> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TweenAnimationBuilder<Color?>(
-                  duration: const Duration(milliseconds: 180),
-                  tween: ColorTween(end: foregroundColor),
-                  builder: (context, color, child) {
-                    return Icon(icon, color: color, size: 29);
-                  },
+                Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    TweenAnimationBuilder<Color?>(
+                      duration: const Duration(milliseconds: 180),
+                      tween: ColorTween(end: foregroundColor),
+                      builder: (context, color, child) {
+                        return Icon(icon, color: color, size: 29);
+                      },
+                    ),
+                    if (badgeCount > 0)
+                      Positioned(
+                        right: -6,
+                        top: -2,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 1,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFEF4444),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: Colors.white, width: 1.5),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Color(0x33000000),
+                                blurRadius: 3,
+                                offset: Offset(0, 1),
+                              ),
+                            ],
+                          ),
+                          constraints: const BoxConstraints(
+                            minWidth: 16,
+                            minHeight: 16,
+                          ),
+                          child: Text(
+                            badgeCount > 99 ? '99+' : '$badgeCount',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 9,
+                              fontWeight: FontWeight.bold,
+                              height: 1.1,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
                 const SizedBox(height: 5),
                 AnimatedDefaultTextStyle(

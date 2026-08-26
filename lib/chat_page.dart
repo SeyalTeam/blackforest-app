@@ -2,43 +2,725 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
-import 'package:blackforest_app/api_server_prefs.dart';
-import 'package:blackforest_app/app_http.dart' as http;
-import 'package:blackforest_app/categories_page.dart';
-import 'package:blackforest_app/common_scaffold.dart';
-import 'package:blackforest_app/home_navigation_service.dart';
-import 'package:blackforest_app/home_page.dart';
-import 'package:blackforest_app/camera_capture_page.dart';
-import 'package:cached_network_image/cached_network_image.dart';
-import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+import 'api_service.dart';
+import 'home_page.dart';
 
 const Duration _chatPollInterval = Duration(seconds: 20);
 const Color _whatsAppGreen = Color(0xFF25D366);
+const Color _whatsAppDarkGreen = Color(0xFF075E54);
 const Color _whatsAppHeaderShadow = Color(0x14000000);
 const Color _whatsAppOutgoingBubble = Color(0xFFD9FDD3);
 const Color _whatsAppWallpaperBase = Color(0xFFEDE3D1);
 const Color _whatsAppWallpaperIcon = Color(0xFFB6A88F);
 
-class ChatPage extends StatelessWidget {
+class ChatContact {
+  final String id;
+  final String name;
+  final String role;
+  final String? email;
+  final String? photoUrl;
+  final bool isAdmin;
+  final String? staffUserId;
+
+  const ChatContact({
+    required this.id,
+    required this.name,
+    required this.role,
+    this.email,
+    this.photoUrl,
+    this.isAdmin = false,
+    this.staffUserId,
+  });
+
+  static const admin = ChatContact(
+    id: 'admin',
+    name: 'Admin',
+    role: 'Management',
+    isAdmin: true,
+  );
+
+  String get initials {
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    if (parts.isEmpty) return isAdmin ? 'AD' : 'EM';
+    if (parts.length == 1) {
+      return parts.first.characters.take(2).toString().toUpperCase();
+    }
+    return '${parts[0].characters.take(1)}${parts[1].characters.take(1)}'.toUpperCase();
+  }
+
+  Color get roleColor {
+    final r = role.toLowerCase();
+    if (r.contains('admin')) return const Color(0xFF7A1530);
+    if (r.contains('chef')) return const Color(0xFFD97706);
+    if (r.contains('driver') || r.contains('delivery')) return const Color(0xFF2563EB);
+    if (r.contains('cashier')) return const Color(0xFF059669);
+    if (r.contains('manager')) return const Color(0xFF7C3AED);
+    if (r.contains('supervisor')) return const Color(0xFF0D9488);
+    if (r.contains('waiter')) return const Color(0xFFDB2777);
+    if (r.contains('store')) return const Color(0xFFEA580C);
+    if (r.contains('kitchen')) return const Color(0xFFC026D3);
+    return const Color(0xFF4B5563);
+  }
+}
+
+class _ConversationItem {
+  final ChatContact contact;
+  final _ChatMessage? lastMessage;
+  final int unreadCount;
+
+  const _ConversationItem({
+    required this.contact,
+    this.lastMessage,
+    this.unreadCount = 0,
+  });
+}
+
+class ChatPage extends StatefulWidget {
+  static final ValueNotifier<int> unreadChatNotifier = ValueNotifier<int>(0);
+  static String? _cachedThreadId;
+  static String? _cachedUserId;
+
+  static void setUnreadChatCount(int count) {
+    unreadChatNotifier.value = count;
+  }
+
+  static Future<int> checkUnreadChatCount() async {
+    try {
+      final token = await ApiService.getToken();
+      if (token == null || token.isEmpty) return 0;
+
+      var userId = _cachedUserId;
+      if (userId == null || userId.isEmpty) {
+        final profile = await ApiService.fetchUserProfile();
+        userId = (profile['id'] ?? profile['_id'])?.toString();
+        if (userId != null && userId.isNotEmpty) {
+          _cachedUserId = userId;
+        }
+      }
+
+      if (userId == null || userId.isEmpty) return 0;
+
+      if (_cachedThreadId == null || _cachedThreadId!.isEmpty) {
+        final threadRes = await http.get(
+          _apiUri(
+            '/api/message-threads',
+            queryParameters: {
+              'limit': '1',
+              'depth': '0',
+              'where[staffUser][equals]': userId,
+            },
+          ),
+          headers: _authHeaders(token),
+        );
+
+        if (threadRes.statusCode == 200) {
+          final data = _decodeResponse(threadRes);
+          final docs = (data?['docs'] as List?) ?? const [];
+          if (docs.isNotEmpty) {
+            _cachedThreadId = _relationshipId(docs.first);
+          }
+        }
+      }
+
+      final queryParams = <String, String>{
+        'limit': '100',
+        'depth': '0',
+        'where[recipientAudience][equals]': 'staff',
+        'where[status][not_equals]': 'read',
+      };
+      if (_cachedThreadId != null && _cachedThreadId!.isNotEmpty) {
+        queryParams['where[thread][equals]'] = _cachedThreadId!;
+      }
+
+      final receiptsRes = await http.get(
+        _apiUri('/api/message-receipts', queryParameters: queryParams),
+        headers: _authHeaders(token),
+      );
+
+      if (receiptsRes.statusCode == 200) {
+        final data = _decodeResponse(receiptsRes);
+        final count =
+            data?['totalDocs'] as int? ?? (data?['docs'] as List?)?.length ?? 0;
+        setUnreadChatCount(count);
+        return count;
+      }
+    } catch (e) {
+      debugPrint('Error checking unread chat messages in billing app: $e');
+    }
+    return 0;
+  }
+
   const ChatPage({super.key});
 
   @override
+  State<ChatPage> createState() => _ChatPageState();
+}
+
+class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
+  List<ChatContact> _allContacts = const [];
+  List<_ChatMessage> _allMessages = const [];
+  List<_ConversationItem> _conversationItems = const [];
+  bool _isLoading = true;
+  String _searchQuery = '';
+  final TextEditingController _searchController = TextEditingController();
+  bool _isSearchOpen = false;
+  Timer? _pollTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _searchController.addListener(() {
+      setState(() {
+        _searchQuery = _searchController.text.trim().toLowerCase();
+      });
+    });
+    _loadInboxData();
+    _startPolling();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _pollTimer?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _loadInboxData(showLoader: false);
+    }
+  }
+
+  void _startPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(_chatPollInterval, (_) {
+      _loadInboxData(showLoader: false);
+    });
+  }
+
+  Future<void> _loadInboxData({bool showLoader = true}) async {
+    if (showLoader && mounted) {
+      setState(() => _isLoading = true);
+    }
+
+    try {
+      final token = await _readToken();
+      final responses = await Future.wait([
+        http.get(
+          _apiUri(
+            '/api/employees',
+            queryParameters: {'limit': '200', 'depth': '1', 'sort': 'name'},
+          ),
+          headers: _authHeaders(token),
+        ),
+        http.get(
+          _apiUri(
+            '/api/users',
+            queryParameters: {'limit': '200', 'depth': '1', 'sort': 'name'},
+          ),
+          headers: _authHeaders(token),
+        ),
+        http.get(
+          _apiUri(
+            '/api/messages',
+            queryParameters: {'limit': '500', 'depth': '0', 'sort': '-createdAt'},
+          ),
+          headers: _authHeaders(token),
+        ),
+      ]);
+
+      final employeesRes = responses[0];
+      final usersRes = responses[1];
+      final messagesRes = responses[2];
+
+      final Map<String, dynamic> staffUsersByEmployeeId = {};
+      final Map<String, dynamic> staffUsersById = {};
+
+      if (usersRes.statusCode == 200) {
+        final decoded = _decodeResponse(usersRes);
+        final docs = (decoded?['docs'] as List?) ?? [];
+        for (final doc in docs) {
+          if (doc is Map<String, dynamic>) {
+            final uid = (doc['id'] ?? doc['_id'])?.toString();
+            final empId = _relationshipId(doc['employee']);
+            if (uid != null) {
+              staffUsersById[uid] = doc;
+            }
+            if (empId != null) {
+              staffUsersByEmployeeId[empId] = doc;
+            }
+          }
+        }
+      }
+
+      final List<ChatContact> contacts = [];
+
+      if (employeesRes.statusCode == 200) {
+        final decoded = _decodeResponse(employeesRes);
+        final docs = (decoded?['docs'] as List?) ?? [];
+        for (final doc in docs) {
+          if (doc is Map<String, dynamic>) {
+            final id = (doc['id'] ?? doc['_id'])?.toString() ?? '';
+            final name = (doc['name'] ?? '').toString().trim();
+            final role = (doc['team'] ?? doc['role'] ?? 'Staff').toString().trim();
+            final email = (doc['email'] ?? '').toString().trim();
+
+            final matchingUser = staffUsersByEmployeeId[id];
+            final staffUid = matchingUser != null
+                ? (matchingUser['id'] ?? matchingUser['_id'])?.toString()
+                : null;
+
+            if (name.isNotEmpty) {
+              contacts.add(
+                ChatContact(
+                  id: id,
+                  name: name,
+                  role: role.isEmpty ? 'Staff' : role,
+                  email: email.isNotEmpty ? email : null,
+                  staffUserId: staffUid,
+                ),
+              );
+            }
+          }
+        }
+      }
+
+      if (contacts.isEmpty && staffUsersById.isNotEmpty) {
+        for (final entry in staffUsersById.entries) {
+          final doc = entry.value;
+          final name = (doc['name'] ?? doc['username'] ?? '').toString().trim();
+          final role = (doc['role'] ?? 'Staff').toString().trim();
+          if (name.isNotEmpty &&
+              role.toLowerCase() != 'admin' &&
+              role.toLowerCase() != 'superadmin') {
+            contacts.add(
+              ChatContact(
+                id: entry.key,
+                name: name,
+                role: role,
+                staffUserId: entry.key,
+              ),
+            );
+          }
+        }
+      }
+
+      contacts.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+
+      List<_ChatMessage> messages = [];
+      if (messagesRes.statusCode == 200) {
+        final decoded = _decodeResponse(messagesRes);
+        final docs = (decoded?['docs'] as List?) ?? [];
+        messages = docs
+            .map(_ChatMessage.fromJson)
+            .whereType<_ChatMessage>()
+            .toList(growable: false);
+      }
+
+      // Group messages by contact
+      final Map<String, _ChatMessage> latestMessageByContact = {};
+
+      for (final msg in messages) {
+        final text = msg.text;
+        // Check if message is tagged with a recipient [@Name • Role]
+        if (text.startsWith('[@') && text.contains(']')) {
+          final endIdx = text.indexOf(']');
+          final tag = text.substring(2, endIdx).toLowerCase();
+          for (final c in contacts) {
+            if (tag.contains(c.name.toLowerCase()) ||
+                tag.contains(c.role.toLowerCase())) {
+              if (!latestMessageByContact.containsKey(c.id)) {
+                latestMessageByContact[c.id] = msg;
+              }
+              break;
+            }
+          }
+        } else {
+          // Untagged message belongs to Admin conversation
+          if (!latestMessageByContact.containsKey('admin')) {
+            latestMessageByContact['admin'] = msg;
+          }
+        }
+      }
+
+      // Build conversations list
+      final List<_ConversationItem> conversations = [];
+
+      // Always include Admin
+      conversations.add(
+        _ConversationItem(
+          contact: ChatContact.admin,
+          lastMessage: latestMessageByContact['admin'],
+        ),
+      );
+
+      // Add contacts that have message history
+      for (final c in contacts) {
+        if (latestMessageByContact.containsKey(c.id)) {
+          conversations.add(
+            _ConversationItem(
+              contact: c,
+              lastMessage: latestMessageByContact[c.id],
+            ),
+          );
+        }
+      }
+
+      // Sort conversations: latest message first!
+      conversations.sort((a, b) {
+        final aTime = a.lastMessage?.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final bTime = b.lastMessage?.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return bTime.compareTo(aTime);
+      });
+
+      if (mounted) {
+        setState(() {
+          _allContacts = contacts;
+          _allMessages = messages;
+          _conversationItems = conversations;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading chat inbox in billing app: $e');
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  void _openChatWithContact(ChatContact contact) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _EmployeeChatScreen(
+          contact: contact,
+          allContacts: _allContacts,
+        ),
+      ),
+    ).then((_) {
+      _loadInboxData(showLoader: false);
+      ChatPage.checkUnreadChatCount();
+    });
+  }
+
+  void _openContactsModal() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _EmployeeContactsSheet(
+        contacts: _allContacts,
+        activeContact: ChatContact.admin,
+        onSelectContact: (contact) {
+          Navigator.of(ctx).pop();
+          _openChatWithContact(contact);
+        },
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return const CommonScaffold(
-      title: 'Chat',
-      pageType: PageType.chat,
-      showAppBar: false,
-      hideBottomNavigationBar: true,
-      body: _EmployeeChatScreen(),
+    final filteredConversations = _conversationItems.where((item) {
+      if (_searchQuery.isEmpty) return true;
+      return item.contact.name.toLowerCase().contains(_searchQuery) ||
+          item.contact.role.toLowerCase().contains(_searchQuery) ||
+          (item.lastMessage?.text.toLowerCase().contains(_searchQuery) ?? false);
+    }).toList();
+
+    return Scaffold(
+      backgroundColor: Colors.white,
+      floatingActionButton: FloatingActionButton(
+        onPressed: _openContactsModal,
+        backgroundColor: _whatsAppGreen,
+        child: const Icon(Icons.chat_bubble_rounded, color: Colors.white),
+      ),
+      appBar: AppBar(
+        backgroundColor: Colors.white,
+        elevation: 1,
+        shadowColor: _whatsAppHeaderShadow,
+        automaticallyImplyLeading: false,
+        title: _isSearchOpen
+            ? TextField(
+                controller: _searchController,
+                autofocus: true,
+                decoration: const InputDecoration(
+                  hintText: 'Search chats...',
+                  border: InputBorder.none,
+                  hintStyle: TextStyle(color: Colors.grey, fontSize: 16),
+                ),
+              )
+            : const Text(
+                'Chats',
+                style: TextStyle(
+                  color: Color(0xFF111827),
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+        actions: [
+          IconButton(
+            icon: Icon(
+              _isSearchOpen ? Icons.close : Icons.search,
+              color: const Color(0xFF374151),
+            ),
+            onPressed: () {
+              setState(() {
+                _isSearchOpen = !_isSearchOpen;
+                if (!_isSearchOpen) {
+                  _searchController.clear();
+                  _searchQuery = '';
+                }
+              });
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded, color: Color(0xFF374151)),
+            onPressed: () => _loadInboxData(),
+          ),
+        ],
+      ),
+      body: _isLoading
+          ? const Center(
+              child: CircularProgressIndicator(color: _whatsAppGreen),
+            )
+          : RefreshIndicator(
+              color: _whatsAppGreen,
+              onRefresh: () => _loadInboxData(showLoader: false),
+              child: filteredConversations.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(32),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(20),
+                              decoration: const BoxDecoration(
+                                color: Color(0xFFF3F4F6),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(
+                                Icons.chat_bubble_outline_rounded,
+                                size: 48,
+                                color: Colors.grey,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            const Text(
+                              'No chats yet',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1F2937),
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Tap the chat button below to start messaging Admin or any team member.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    )
+                  : ListView.separated(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      itemCount: filteredConversations.length,
+                      separatorBuilder: (context, index) => const Divider(
+                        indent: 76,
+                        height: 1,
+                        color: Color(0xFFF1F5F9),
+                      ),
+                      itemBuilder: (context, index) {
+                        final item = filteredConversations[index];
+                        final contact = item.contact;
+                        final lastMsg = item.lastMessage;
+
+                        String previewText = 'Tap to open chat';
+                        String timeText = '';
+                        bool isOutgoing = false;
+
+                        if (lastMsg != null) {
+                          isOutgoing = !lastMsg.isFromAdmin;
+                          String text = lastMsg.text;
+                          if (text.startsWith('[@') && text.contains(']\n')) {
+                            text = text.substring(text.indexOf(']\n') + 2);
+                          } else if (text.startsWith('[@') && text.contains(']: ')) {
+                            text = text.substring(text.indexOf(']: ') + 3);
+                          }
+                          previewText = text.trim();
+                          timeText = _formatInboxTime(lastMsg.createdAt);
+                        }
+
+                        return InkWell(
+                          onTap: () => _openChatWithContact(contact),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 12,
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 52,
+                                  height: 52,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    gradient: LinearGradient(
+                                      colors: [
+                                        contact.roleColor,
+                                        contact.roleColor.withValues(alpha: 0.8),
+                                      ],
+                                      begin: Alignment.topLeft,
+                                      end: Alignment.bottomRight,
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: contact.roleColor.withValues(alpha: 0.25),
+                                        blurRadius: 6,
+                                        offset: const Offset(0, 2),
+                                      ),
+                                    ],
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: contact.isAdmin
+                                      ? const Icon(
+                                          Icons.admin_panel_settings_rounded,
+                                          color: Colors.white,
+                                          size: 26,
+                                        )
+                                      : Text(
+                                          contact.initials,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                ),
+                                const SizedBox(width: 14),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.spaceBetween,
+                                        children: [
+                                          Flexible(
+                                            child: Row(
+                                              children: [
+                                                Flexible(
+                                                  child: Text(
+                                                    contact.name,
+                                                    maxLines: 1,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    style: const TextStyle(
+                                                      fontSize: 16,
+                                                      fontWeight: FontWeight.w700,
+                                                      color: Color(0xFF0F172A),
+                                                    ),
+                                                  ),
+                                                ),
+                                                const SizedBox(width: 6),
+                                                Container(
+                                                  padding:
+                                                      const EdgeInsets.symmetric(
+                                                    horizontal: 6,
+                                                    vertical: 1,
+                                                  ),
+                                                  decoration: BoxDecoration(
+                                                    color: contact.roleColor
+                                                        .withValues(alpha: 0.12),
+                                                    borderRadius:
+                                                        BorderRadius.circular(4),
+                                                  ),
+                                                  child: Text(
+                                                    contact.role.toUpperCase(),
+                                                    style: TextStyle(
+                                                      fontSize: 9,
+                                                      fontWeight: FontWeight.w700,
+                                                      color: contact.roleColor,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                          if (timeText.isNotEmpty)
+                                            Text(
+                                              timeText,
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: Colors.grey.shade500,
+                                                fontWeight: FontWeight.w500,
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Row(
+                                        children: [
+                                          if (lastMsg != null && isOutgoing) ...[
+                                            const Icon(
+                                              Icons.done_all_rounded,
+                                              size: 16,
+                                              color: Color(0xFF53BDEB),
+                                            ),
+                                            const SizedBox(width: 4),
+                                          ],
+                                          Expanded(
+                                            child: Text(
+                                              previewText,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 14,
+                                                color: lastMsg != null
+                                                    ? const Color(0xFF64748B)
+                                                    : Colors.grey.shade400,
+                                                fontWeight: FontWeight.w400,
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
     );
   }
 }
 
 class _EmployeeChatScreen extends StatefulWidget {
-  const _EmployeeChatScreen();
+  final ChatContact contact;
+  final List<ChatContact> allContacts;
+
+  const _EmployeeChatScreen({
+    required this.contact,
+    this.allContacts = const [],
+  });
 
   @override
   State<_EmployeeChatScreen> createState() => _EmployeeChatScreenState();
@@ -50,11 +732,11 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
   final ScrollController _scrollController = ScrollController();
 
   _CurrentChatUser? _currentUser;
+  late ChatContact _activeContact;
   _MessageThreadSummary? _thread;
   List<_ChatMessage> _messages = const [];
   List<_ChatMessage> _optimisticMessages = const [];
   Map<String, _MessageReceiptSummary> _outgoingReceiptsByMessageId = const {};
-  bool _isCallDialogShowing = false;
 
   Timer? _pollTimer;
   bool _isBootstrapping = true;
@@ -65,31 +747,21 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
   String? _loadError;
   AppLifecycleState _appLifecycleState = AppLifecycleState.resumed;
 
-  Future<void> _setChatPageActive(bool active) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('is_chat_page_active', active);
-    } catch (_) {}
-  }
-
   @override
   void initState() {
     super.initState();
+    _activeContact = widget.contact;
+    ChatPage.setUnreadChatCount(0);
     WidgetsBinding.instance.addObserver(this);
     _messageController.addListener(_handleDraftChanged);
     _startPolling();
     _bootstrapConversation();
-    _setChatPageActive(true);
   }
-
-  Timer? _callSignalTimer;
 
   @override
   void dispose() {
-    _setChatPageActive(false);
     WidgetsBinding.instance.removeObserver(this);
     _pollTimer?.cancel();
-    _callSignalTimer?.cancel();
     _messageController.removeListener(_handleDraftChanged);
     _messageController.dispose();
     _scrollController.dispose();
@@ -101,10 +773,7 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
     super.didChangeAppLifecycleState(state);
     _appLifecycleState = state;
     if (state == AppLifecycleState.resumed) {
-      _setChatPageActive(true);
       unawaited(_refreshConversation(showLoader: false));
-    } else {
-      _setChatPageActive(false);
     }
   }
 
@@ -114,6 +783,9 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
   bool get _hasDraftText => _draftText.trim().isNotEmpty;
 
   String get _chatTitle {
+    if (!_activeContact.isAdmin) {
+      return _activeContact.name;
+    }
     final participantName = _thread?.participantName?.trim();
     final currentName = _currentUser?.displayName.trim();
     if (participantName != null &&
@@ -124,17 +796,15 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
     return 'Admin';
   }
 
-  String get _avatarLetters {
-    final parts = _chatTitle
-        .split(RegExp(r'\s+'))
-        .where((part) => part.trim().isNotEmpty)
-        .toList();
-    if (parts.isEmpty) return 'A';
-    if (parts.length == 1) {
-      return parts.first.characters.take(1).toString().toUpperCase();
+  String get _chatSubtitle {
+    if (!_activeContact.isAdmin) {
+      return _activeContact.role.toUpperCase();
     }
-    return '${parts[0].characters.take(1)}${parts[1].characters.take(1)}'
-        .toUpperCase();
+    return 'Management • Online';
+  }
+
+  String get _avatarLetters {
+    return _activeContact.initials;
   }
 
   void _handleDraftChanged() {
@@ -204,6 +874,60 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
     }
   }
 
+  Future<_MessageThreadSummary?> _fetchOrCreateThread({
+    required String token,
+    required String targetUserId,
+    required String currentUserId,
+  }) async {
+    // 1. Try finding thread for target user
+    _MessageThreadSummary? thread = await _fetchThreadByStaffUser(token, targetUserId);
+    if (thread != null) return thread;
+
+    // 2. Try finding thread for current user
+    if (targetUserId != currentUserId) {
+      thread = await _fetchThreadByStaffUser(token, currentUserId);
+      if (thread != null) return thread;
+    }
+
+    // 3. Try creating thread for current user
+    try {
+      final createRes = await http.post(
+        _apiUri('/api/message-threads'),
+        headers: _authHeaders(token, json: true),
+        body: jsonEncode({
+          'staffUser': currentUserId,
+          'status': 'open',
+        }),
+      );
+      if (createRes.statusCode == 200 || createRes.statusCode == 201) {
+        final data = _decodeResponse(createRes);
+        thread = _MessageThreadSummary.fromJson(data?['doc'] ?? data);
+        if (thread != null) return thread;
+      }
+    } catch (e) {
+      debugPrint('Error creating message thread: $e');
+    }
+
+    // 4. Fallback to any available thread
+    try {
+      final listRes = await http.get(
+        _apiUri('/api/message-threads', queryParameters: {'limit': '1', 'depth': '0'}),
+        headers: _authHeaders(token),
+      );
+      if (listRes.statusCode == 200) {
+        final docs = (_decodeResponse(listRes)?['docs'] as List?) ?? const [];
+        if (docs.isNotEmpty) {
+          thread = _MessageThreadSummary.fromJson(docs.first);
+          if (thread != null) return thread;
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching fallback thread: $e');
+    }
+
+    return thread;
+  }
+
   Future<void> _refreshConversation({
     bool showLoader = true,
     bool forceScrollToBottom = false,
@@ -239,7 +963,15 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
 
     try {
       final token = await _readToken();
-      final thread = await _fetchThreadByStaffUser(token, currentUser.id);
+      final targetUserId = _activeContact.isAdmin
+          ? currentUser.id
+          : (_activeContact.staffUserId ?? currentUser.id);
+
+      final thread = await _fetchOrCreateThread(
+        token: token,
+        targetUserId: targetUserId,
+        currentUserId: currentUser.id,
+      );
 
       if (thread == null) {
         if (!mounted) return;
@@ -278,45 +1010,38 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
         ),
       ]);
 
-      final messagesResponse = responses[0];
-      final receiptsResponse = responses[1];
+      final messageResponse = responses[0];
+      final receiptResponse = responses[1];
 
-      if (messagesResponse.statusCode != 200) {
-        throw Exception(
-          _responseMessage(messagesResponse, 'Unable to load messages.'),
-        );
-      }
-
-      if (receiptsResponse.statusCode != 200) {
+      if (messageResponse.statusCode != 200) {
         throw Exception(
           _responseMessage(
-            receiptsResponse,
-            'Unable to load message receipts.',
+            messageResponse,
+            'Unable to load conversation messages.',
           ),
         );
       }
 
-      final messageDocs =
-          (_decodeResponse(messagesResponse)?['docs'] as List?) ?? const [];
-      final receiptDocs =
-          (_decodeResponse(receiptsResponse)?['docs'] as List?) ?? const [];
-
-      final messages = <_ChatMessage>[];
-      for (final doc in messageDocs) {
-        final message = _ChatMessage.fromJson(doc);
-        if (message != null) {
-          messages.add(message);
-        }
+      if (receiptResponse.statusCode != 200) {
+        throw Exception(
+          _responseMessage(receiptResponse, 'Unable to load message receipts.'),
+        );
       }
-      messages.sort((a, b) {
-        final seqCompare = a.seq.compareTo(b.seq);
-        if (seqCompare != 0) return seqCompare;
-        return a.createdAt.compareTo(b.createdAt);
-      });
 
-      final Map<String, _MessageReceiptSummary> staffReceiptsByMessageId = {};
-      final Map<String, _MessageReceiptSummary> outgoingReceiptsByMessageId =
-          {};
+      final messageDocs =
+          (_decodeResponse(messageResponse)?['docs'] as List?) ?? const [];
+      final receiptDocs =
+          (_decodeResponse(receiptResponse)?['docs'] as List?) ?? const [];
+
+      final messages =
+          messageDocs
+              .map(_ChatMessage.fromJson)
+              .whereType<_ChatMessage>()
+              .toList(growable: false);
+
+      final outgoingReceiptsByMessageId = <String, _MessageReceiptSummary>{};
+      final staffReceiptsByMessageId = <String, _MessageReceiptSummary>{};
+
       for (final doc in receiptDocs) {
         final receipt = _MessageReceiptSummary.fromJson(doc);
         if (receipt == null) continue;
@@ -404,7 +1129,7 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
           _stringValue(rawUser['name']) ??
           _stringValue(rawUser['username']) ??
           _stringValue(rawUser['email']) ??
-          'You',
+          'Staff',
     );
   }
 
@@ -412,33 +1137,30 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
     String token,
     String currentUserId,
   ) async {
-    final response = await http.get(
-      _apiUri(
-        '/api/message-threads',
-        queryParameters: {
-          'limit': '1',
-          'depth': '0',
-          'where[staffUser][equals]': currentUserId,
-        },
-      ),
-      headers: _authHeaders(token),
-    );
-
-    if (response.statusCode != 200) {
-      throw Exception(
-        _responseMessage(response, 'Unable to look up the chat thread.'),
+    try {
+      final response = await http.get(
+        _apiUri(
+          '/api/message-threads',
+          queryParameters: {
+            'limit': '1',
+            'depth': '0',
+            'where[staffUser][equals]': currentUserId,
+          },
+        ),
+        headers: _authHeaders(token),
       );
+
+      if (response.statusCode != 200) {
+        return null;
+      }
+
+      final docs = (_decodeResponse(response)?['docs'] as List?) ?? const [];
+      if (docs.isEmpty) return null;
+
+      return _MessageThreadSummary.fromJson(docs.first);
+    } catch (_) {
+      return null;
     }
-
-    final docs = (_decodeResponse(response)?['docs'] as List?) ?? const [];
-    if (docs.isEmpty) return null;
-
-    final thread = _MessageThreadSummary.fromJson(docs.first);
-    if (thread == null) {
-      throw Exception('Unable to parse the chat thread.');
-    }
-
-    return thread;
   }
 
   Future<Map<String, _MessageReceiptSummary>> _applyIncomingReceiptUpdates({
@@ -489,6 +1211,7 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
         );
         if (readReceipt != null) {
           updatedReceipts[message.id] = readReceipt;
+          ChatPage.setUnreadChatCount(0);
         }
       }
     }
@@ -629,27 +1352,65 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
       if (seqCompare != 0) return seqCompare;
       return a.createdAt.compareTo(b.createdAt);
     });
-    return allMessages;
+
+    if (_activeContact.isAdmin) {
+      return allMessages;
+    }
+
+    final contactNameLower = _activeContact.name.toLowerCase();
+    final filtered = allMessages.where((msg) {
+      final lower = msg.text.toLowerCase();
+      return lower.contains('[@$contactNameLower') ||
+          lower.contains('[@${_activeContact.role.toLowerCase()}');
+    }).toList();
+
+    return filtered.isNotEmpty ? filtered : allMessages;
   }
 
   Future<void> _sendMessage() async {
-    final thread = _thread;
+    final currentUser = _currentUser;
     final text = _messageController.text.trim();
 
-    if (thread == null || text.isEmpty || thread.status != 'open') {
+    if (currentUser == null || text.isEmpty) {
       return;
     }
 
     FocusScope.of(context).unfocus();
     _messageController.clear();
 
+    final token = await _readToken();
+    var thread = _thread;
+
+    // Automatically resolve or create thread if not yet created
+    if (thread == null) {
+      final targetUserId = _activeContact.isAdmin
+          ? currentUser.id
+          : (_activeContact.staffUserId ?? currentUser.id);
+
+      thread = await _fetchOrCreateThread(
+        token: token,
+        targetUserId: targetUserId,
+        currentUserId: currentUser.id,
+      );
+      if (thread != null && mounted) {
+        setState(() {
+          _thread = thread;
+        });
+      }
+    }
+
+    final threadId = thread?.id ?? 'pending-thread-${currentUser.id}';
+    final payloadText = _activeContact.isAdmin
+        ? text
+        : '[@${_activeContact.name} • ${_activeContact.role}]\n$text';
+
     final localSeq = _nextOptimisticSeq();
     final localId = 'local-${DateTime.now().microsecondsSinceEpoch}-$localSeq';
     final optimisticMessage = _ChatMessage(
       id: localId,
-      threadId: thread.id,
+      threadId: threadId,
       senderRole: 'staff',
-      text: text,
+      text: payloadText,
       seq: localSeq,
       createdAt: DateTime.now(),
     );
@@ -665,11 +1426,14 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
     );
 
     try {
-      final token = await _readToken();
+      if (thread == null) {
+        throw Exception('Unable to initialize chat conversation. Please try again.');
+      }
+
       final response = await http.post(
         _apiUri('/api/messages'),
         headers: _authHeaders(token, json: true),
-        body: jsonEncode({'thread': thread.id, 'text': text}),
+        body: jsonEncode({'thread': thread.id, 'text': payloadText}),
       );
 
       if (response.statusCode != 200 && response.statusCode != 201) {
@@ -718,22 +1482,10 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
       return;
     }
 
-    final prefs = await SharedPreferences.getInstance();
-    final branchId = prefs.getString('branchId')?.trim() ?? '';
-    final showHome = HomeNavigationService.readCachedVisibility(
-      prefs,
-      branchId: branchId,
-      fallback: true,
-    );
-
     if (!mounted) return;
     Navigator.pushAndRemoveUntil(
       context,
-      MaterialPageRoute(
-        builder: (_) => showHome
-            ? const HomePage()
-            : const CategoriesPage(sourcePage: PageType.billing),
-      ),
+      MaterialPageRoute(builder: (_) => const HomePage()),
       (route) => false,
     );
   }
@@ -755,317 +1507,27 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
     }
   }
 
-  Future<void> _handleCameraTap() async {
-    final thread = _thread;
-    if (thread == null || thread.status != 'open') return;
-
-    showModalBottomSheet<void>(
+  void _openContactsModal() {
+    showModalBottomSheet(
       context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _EmployeeContactsSheet(
+        contacts: widget.allContacts,
+        activeContact: _activeContact,
+        onSelectContact: (contact) {
+          Navigator.of(ctx).pop();
+          if (contact.id == _activeContact.id) return;
+          setState(() {
+            _activeContact = contact;
+            _messages = const [];
+            _optimisticMessages = const [];
+            _outgoingReceiptsByMessageId = const {};
+            _thread = null;
+          });
+          unawaited(_refreshConversation(showLoader: true, forceScrollToBottom: true));
+        },
       ),
-      builder: (BuildContext context) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Wrap(
-              children: <Widget>[
-                ListTile(
-                  leading: const Icon(Icons.camera_front_rounded, color: Colors.blueAccent, size: 28),
-                  title: const Text('Take Selfie Photo (Front Camera)', style: TextStyle(fontWeight: FontWeight.w600)),
-                  onTap: () async {
-                    Navigator.pop(context);
-                    final XFile? photo = await Navigator.push<XFile>(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const CameraCapturePage(
-                          preferredLensDirection: CameraLensDirection.front,
-                        ),
-                        fullscreenDialog: true,
-                      ),
-                    );
-                    if (photo != null) {
-                      await _uploadImageAttachment(photo);
-                    }
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.camera_rear_rounded, color: Colors.green, size: 28),
-                  title: const Text('Take Photo (Back Camera)', style: TextStyle(fontWeight: FontWeight.w600)),
-                  onTap: () async {
-                    Navigator.pop(context);
-                    final XFile? photo = await Navigator.push<XFile>(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const CameraCapturePage(
-                          preferredLensDirection: CameraLensDirection.back,
-                        ),
-                        fullscreenDialog: true,
-                      ),
-                    );
-                    if (photo != null) {
-                      await _uploadImageAttachment(photo);
-                    }
-                  },
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Future<void> _uploadImageAttachment(XFile file) async {
-    final thread = _thread;
-    if (thread == null) return;
-
-    try {
-      final token = await _readToken();
-      final uri = _apiUri('/api/message-attachments');
-
-      final request = http.MultipartRequest('POST', uri);
-      request.headers.addAll(_authHeaders(token));
-      request.fields['thread'] = thread.id;
-      request.fields['_payload'] = jsonEncode({'thread': thread.id});
-
-      final bytes = await file.readAsBytes();
-      final filename = file.name.isNotEmpty ? file.name : 'photo_${DateTime.now().millisecondsSinceEpoch}.jpg';
-
-      request.files.add(
-        http.MultipartFile.fromBytes(
-          'file',
-          bytes,
-          filename: filename,
-        ),
-      );
-
-      final streamedRes = await request.send();
-      final res = await http.Response.fromStream(streamedRes);
-
-      if (res.statusCode != 200 && res.statusCode != 201) {
-        throw Exception('Failed to upload attachment: ${res.body}');
-      }
-
-      final data = jsonDecode(res.body);
-      final attachmentId = data['doc']?['id'] ?? data['id'];
-
-      if (attachmentId != null) {
-        final msgResponse = await http.post(
-          _apiUri('/api/messages'),
-          headers: _authHeaders(token, json: true),
-          body: jsonEncode({
-            'thread': thread.id,
-            'text': '📷 Photo',
-            'attachment': attachmentId,
-          }),
-        );
-
-        if (msgResponse.statusCode == 200 || msgResponse.statusCode == 201) {
-          await _refreshConversation(showLoader: false, forceScrollToBottom: true);
-        }
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error uploading photo: $e'),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-    }
-  }
-
-  Future<void> _handleCallTap() async {
-    showDialog<void>(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: const Row(
-            children: [
-              Icon(Icons.phone_in_talk, color: _whatsAppGreen),
-              SizedBox(width: 8),
-              Text('Voice & Video Call'),
-            ],
-          ),
-          content: const Text(
-            'Initiate an audio or video call with the Admin Dashboard.',
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _whatsAppGreen,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-              onPressed: () {
-                Navigator.pop(context);
-                _initiateCallSignal('audio');
-              },
-              icon: const Icon(Icons.phone),
-              label: const Text('Audio Call'),
-            ),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.purple,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-              ),
-              onPressed: () {
-                Navigator.pop(context);
-                _initiateCallSignal('video');
-              },
-              icon: const Icon(Icons.videocam),
-              label: const Text('Video Call'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  Future<void> _initiateCallSignal(String callType) async {
-    final thread = _thread;
-    if (thread == null) return;
-
-    try {
-      final token = await _readToken();
-      final res = await http.post(
-        _apiUri('/api/call-signal'),
-        headers: _authHeaders(token, json: true),
-        body: jsonEncode({
-          'action': 'initiate',
-          'threadId': thread.id,
-          'calleeId': 'admin',
-          'callType': callType,
-        }),
-      );
-
-      if (res.statusCode == 200) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Calling Admin ($callType)... Ringing...'),
-            backgroundColor: _whatsAppGreen,
-          ),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Call error: $e'),
-          backgroundColor: Colors.redAccent,
-        ),
-      );
-    }
-  }
-  Future<void> _checkIncomingCallSignal() async {
-    try {
-      final token = await _readToken();
-      final thread = _thread;
-
-      final res = await http.post(
-        _apiUri('/api/call-signal'),
-        headers: _authHeaders(token, json: true),
-        body: jsonEncode({
-          'action': 'check_incoming',
-          if (thread != null) 'threadId': thread.id,
-        }),
-      );
-
-      if (res.statusCode == 200) {
-        final data = jsonDecode(res.body);
-        final session = data['session'];
-        if (session != null && session['status'] == 'ringing') {
-          _showIncomingCallDialog(session);
-        }
-      }
-    } catch (_) {}
-  }
-
-  void _showIncomingCallDialog(Map<String, dynamic> session) {
-    if (_isCallDialogShowing) return;
-    _isCallDialogShowing = true;
-
-    final callId = session['callId']?.toString() ?? '';
-    final callType = session['callType']?.toString() ?? 'audio';
-
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Row(
-            children: [
-              Icon(
-                callType == 'video' ? Icons.videocam : Icons.phone_in_talk,
-                color: _whatsAppGreen,
-                size: 28,
-              ),
-              const SizedBox(width: 10),
-              Text('Incoming ${callType == 'video' ? 'Video' : 'Audio'} Call'),
-            ],
-          ),
-          content: const Text(
-            'Admin Dashboard is calling you right now. Accept or decline the call.',
-            style: TextStyle(fontSize: 15),
-          ),
-          actions: <Widget>[
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              onPressed: () async {
-                _isCallDialogShowing = false;
-                Navigator.pop(context);
-                final token = await _readToken();
-                await http.post(
-                  _apiUri('/api/call-signal'),
-                  headers: _authHeaders(token, json: true),
-                  body: jsonEncode({'action': 'reject', 'callId': callId}),
-                );
-              },
-              icon: const Icon(Icons.call_end),
-              label: const Text('Decline'),
-            ),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _whatsAppGreen,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              ),
-              onPressed: () async {
-                _isCallDialogShowing = false;
-                Navigator.pop(context);
-                final token = await _readToken();
-                await http.post(
-                  _apiUri('/api/call-signal'),
-                  headers: _authHeaders(token, json: true),
-                  body: jsonEncode({'action': 'accept', 'callId': callId}),
-                );
-                if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Call Connected! Audio/Video call active.'),
-                    backgroundColor: _whatsAppGreen,
-                  ),
-                );
-              },
-              icon: const Icon(Icons.call),
-              label: const Text('Accept'),
-            ),
-          ],
-        );
-      },
     );
   }
 
@@ -1073,16 +1535,21 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
   Widget build(BuildContext context) {
     final thread = _thread;
 
-    return ColoredBox(
-      color: Colors.white,
-      child: Column(
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Column(
         children: [
           _WhatsAppChatAppBar(
             title: _chatTitle,
+            subtitle: _chatSubtitle,
             avatarLetters: _avatarLetters,
+            avatarColor: _activeContact.roleColor,
             isRefreshing: _isRefreshing,
             onBack: _handleBack,
-            onCallTap: _handleCallTap,
+            onContactTap: _openContactsModal,
+            onCallTap: () => _showPhaseOneMessage(
+              'Voice calling is not part of chat phase 1.',
+            ),
             onMenuSelected: _handleMenuAction,
           ),
           Expanded(
@@ -1093,20 +1560,21 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
                   child: Column(
                     children: [
                       Expanded(child: _buildConversationBody()),
-                      if (thread != null)
-                        _Composer(
-                          controller: _messageController,
-                          isEnabled: thread.status == 'open',
-                          hasText: _hasDraftText,
-                          onSend: () => unawaited(_sendMessage()),
-                          onCameraTap: _handleCameraTap,
-                          onMicTap: () => _showPhaseOneMessage(
-                            'Voice messages are not part of chat phase 1.',
-                          ),
-                          disabledMessage: thread.status == 'open'
-                              ? null
-                              : 'This chat is currently closed.',
+                      _Composer(
+                        controller: _messageController,
+                        isEnabled: thread == null || thread.status == 'open',
+                        hasText: _hasDraftText,
+                        onSend: () => unawaited(_sendMessage()),
+                        onCameraTap: () => _showPhaseOneMessage(
+                          'Camera sharing is not part of chat phase 1.',
                         ),
+                        onMicTap: () => _showPhaseOneMessage(
+                          'Voice messages are not part of chat phase 1.',
+                        ),
+                        disabledMessage: (thread != null && thread.status != 'open')
+                            ? 'This chat is currently closed.'
+                            : null,
+                      ),
                     ],
                   ),
                 ),
@@ -1152,22 +1620,19 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
       );
     }
 
-    if (_thread == null) {
+    if (_thread == null || displayMessages.isEmpty) {
       return _CenteredStatus(
-        title: 'No messages yet',
-        subtitle:
-            'An admin needs to start the conversation first. This screen checks every 20 seconds while the app is open.',
-        actionLabel: 'Refresh',
-        onAction: () => _bootstrapConversation(showLoader: false),
-      );
-    }
-
-    if (displayMessages.isEmpty) {
-      return _CenteredStatus(
-        title: 'No messages yet',
-        subtitle: 'Messages in this thread will appear here.',
-        actionLabel: 'Refresh',
-        onAction: () => _refreshConversation(showLoader: false),
+        title: 'Start chatting with ${_activeContact.name}',
+        subtitle: _activeContact.isAdmin
+            ? 'Type a message below to reach out to the management and admin team.'
+            : 'Send a message below to start your conversation with ${_activeContact.name} (${_activeContact.role}).',
+        actionLabel: 'Say Hello 👋',
+        onAction: () async {
+          _messageController.text = 'Hi ${_activeContact.name} 👋';
+          _messageController.selection = TextSelection.fromPosition(
+            TextPosition(offset: _messageController.text.length),
+          );
+        },
       );
     }
 
@@ -1205,21 +1670,351 @@ class _EmployeeChatScreenState extends State<_EmployeeChatScreen>
   }
 }
 
+class _EmployeeContactsSheet extends StatefulWidget {
+  final List<ChatContact> contacts;
+  final ChatContact activeContact;
+  final ValueChanged<ChatContact> onSelectContact;
+
+  const _EmployeeContactsSheet({
+    required this.contacts,
+    required this.activeContact,
+    required this.onSelectContact,
+  });
+
+  @override
+  State<_EmployeeContactsSheet> createState() => _EmployeeContactsSheetState();
+}
+
+class _EmployeeContactsSheetState extends State<_EmployeeContactsSheet> {
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _searchController.addListener(() {
+      setState(() {
+        _searchQuery = _searchController.text.trim().toLowerCase();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filteredContacts = widget.contacts.where((c) {
+      if (_searchQuery.isEmpty) return true;
+      return c.name.toLowerCase().contains(_searchQuery) ||
+          c.role.toLowerCase().contains(_searchQuery);
+    }).toList();
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.78,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
+        children: [
+          Container(
+            margin: const EdgeInsets.only(top: 12, bottom: 8),
+            width: 44,
+            height: 4,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade300,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 16, 12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Select Contact',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF15171A),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${widget.contacts.length + 1} contacts available',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.grey.shade600,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close, color: Colors.black54),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF3F4F6),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.search, color: Color(0xFF6B7280), size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextField(
+                      controller: _searchController,
+                      decoration: const InputDecoration(
+                        hintText: 'Search by name or role...',
+                        hintStyle: TextStyle(
+                          fontSize: 14,
+                          color: Color(0xFF9CA3AF),
+                        ),
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
+                  if (_searchQuery.isNotEmpty)
+                    GestureDetector(
+                      onTap: () => _searchController.clear(),
+                      child: const Icon(
+                        Icons.cancel,
+                        color: Color(0xFF9CA3AF),
+                        size: 18,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              children: [
+                if (_searchQuery.isEmpty ||
+                    'admin'.contains(_searchQuery) ||
+                    'management'.contains(_searchQuery))
+                  _buildContactTile(
+                    contact: ChatContact.admin,
+                    isSelected: widget.activeContact.isAdmin,
+                    isPinnedAdmin: true,
+                  ),
+                if (filteredContacts.isNotEmpty &&
+                    (_searchQuery.isEmpty ||
+                        'admin'.contains(_searchQuery) ||
+                        'management'.contains(_searchQuery)))
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 14, 20, 6),
+                    child: Text(
+                      'TEAM MEMBERS (${filteredContacts.length})',
+                      style: TextStyle(
+                        fontSize: 11,
+                        letterSpacing: 1,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                  ),
+                ...filteredContacts.map(
+                  (c) => _buildContactTile(
+                    contact: c,
+                    isSelected: !widget.activeContact.isAdmin &&
+                        widget.activeContact.id == c.id,
+                  ),
+                ),
+                if (filteredContacts.isEmpty &&
+                    !('admin'.contains(_searchQuery) ||
+                        'management'.contains(_searchQuery)))
+                  Padding(
+                    padding: const EdgeInsets.all(32),
+                    child: Center(
+                      child: Text(
+                        'No contacts matching "$_searchQuery"',
+                        style: TextStyle(
+                          color: Colors.grey.shade500,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildContactTile({
+    required ChatContact contact,
+    required bool isSelected,
+    bool isPinnedAdmin = false,
+  }) {
+    return InkWell(
+      onTap: () => widget.onSelectContact(contact),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        color: isSelected ? const Color(0xFFE8F5E9) : Colors.transparent,
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [
+                    contact.roleColor,
+                    contact.roleColor.withValues(alpha: 0.8),
+                  ],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: contact.roleColor.withValues(alpha: 0.25),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              alignment: Alignment.center,
+              child: isPinnedAdmin
+                  ? const Icon(
+                      Icons.admin_panel_settings_rounded,
+                      color: Colors.white,
+                      size: 24,
+                    )
+                  : Text(
+                      contact.initials,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          contact.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: isSelected
+                                ? FontWeight.w700
+                                : FontWeight.w600,
+                            color: const Color(0xFF1E293B),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: contact.roleColor.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                            color: contact.roleColor.withValues(alpha: 0.25),
+                          ),
+                        ),
+                        child: Text(
+                          contact.role.toUpperCase(),
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            color: contact.roleColor,
+                            letterSpacing: 0.4,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    isPinnedAdmin
+                        ? 'Official Support & Management Chat'
+                        : 'Team Member • ${contact.role}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.grey.shade600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (isSelected)
+              const Icon(
+                Icons.check_circle_rounded,
+                color: _whatsAppGreen,
+                size: 22,
+              )
+            else
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Color(0xFFCBD5E1),
+                size: 22,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 enum _ChatMenuAction { refresh }
 
 class _WhatsAppChatAppBar extends StatelessWidget {
   final String title;
+  final String? subtitle;
   final String avatarLetters;
+  final Color avatarColor;
   final bool isRefreshing;
   final Future<void> Function() onBack;
+  final VoidCallback onContactTap;
   final VoidCallback onCallTap;
   final Future<void> Function(_ChatMenuAction action) onMenuSelected;
 
   const _WhatsAppChatAppBar({
     required this.title,
+    this.subtitle,
     required this.avatarLetters,
+    this.avatarColor = const Color(0xFF7A1530),
     required this.isRefreshing,
     required this.onBack,
+    required this.onContactTap,
     required this.onCallTap,
     required this.onMenuSelected,
   });
@@ -1245,16 +2040,16 @@ class _WhatsAppChatAppBar extends StatelessWidget {
                 height: 40,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF0F0F12), Color(0xFF7A1530)],
+                  gradient: LinearGradient(
+                    colors: [avatarColor, avatarColor.withValues(alpha: 0.8)],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.14),
-                      blurRadius: 10,
-                      offset: const Offset(0, 3),
+                      color: avatarColor.withValues(alpha: 0.3),
+                      blurRadius: 8,
+                      offset: const Offset(0, 2),
                     ),
                   ],
                 ),
@@ -1270,35 +2065,58 @@ class _WhatsAppChatAppBar extends StatelessWidget {
               ),
               const SizedBox(width: 12),
               Expanded(
-                child: Row(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Flexible(
-                      child: Text(
-                        title,
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: Colors.black87,
+                            ),
+                          ),
+                        ),
+                        if (isRefreshing) ...[
+                          const SizedBox(width: 8),
+                          const SizedBox(
+                            width: 13,
+                            height: 13,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: _whatsAppGreen,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    if (subtitle != null && subtitle!.isNotEmpty)
+                      Text(
+                        subtitle!,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.black87,
+                          fontSize: 12,
+                          color: Color(0xFF667781),
+                          fontWeight: FontWeight.w400,
                         ),
                       ),
-                    ),
-                    if (isRefreshing) ...[
-                      const SizedBox(width: 8),
-                      const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: _whatsAppGreen,
-                        ),
-                      ),
-                    ],
                   ],
                 ),
               ),
               IconButton(
+                tooltip: 'Contacts',
+                onPressed: onContactTap,
+                icon: const Icon(Icons.contacts_outlined, color: Colors.black87),
+              ),
+              IconButton(
+                tooltip: 'Call',
                 onPressed: onCallTap,
                 icon: const Icon(Icons.call_outlined, color: Colors.black87),
               ),
@@ -1692,6 +2510,18 @@ class _MessageBubble extends StatelessWidget {
       'HH:mm',
     ).format(message.createdAt.toLocal());
 
+    String recipientTag = '';
+    String displayBody = message.text;
+    if (message.text.startsWith('[@') && message.text.contains(']\n')) {
+      final endIdx = message.text.indexOf(']\n');
+      recipientTag = message.text.substring(2, endIdx);
+      displayBody = message.text.substring(endIdx + 2);
+    } else if (message.text.startsWith('[@') && message.text.contains(']: ')) {
+      final endIdx = message.text.indexOf(']: ');
+      recipientTag = message.text.substring(2, endIdx);
+      displayBody = message.text.substring(endIdx + 3);
+    }
+
     return Align(
       alignment: isOutgoing ? Alignment.centerRight : Alignment.centerLeft,
       child: LayoutBuilder(
@@ -1713,12 +2543,13 @@ class _MessageBubble extends StatelessWidget {
               (isOutgoing ? iconGap + statusIconWidth : 0);
 
           final textPainter = TextPainter(
-            text: TextSpan(text: message.text, style: messageStyle),
+            text: TextSpan(text: displayBody, style: messageStyle),
             textDirection: Directionality.of(context),
           )..layout(maxWidth: contentMaxWidth);
 
           final bool isMultiLine = textPainter.computeLineMetrics().length > 1;
           final bool showTimeInline =
+              recipientTag.isEmpty &&
               !isMultiLine &&
               (textPainter.width + inlineGap + metaWidth) <= contentMaxWidth;
           final double resolvedBubbleWidth = showTimeInline
@@ -1750,41 +2581,58 @@ class _MessageBubble extends StatelessWidget {
               ),
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if (message.attachmentUrl != null && message.attachmentUrl!.isNotEmpty) ...[
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(10),
-                        child: CachedNetworkImage(
-                          imageUrl: message.attachmentUrl!,
-                          width: 220,
-                          height: 180,
-                          fit: BoxFit.cover,
-                          placeholder: (context, url) => const SizedBox(
-                            width: 220,
-                            height: 180,
-                            child: Center(child: CircularProgressIndicator(color: _whatsAppGreen)),
+                child: showTimeInline
+                    ? Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Expanded(
+                            child: Text(displayBody, style: messageStyle),
                           ),
-                          errorWidget: (context, url, error) => const Icon(Icons.broken_image, size: 50, color: Colors.grey),
-                        ),
+                          const SizedBox(width: inlineGap),
+                          _MessageMeta(
+                            timeText: timeText,
+                            isOutgoing: isOutgoing,
+                            status: receipt?.status,
+                          ),
+                        ],
+                      )
+                    : Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (recipientTag.isNotEmpty) ...[
+                            Container(
+                              margin: const EdgeInsets.only(bottom: 5),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withValues(alpha: 0.06),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                'To: $recipientTag',
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF334155),
+                                ),
+                              ),
+                            ),
+                          ],
+                          Text(displayBody, style: messageStyle),
+                          const SizedBox(height: 6),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: _MessageMeta(
+                              timeText: timeText,
+                              isOutgoing: isOutgoing,
+                              status: receipt?.status,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 6),
-                    ],
-                    if (message.text.isNotEmpty)
-                      Text(message.text, style: messageStyle),
-                    const SizedBox(height: 6),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: _MessageMeta(
-                        timeText: timeText,
-                        isOutgoing: isOutgoing,
-                        status: receipt?.status,
-                      ),
-                    ),
-                  ],
-                ),
               ),
             ),
           );
@@ -1884,7 +2732,6 @@ class _ChatMessage {
   final String threadId;
   final String senderRole;
   final String text;
-  final String? attachmentUrl;
   final int seq;
   final DateTime createdAt;
 
@@ -1893,7 +2740,6 @@ class _ChatMessage {
     required this.threadId,
     required this.senderRole,
     required this.text,
-    this.attachmentUrl,
     required this.seq,
     required this.createdAt,
   });
@@ -1906,15 +2752,10 @@ class _ChatMessage {
     final id = _relationshipId(json);
     final threadId = _relationshipId(json['thread']);
     final createdAt = _parseDate(json['createdAt']);
-    final text = _stringValue(json['text']) ?? '';
+    final text = _stringValue(json['text']);
     final seq = _intValue(json['seq']) ?? 0;
 
-    String? attachmentUrl;
-    if (json['attachment'] is Map<String, dynamic>) {
-      attachmentUrl = _stringValue(json['attachment']['url']);
-    }
-
-    if (id == null || threadId == null || createdAt == null) {
+    if (id == null || threadId == null || createdAt == null || text == null) {
       return null;
     }
 
@@ -1923,7 +2764,6 @@ class _ChatMessage {
       threadId: threadId,
       senderRole: _stringValue(json['senderRole']) ?? '',
       text: text,
-      attachmentUrl: attachmentUrl,
       seq: seq,
       createdAt: createdAt,
     );
@@ -1990,8 +2830,7 @@ class _MessageReceiptSummary {
 }
 
 Future<String> _readToken() async {
-  final prefs = await SharedPreferences.getInstance();
-  final token = prefs.getString('token')?.trim();
+  final token = await ApiService.getToken();
   if (token == null || token.isEmpty) {
     throw Exception('Session expired. Please login again.');
   }
@@ -1999,7 +2838,14 @@ Future<String> _readToken() async {
 }
 
 Uri _apiUri(String path, {Map<String, String>? queryParameters}) {
-  return Uri.https(apiHostPrimary, path, queryParameters);
+  final base = Uri.parse(ApiService.baseUrl);
+  return Uri(
+    scheme: base.scheme.isNotEmpty ? base.scheme : 'https',
+    host: base.host,
+    port: base.hasPort ? base.port : null,
+    path: path.startsWith('/api') ? path : '/api$path',
+    queryParameters: queryParameters,
+  );
 }
 
 Map<String, String> _authHeaders(String token, {bool json = false}) {
@@ -2097,6 +2943,23 @@ double _measureTextWidth({
     maxLines: 1,
   )..layout();
   return painter.width;
+}
+
+String _formatInboxTime(DateTime date) {
+  final local = date.toLocal();
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final msgDate = DateTime(local.year, local.month, local.day);
+  final diff = today.difference(msgDate).inDays;
+
+  if (diff == 0) {
+    return DateFormat('HH:mm').format(local);
+  } else if (diff == 1) {
+    return 'Yesterday';
+  } else if (diff < 7) {
+    return DateFormat('EEEE').format(local);
+  }
+  return DateFormat('dd/MM/yy').format(local);
 }
 
 String _formatDateChip(DateTime date) {

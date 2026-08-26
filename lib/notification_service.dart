@@ -102,7 +102,10 @@ class NotificationService {
           ticker: 'Waiter Call SOS',
           playSound: true,
           enableVibration: true,
+          fullScreenIntent: true,
           category: AndroidNotificationCategory.alarm,
+          audioAttributesUsage: AudioAttributesUsage.alarm,
+          visibility: NotificationVisibility.public,
           sound: RawResourceAndroidNotificationSound('table'),
         );
 
