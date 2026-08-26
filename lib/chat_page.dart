@@ -86,6 +86,7 @@ class ChatPage extends StatefulWidget {
 
   static void setUnreadChatCount(int count) {
     unreadChatNotifier.value = count;
+    CommonScaffold.setUnreadChatCount(count);
   }
 
   static Future<int> checkUnreadChatCount() async {
@@ -93,51 +94,16 @@ class ChatPage extends StatefulWidget {
       final token = await ApiService.getToken();
       if (token == null || token.isEmpty) return 0;
 
-      var userId = _cachedUserId;
-      if (userId == null || userId.isEmpty) {
-        final profile = await ApiService.fetchUserProfile();
-        userId = (profile['id'] ?? profile['_id'])?.toString();
-        if (userId != null && userId.isNotEmpty) {
-          _cachedUserId = userId;
-        }
-      }
-
-      if (userId == null || userId.isEmpty) return 0;
-
-      if (_cachedThreadId == null || _cachedThreadId!.isEmpty) {
-        final threadRes = await http.get(
-          _apiUri(
-            '/api/message-threads',
-            queryParameters: {
-              'limit': '1',
-              'depth': '0',
-              'where[staffUser][equals]': userId,
-            },
-          ),
-          headers: _authHeaders(token),
-        );
-
-        if (threadRes.statusCode == 200) {
-          final data = _decodeResponse(threadRes);
-          final docs = (data?['docs'] as List?) ?? const [];
-          if (docs.isNotEmpty) {
-            _cachedThreadId = _relationshipId(docs.first);
-          }
-        }
-      }
-
-      final queryParams = <String, String>{
-        'limit': '100',
-        'depth': '0',
-        'where[recipientAudience][equals]': 'staff',
-        'where[status][not_equals]': 'read',
-      };
-      if (_cachedThreadId != null && _cachedThreadId!.isNotEmpty) {
-        queryParams['where[thread][equals]'] = _cachedThreadId!;
-      }
-
       final receiptsRes = await http.get(
-        _apiUri('/api/message-receipts', queryParameters: queryParams),
+        _apiUri(
+          '/api/message-receipts',
+          queryParameters: {
+            'limit': '500',
+            'depth': '0',
+            'where[recipientAudience][equals]': 'staff',
+            'where[status][not_equals]': 'read',
+          },
+        ),
         headers: _authHeaders(token),
       );
 
@@ -234,11 +200,38 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
           ),
           headers: _authHeaders(token),
         ),
+        http.get(
+          _apiUri(
+            '/api/message-receipts',
+            queryParameters: {
+              'limit': '500',
+              'depth': '0',
+              'where[recipientAudience][equals]': 'staff',
+              'where[status][not_equals]': 'read',
+            },
+          ),
+          headers: _authHeaders(token),
+        ),
       ]);
 
       final employeesRes = responses[0];
       final usersRes = responses[1];
       final messagesRes = responses[2];
+      final receiptsRes = responses[3];
+
+      final Set<String> unreadMessageIds = {};
+      if (receiptsRes.statusCode == 200) {
+        final decodedReceipts = _decodeResponse(receiptsRes);
+        final docs = (decodedReceipts?['docs'] as List?) ?? [];
+        for (final doc in docs) {
+          if (doc is Map<String, dynamic>) {
+            final mId = _relationshipId(doc['message']);
+            if (mId != null && mId.isNotEmpty) {
+              unreadMessageIds.add(mId);
+            }
+          }
+        }
+      }
 
       final Map<String, dynamic> staffUsersByEmployeeId = {};
       final Map<String, dynamic> staffUsersById = {};
@@ -324,11 +317,13 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
             .toList(growable: false);
       }
 
-      // Group messages by contact
+      // Group messages by contact and count unread
       final Map<String, _ChatMessage> latestMessageByContact = {};
+      final Map<String, int> unreadCountByContact = {};
 
       for (final msg in messages) {
         final text = msg.text;
+        String? matchedContactId;
         // Check if message is tagged with a recipient [@Name • Role]
         if (text.startsWith('[@') && text.contains(']')) {
           final endIdx = text.indexOf(']');
@@ -336,19 +331,30 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
           for (final c in contacts) {
             if (tag.contains(c.name.toLowerCase()) ||
                 tag.contains(c.role.toLowerCase())) {
-              if (!latestMessageByContact.containsKey(c.id)) {
-                latestMessageByContact[c.id] = msg;
-              }
+              matchedContactId = c.id;
               break;
             }
           }
         } else {
-          // Untagged message belongs to Admin conversation
-          if (!latestMessageByContact.containsKey('admin')) {
-            latestMessageByContact['admin'] = msg;
+          matchedContactId = 'admin';
+        }
+
+        if (matchedContactId != null) {
+          if (!latestMessageByContact.containsKey(matchedContactId)) {
+            latestMessageByContact[matchedContactId] = msg;
+          }
+          if (unreadMessageIds.contains(msg.id) && msg.senderRole != 'staff') {
+            unreadCountByContact[matchedContactId] =
+                (unreadCountByContact[matchedContactId] ?? 0) + 1;
           }
         }
       }
+
+      int totalUnread = 0;
+      for (final count in unreadCountByContact.values) {
+        totalUnread += count;
+      }
+      ChatPage.setUnreadChatCount(totalUnread);
 
       // Build conversations list
       final List<_ConversationItem> conversations = [];
@@ -358,6 +364,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
         _ConversationItem(
           contact: ChatContact.admin,
           lastMessage: latestMessageByContact['admin'],
+          unreadCount: unreadCountByContact['admin'] ?? 0,
         ),
       );
 
@@ -368,6 +375,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
             _ConversationItem(
               contact: c,
               lastMessage: latestMessageByContact[c.id],
+              unreadCount: unreadCountByContact[c.id] ?? 0,
             ),
           );
         }
@@ -666,8 +674,12 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                                               timeText,
                                               style: TextStyle(
                                                 fontSize: 12,
-                                                color: Colors.grey.shade500,
-                                                fontWeight: FontWeight.w500,
+                                                color: item.unreadCount > 0
+                                                    ? _whatsAppGreen
+                                                    : Colors.grey.shade500,
+                                                fontWeight: item.unreadCount > 0
+                                                    ? FontWeight.w700
+                                                    : FontWeight.w500,
                                               ),
                                             ),
                                         ],
@@ -690,13 +702,50 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                                               overflow: TextOverflow.ellipsis,
                                               style: TextStyle(
                                                 fontSize: 14,
-                                                color: lastMsg != null
-                                                    ? const Color(0xFF64748B)
-                                                    : Colors.grey.shade400,
-                                                fontWeight: FontWeight.w400,
+                                                color: item.unreadCount > 0
+                                                    ? const Color(0xFF1E293B)
+                                                    : (lastMsg != null
+                                                        ? const Color(0xFF64748B)
+                                                        : Colors.grey.shade400),
+                                                fontWeight: item.unreadCount > 0
+                                                    ? FontWeight.w600
+                                                    : FontWeight.w400,
                                               ),
                                             ),
                                           ),
+                                          if (item.unreadCount > 0) ...[
+                                            const SizedBox(width: 8),
+                                            Container(
+                                              constraints: const BoxConstraints(
+                                                minWidth: 20,
+                                                minHeight: 20,
+                                              ),
+                                              padding: const EdgeInsets.symmetric(
+                                                horizontal: 6,
+                                                vertical: 2,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: _whatsAppGreen,
+                                                borderRadius: BorderRadius.circular(10),
+                                                boxShadow: [
+                                                  BoxShadow(
+                                                    color: _whatsAppGreen.withValues(alpha: 0.3),
+                                                    blurRadius: 4,
+                                                    offset: const Offset(0, 1),
+                                                  ),
+                                                ],
+                                              ),
+                                              alignment: Alignment.center,
+                                              child: Text(
+                                                '${item.unreadCount}',
+                                                style: const TextStyle(
+                                                  color: Colors.white,
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.bold,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
                                         ],
                                       ),
                                     ],
