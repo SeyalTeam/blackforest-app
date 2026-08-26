@@ -6,7 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
-import 'api_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:blackforest_app/api_server_prefs.dart';
+import 'package:blackforest_app/common_scaffold.dart';
 import 'home_page.dart';
 
 const Duration _chatPollInterval = Duration(seconds: 20);
@@ -91,7 +93,8 @@ class ChatPage extends StatefulWidget {
 
   static Future<int> checkUnreadChatCount() async {
     try {
-      final token = await ApiService.getToken();
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token')?.trim();
       if (token == null || token.isEmpty) return 0;
 
       final receiptsRes = await http.get(
@@ -2879,7 +2882,8 @@ class _MessageReceiptSummary {
 }
 
 Future<String> _readToken() async {
-  final token = await ApiService.getToken();
+  final prefs = await SharedPreferences.getInstance();
+  final token = prefs.getString('token')?.trim();
   if (token == null || token.isEmpty) {
     throw Exception('Session expired. Please login again.');
   }
@@ -2887,14 +2891,8 @@ Future<String> _readToken() async {
 }
 
 Uri _apiUri(String path, {Map<String, String>? queryParameters}) {
-  final base = Uri.parse(ApiService.baseUrl);
-  return Uri(
-    scheme: base.scheme.isNotEmpty ? base.scheme : 'https',
-    host: base.host,
-    port: base.hasPort ? base.port : null,
-    path: path.startsWith('/api') ? path : '/api$path',
-    queryParameters: queryParameters,
-  );
+  final cleanPath = path.startsWith('/') ? path : '/$path';
+  return Uri.https(apiHostPrimary, cleanPath, queryParameters);
 }
 
 Map<String, String> _authHeaders(String token, {bool json = false}) {
