@@ -158,4 +158,23 @@ class NotificationService {
       payload: payload,
     );
   }
+
+  Future<void> showBackgroundNotification(int id, String title, String body) async {
+    const androidPlatformChannelSpecifics = AndroidNotificationDetails(
+      'geofence_background',
+      'Geofence Background',
+      channelDescription: 'Used for background geofence events',
+      importance: Importance.low,
+      priority: Priority.low,
+      showWhen: false,
+    );
+    const platformChannelSpecifics = NotificationDetails(android: androidPlatformChannelSpecifics);
+    await flutterLocalNotificationsPlugin.show(
+      id: id,
+      title: title,
+      body: body,
+      notificationDetails: platformChannelSpecifics,
+    );
+  }
+
 }

@@ -44,6 +44,7 @@ class _EmployeePageState extends State<EmployeePage> {
   List<dynamic> _rawActivities = [];
 
   Timer? _timer;
+  Timer? _pollingTimer;
   Duration _workDuration = Duration.zero;
   Duration _breakDuration = Duration.zero;
   List<Map<String, dynamic>> _activities = [];

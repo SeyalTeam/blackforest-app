@@ -29,10 +29,13 @@ dependencies:
   qr: ^3.0.1
   audioplayers: ^6.0.0
   geolocator: ^14.0.2
+
   connectivity_plus: ^7.0.0
-  flutter_local_notifications: ^20.0.0
   print_bluetooth_thermal: ^1.1.7
   flutter_foreground_task: ^9.2.1
+  flutter_background_service: ^5.0.0
+  flutter_local_notifications: ^20.0.0
+
   screen_protector: ^1.5.2
   http_parser: ^4.0.2
 

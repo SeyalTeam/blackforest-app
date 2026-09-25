@@ -54,5 +54,16 @@
 		<!-- Custom message for your app's purpose -->
 		<key>UIStatusBarHidden</key>
 		<false/>
-	</dict>
+	
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+		<string>location</string>
+	</array>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>This app requires background location access to automatically punch you in and out when you enter or leave the branch geofence, even when the app is in the background.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app requires location access to verify you are at the branch when punching in manually.</string>
+</dict>
 </plist>
+
