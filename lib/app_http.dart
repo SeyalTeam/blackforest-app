@@ -335,7 +335,6 @@ Future<raw_http.Response> _executeRequestWithRouting({
         headers: resolvedHeaders,
       );
 
-
       if (_shouldRetryOnServerStatus(method, response.statusCode) &&
           canFailover) {
         lastResponse = response;

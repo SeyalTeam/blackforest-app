@@ -85,8 +85,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
     return effectiveRole == 'waiter';
   }
 
-  String _categoriesCacheKey(String filterQuery) =>
-      filterQuery;
+  String _categoriesCacheKey(String filterQuery) => filterQuery;
 
   String _persistentCategoriesCacheKey(String branchId) =>
       '$_persistentCategoriesCachePrefix${_favoritesScope()}_$branchId';
@@ -95,7 +94,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
     return {
       'id': cat['id'],
       'name': cat['name'],
-      'image': cat['image'] is Map 
+      'image': cat['image'] is Map
           ? {
               'url': cat['image']['url'],
               'id': cat['image']['id'],
@@ -184,18 +183,19 @@ class _CategoriesPageState extends State<CategoriesPage> {
       final cacheKey = _persistentCategoriesCacheKey(
         branchId.isEmpty ? 'global' : branchId,
       );
-      
+
       final trimmed = _trimCategories(categories);
       final payload = <String, dynamic>{
         'cachedAt': DateTime.now().toIso8601String(),
         'categories': trimmed,
       };
-      
+
       final jsonPayload = await compute(_serializeJson, payload);
       await prefs.setString(cacheKey, jsonPayload);
 
       // LRU Eviction logic for categories
-      List<String> lruKeys = prefs.getStringList('cached_categories_lru_keys') ?? [];
+      List<String> lruKeys =
+          prefs.getStringList('cached_categories_lru_keys') ?? [];
       lruKeys.remove(cacheKey);
       lruKeys.add(cacheKey);
       if (lruKeys.length > 5) {
@@ -1987,11 +1987,15 @@ class _CategoriesPageState extends State<CategoriesPage> {
       if (_branchId != null && _branchId!.isEmpty) _branchId = null;
 
       // 1. Fetch user data only if essential metadata (role, company) is missing
-      if (_userRole == null || _userRole!.isEmpty || _companyId == null || _companyId!.isEmpty) {
+      if (_userRole == null ||
+          _userRole!.isEmpty ||
+          _companyId == null ||
+          _companyId!.isEmpty) {
         final cachedRole = prefs.getString('role');
         final cachedCompanyId = prefs.getString('company_id');
-        
-        if (cachedRole == null || (cachedCompanyId == null && _branchId == null)) {
+
+        if (cachedRole == null ||
+            (cachedCompanyId == null && _branchId == null)) {
           await _fetchUserData(token);
           if (!mounted) return;
         }
@@ -2005,13 +2009,15 @@ class _CategoriesPageState extends State<CategoriesPage> {
 
       // 2. Derive company from branch if still missing
       if ((_companyId == null || _companyId!.isEmpty) && _branchId != null) {
-        final derivedCompanyId = await _fetchCompanyIdFromBranch(token, _branchId!);
+        final derivedCompanyId = await _fetchCompanyIdFromBranch(
+          token,
+          _branchId!,
+        );
         if (derivedCompanyId != null && derivedCompanyId.isNotEmpty) {
           _companyId = derivedCompanyId;
           await prefs.setString('company_id', derivedCompanyId);
         }
       }
-
 
       if (_usesBillingMenuWidgetApi()) {
         final branchId = _branchId;
@@ -2386,7 +2392,10 @@ class _CategoriesPageState extends State<CategoriesPage> {
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
-        final Map<String, dynamic> data = await compute(_parseJsonMap, response.body);
+        final Map<String, dynamic> data = await compute(
+          _parseJsonMap,
+          response.body,
+        );
         if (!mounted) return;
         final docs = (data['docs'] is List)
             ? (data['docs'] as List)

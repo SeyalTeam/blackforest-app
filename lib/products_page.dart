@@ -90,8 +90,11 @@ class ProductsPage extends StatefulWidget {
           'id': cat['id'],
           '_id': cat['_id'],
           'name': cat['name'],
-          'department': cat['department'] is Map 
-              ? {'name': cat['department']['name'], 'id': cat['department']['id']}
+          'department': cat['department'] is Map
+              ? {
+                  'name': cat['department']['name'],
+                  'id': cat['department']['id'],
+                }
               : cat['department'],
         };
       }
@@ -114,10 +117,7 @@ class ProductsPage extends StatefulWidget {
     // Trim defaultPriceDetails
     dynamic trimPriceDetails(dynamic details) {
       if (details is Map) {
-        return {
-          'unit': details['unit'],
-          'price': details['price'],
-        };
+        return {'unit': details['unit'], 'price': details['price']};
       }
       return details;
     }
@@ -164,7 +164,7 @@ class ProductsPage extends StatefulWidget {
       'imageUrl': p['imageUrl'],
       'thumbnail': p['thumbnail'],
       'image': trimImage(p['image']),
-      'images': p['images'] is List 
+      'images': p['images'] is List
           ? (p['images'] as List).map(trimImage).toList()
           : p['images'],
       'status': p['status'],
@@ -180,10 +180,10 @@ class ProductsPage extends StatefulWidget {
       'averageRating': p['averageRating'],
       'ratingValue': p['ratingValue'],
       'reviewRating': p['reviewRating'],
-      'ratings': p['ratings'] is Map 
+      'ratings': p['ratings'] is Map
           ? {'average': p['ratings']['average'], 'count': p['ratings']['count']}
           : p['ratings'],
-      'reviews': p['reviews'] is Map 
+      'reviews': p['reviews'] is Map
           ? {'average': p['reviews']['average'], 'count': p['reviews']['count']}
           : p['reviews'],
       'ratingCount': p['ratingCount'],
@@ -195,7 +195,7 @@ class ProductsPage extends StatefulWidget {
       'upc': p['upc'],
       'value': p['value'],
       'productId': p['productId'],
-      'product': p['product'] is Map 
+      'product': p['product'] is Map
           ? {'id': p['product']['id'], '_id': p['product']['_id']}
           : p['product'],
     };
@@ -245,8 +245,7 @@ class ProductsPage extends StatefulWidget {
     final entry = _productsCache[key];
     if (entry == null) return null;
     final isExpired =
-        DateTime.now().difference(entry.fetchedAt) >
-        const Duration(hours: 15);
+        DateTime.now().difference(entry.fetchedAt) > const Duration(hours: 15);
     if (isExpired) {
       _productsCache.remove(key);
       return null;
@@ -402,14 +401,16 @@ class _ProductsPageState extends State<ProductsPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final branchId = prefs.getString('branchId')?.trim();
-      final cacheKey = 'cached_products_${widget.categoryId}_${branchId ?? 'no-branch'}';
+      final cacheKey =
+          'cached_products_${widget.categoryId}_${branchId ?? 'no-branch'}';
       final raw = prefs.getString(cacheKey);
       if (raw == null || raw.isEmpty) return;
 
       final decoded = await compute(_parseJsonMap, raw);
       final payload = Map<String, dynamic>.from(decoded);
-      final cachedAt = DateTime.tryParse(payload['cachedAt'] ?? '') ?? DateTime(2000);
-      
+      final cachedAt =
+          DateTime.tryParse(payload['cachedAt'] ?? '') ?? DateTime(2000);
+
       if (DateTime.now().difference(cachedAt) > const Duration(hours: 24)) {
         return;
       }
@@ -430,19 +431,21 @@ class _ProductsPageState extends State<ProductsPage> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final branchId = prefs.getString('branchId')?.trim();
-      final cacheKey = 'cached_products_${widget.categoryId}_${branchId ?? 'no-branch'}';
-      
+      final cacheKey =
+          'cached_products_${widget.categoryId}_${branchId ?? 'no-branch'}';
+
       final trimmed = ProductsPage._trimProducts(products);
       final payload = <String, dynamic>{
         'cachedAt': DateTime.now().toIso8601String(),
         'products': trimmed,
       };
-      
+
       final jsonPayload = await compute(_serializeJson, payload);
       await prefs.setString(cacheKey, jsonPayload);
 
       // LRU Eviction logic
-      List<String> lruKeys = prefs.getStringList('cached_products_lru_keys') ?? [];
+      List<String> lruKeys =
+          prefs.getStringList('cached_products_lru_keys') ?? [];
       lruKeys.remove(cacheKey);
       lruKeys.add(cacheKey);
       if (lruKeys.length > 10) {
@@ -503,7 +506,6 @@ class _ProductsPageState extends State<ProductsPage> {
     _homeSearchController.dispose();
     super.dispose();
   }
-
 
   void _ensureCartMode() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1340,7 +1342,9 @@ class _ProductsPageState extends State<ProductsPage> {
       _branchId = (_branchId ?? prefs.getString('branchId') ?? '').trim();
       if (_branchId != null && _branchId!.isEmpty) _branchId = null;
 
-      if (_userRole == null || _userRole!.isEmpty || (_usesBillingMenuWidgetApi && _branchId == null)) {
+      if (_userRole == null ||
+          _userRole!.isEmpty ||
+          (_usesBillingMenuWidgetApi && _branchId == null)) {
         await _fetchUserData(token);
         if (!mounted) return;
         _userRole = prefs.getString('role');
@@ -1450,7 +1454,10 @@ class _ProductsPageState extends State<ProductsPage> {
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
-        final Map<String, dynamic> data = await compute(_parseJsonMap, response.body);
+        final Map<String, dynamic> data = await compute(
+          _parseJsonMap,
+          response.body,
+        );
 
         var fetchedProducts = data['docs'] ?? [];
 
@@ -1810,7 +1817,7 @@ class _ProductsPageState extends State<ProductsPage> {
     try {
       final cartProvider = Provider.of<CartProvider>(context, listen: false);
       final branchId = _branchId?.trim();
-      
+
       // Check branch overrides first for unit
       String? unit;
       if (branchId != null && product['branchOverrides'] is List) {
@@ -1825,24 +1832,25 @@ class _ProductsPageState extends State<ProductsPage> {
           }
         }
       }
-      
+
       // Fallback to default unit
-      unit ??= product['defaultPriceDetails']?['unit']?.toString().toLowerCase();
+      unit ??= product['defaultPriceDetails']?['unit']
+          ?.toString()
+          .toLowerCase();
 
       final isKgFlag =
           product['isKg'] == true ||
           product['sellByWeight'] == true ||
           product['weightBased'] == true;
 
-      if (unit != null && (
-          unit == 'kg' || 
-          unit == 'kilograms' || 
-          unit == 'g' || 
-          unit == 'gram' || 
-          unit == 'grams' ||
-          unit.contains('kg') || 
-          unit.contains('gram')
-      )) {
+      if (unit != null &&
+          (unit == 'kg' ||
+              unit == 'kilograms' ||
+              unit == 'g' ||
+              unit == 'gram' ||
+              unit == 'grams' ||
+              unit.contains('kg') ||
+              unit.contains('gram'))) {
         return true;
       }
       if (isKgFlag) {
@@ -2087,7 +2095,7 @@ class _ProductsPageState extends State<ProductsPage> {
     double quantity = 1.0;
     if (isWeightBased) {
       // Step 4: Show popup if weight-based
-      
+
       // Determine display unit
       String displayUnit = 'kg';
       if (_branchId != null && product['branchOverrides'] is List) {
@@ -2102,7 +2110,8 @@ class _ProductsPageState extends State<ProductsPage> {
           }
         }
       } else {
-        displayUnit = product['defaultPriceDetails']?['unit']?.toString() ?? 'kg';
+        displayUnit =
+            product['defaultPriceDetails']?['unit']?.toString() ?? 'kg';
       }
 
       final TextEditingController weightController = TextEditingController(
@@ -2769,15 +2778,16 @@ class _ProductsPageState extends State<ProductsPage> {
                                   fit: BoxFit.cover,
                                   placeholder: (context, url) =>
                                       Container(color: const Color(0xFFF3F3F3)),
-                                  errorWidget: (context, url, error) => Container(
-                                    color: const Color(0xFFF3F3F3),
-                                    alignment: Alignment.center,
-                                    child: const Icon(
-                                      Icons.fastfood_outlined,
-                                      size: 34,
-                                      color: Colors.black45,
-                                    ),
-                                  ),
+                                  errorWidget: (context, url, error) =>
+                                      Container(
+                                        color: const Color(0xFFF3F3F3),
+                                        alignment: Alignment.center,
+                                        child: const Icon(
+                                          Icons.fastfood_outlined,
+                                          size: 34,
+                                          color: Colors.black45,
+                                        ),
+                                      ),
                                 ),
                         ),
                         Positioned(
@@ -2868,7 +2878,8 @@ class _ProductsPageState extends State<ProductsPage> {
                     SizedBox(
                       width: 81,
                       child: GestureDetector(
-                        onTap: () {}, // Prevent card tap from triggering when tapping control area
+                        onTap:
+                            () {}, // Prevent card tap from triggering when tapping control area
                         child: _buildHomeQtyControl(product: product, qty: qty),
                       ),
                     ),
@@ -2900,7 +2911,8 @@ class _ProductsPageState extends State<ProductsPage> {
     final visibleProducts = _filteredHomeProducts();
     String title = widget.categoryName;
     if (!_isHomeMode && cartProvider.selectedTable != null) {
-      title = '${widget.categoryName} (Table: ${cartProvider.selectedTable!.split('-S-').first})';
+      title =
+          '${widget.categoryName} (Table: ${cartProvider.selectedTable!.split('-S-').first})';
     } else if (!_isHomeMode && cartProvider.isSharedTableOrder) {
       title = '${widget.categoryName} (Shared Table)';
     }
@@ -2912,11 +2924,9 @@ class _ProductsPageState extends State<ProductsPage> {
       hideBottomNavigationBar: _isHomeMode && totalQty > 0.0001,
       onScanCallback: _handleScan,
       body: _isDelayActive
-          ? const Center(
-              child: SpokeLoader(size: 100.0),
-            )
+          ? const Center(child: SpokeLoader(size: 100.0))
           : _isLoading
-              ? const Center(child: CircularProgressIndicator(color: Colors.black))
+          ? const Center(child: CircularProgressIndicator(color: Colors.black))
           : _isHomeMode
           ? RefreshIndicator(
               onRefresh: () => _fetchProducts(forceRefresh: true),
@@ -3155,10 +3165,7 @@ class _ProductsPageState extends State<ProductsPage> {
 class SpokeLoader extends StatefulWidget {
   final double size;
 
-  const SpokeLoader({
-    super.key,
-    this.size = 120.0,
-  });
+  const SpokeLoader({super.key, this.size = 120.0});
 
   @override
   State<SpokeLoader> createState() => _SpokeLoaderState();
@@ -3183,17 +3190,18 @@ class _SpokeLoaderState extends State<SpokeLoader>
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1000),
-    )..addListener(() {
-        final newOffset = (_controller.value * 8).floor() % 8;
-        if (newOffset != _rotationOffset) {
-          setState(() {
-            _rotationOffset = newOffset;
-          });
-        }
-      });
+    _controller =
+        AnimationController(
+          vsync: this,
+          duration: const Duration(milliseconds: 1000),
+        )..addListener(() {
+          final newOffset = (_controller.value * 8).floor() % 8;
+          if (newOffset != _rotationOffset) {
+            setState(() {
+              _rotationOffset = newOffset;
+            });
+          }
+        });
     _controller.repeat();
   }
 
@@ -3219,10 +3227,7 @@ class SpokeLoaderPainter extends CustomPainter {
   final int rotationOffset;
   final List<Color> colors;
 
-  SpokeLoaderPainter({
-    required this.rotationOffset,
-    required this.colors,
-  });
+  SpokeLoaderPainter({required this.rotationOffset, required this.colors});
 
   @override
   void paint(Canvas canvas, Size size) {

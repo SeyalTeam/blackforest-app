@@ -758,9 +758,10 @@ class _CartPageState extends State<CartPage> {
         final name = section['name']?.toString().trim() ?? '';
         if (name.isNotEmpty) return name;
       }
-      
+
       if (sections.isNotEmpty && sections.first is Map) {
-        final fallbackName = (sections.first as Map)['name']?.toString().trim() ?? '';
+        final fallbackName =
+            (sections.first as Map)['name']?.toString().trim() ?? '';
         if (fallbackName.isNotEmpty) return fallbackName;
       }
     } catch (_) {}
@@ -817,11 +818,11 @@ class _CartPageState extends State<CartPage> {
     final parsedTable = _parseTableNumberToken(tableNumberInput);
     final tableNumber = tableNumberInput.trim();
     if (parsedTable == null || tableNumber.isEmpty) {
-      final baseTable = tableNumber.isEmpty 
-          ? 'T${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}' 
+      final baseTable = tableNumber.isEmpty
+          ? 'T${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}'
           : tableNumber;
-      final finalTableNumber = !baseTable.contains('-S-') 
-          ? '$baseTable-S-${DateTime.now().millisecondsSinceEpoch.toString().substring(10)}' 
+      final finalTableNumber = !baseTable.contains('-S-')
+          ? '$baseTable-S-${DateTime.now().millisecondsSinceEpoch.toString().substring(10)}'
           : baseTable;
       return <String, dynamic>{
         'tableNumber': finalTableNumber,
@@ -837,8 +838,8 @@ class _CartPageState extends State<CartPage> {
       preferredSection: preferredSection,
     );
     if (liveSection == null || liveSection.isEmpty) {
-      final finalTableNumber = !tableNumber.contains('-S-') 
-          ? '$tableNumber-S-${DateTime.now().millisecondsSinceEpoch.toString().substring(10)}' 
+      final finalTableNumber = !tableNumber.contains('-S-')
+          ? '$tableNumber-S-${DateTime.now().millisecondsSinceEpoch.toString().substring(10)}'
           : tableNumber;
       return <String, dynamic>{
         'tableNumber': finalTableNumber,
@@ -854,8 +855,8 @@ class _CartPageState extends State<CartPage> {
       token: token,
     );
     if (occupied) {
-      final finalTableNumber = !tableNumber.contains('-S-') 
-          ? '$tableNumber-S-${DateTime.now().millisecondsSinceEpoch.toString().substring(10)}' 
+      final finalTableNumber = !tableNumber.contains('-S-')
+          ? '$tableNumber-S-${DateTime.now().millisecondsSinceEpoch.toString().substring(10)}'
           : tableNumber;
       return <String, dynamic>{
         'tableNumber': finalTableNumber,
@@ -1539,10 +1540,7 @@ class _CartPageState extends State<CartPage> {
             ? 'Cannot bill: some products are not confirmed.'
             : 'Cannot bill: some products are not delivered.';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(message),
-            backgroundColor: Colors.red,
-          ),
+          SnackBar(content: Text(message), backgroundColor: Colors.red),
         );
         setState(() => _isBillingInProgress = false);
         return;
@@ -1556,10 +1554,11 @@ class _CartPageState extends State<CartPage> {
 
           if (resolvedBranchId.isNotEmpty && token.isNotEmpty) {
             final now = DateTime.now();
-            final todayStart =
-                DateTime(now.year, now.month, now.day)
-                    .toUtc()
-                    .toIso8601String();
+            final todayStart = DateTime(
+              now.year,
+              now.month,
+              now.day,
+            ).toUtc().toIso8601String();
             final urlString =
                 'https://blackforest.vseyal.com/api/billings?where[branch][equals]=$resolvedBranchId&where[status][in]=pending,ordered,confirmed,prepared&where[createdAt][greater_than_equal]=$todayStart&limit=150&depth=2';
             final tablesUrlString =
@@ -1573,16 +1572,18 @@ class _CartPageState extends State<CartPage> {
                   'Content-Type': 'application/json',
                 },
               ),
-              http.get(
-                Uri.parse(tablesUrlString),
-                headers: {
-                  'Authorization': 'Bearer $token',
-                  'Content-Type': 'application/json',
-                },
-              ).catchError((e) {
-                debugPrint('Error fetching tables: $e');
-                return http.Response('{"docs":[]}', 200);
-              }),
+              http
+                  .get(
+                    Uri.parse(tablesUrlString),
+                    headers: {
+                      'Authorization': 'Bearer $token',
+                      'Content-Type': 'application/json',
+                    },
+                  )
+                  .catchError((e) {
+                    debugPrint('Error fetching tables: $e');
+                    return http.Response('{"docs":[]}', 200);
+                  }),
             ]);
 
             final response = results[0];
@@ -1616,8 +1617,10 @@ class _CartPageState extends State<CartPage> {
                 final hasUndelivered = items.any((rawItem) {
                   if (rawItem is! Map) return false;
                   final item = Map<String, dynamic>.from(rawItem);
-                  final itemStatus =
-                      (item['status'] ?? '').toString().toLowerCase().trim();
+                  final itemStatus = (item['status'] ?? '')
+                      .toString()
+                      .toLowerCase()
+                      .trim();
                   return itemStatus == 'confirmed' || itemStatus == 'prepared';
                 });
 
@@ -1632,20 +1635,29 @@ class _CartPageState extends State<CartPage> {
                   // Look up assigned waiter name from table allocation sections
                   String? assignedWaiter;
                   if (sectionName.isNotEmpty && tableNum.isNotEmpty) {
-                    final normalizedSection = sectionName.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+                    final normalizedSection = sectionName
+                        .trim()
+                        .replaceAll(RegExp(r'\s+'), ' ')
+                        .toLowerCase();
                     for (final rawSection in tableSections) {
                       if (rawSection is! Map) continue;
-                      final secName = (rawSection['name']?.toString() ?? 'General').trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+                      final secName =
+                          (rawSection['name']?.toString() ?? 'General')
+                              .trim()
+                              .replaceAll(RegExp(r'\s+'), ' ')
+                              .toLowerCase();
                       if (secName == normalizedSection) {
                         final allocations = rawSection['waiterAllocations'];
                         if (allocations is List) {
                           for (final alloc in allocations) {
                             if (alloc is! Map) continue;
-                            final rawNum = alloc['tableNumber']?.toString().trim() ?? '';
+                            final rawNum =
+                                alloc['tableNumber']?.toString().trim() ?? '';
                             if (rawNum == tableNum.trim()) {
                               final waiterVal = alloc['waiter'];
                               if (waiterVal is Map) {
-                                final nameVal = waiterVal['name'] ?? waiterVal['username'];
+                                final nameVal =
+                                    waiterVal['name'] ?? waiterVal['username'];
                                 if (nameVal != null) {
                                   assignedWaiter = nameVal.toString().trim();
                                   break;
@@ -1663,16 +1675,17 @@ class _CartPageState extends State<CartPage> {
                     blockingWaiterName = assignedWaiter;
                   } else {
                     final createdByObj = bill['createdBy'];
-                    blockingWaiterName =
-                        (createdByObj is Map)
-                            ? (createdByObj['name'] ??
-                                    createdByObj['email'] ??
-                                    'Unknown Waiter')
-                                .toString()
-                            : 'Unknown Waiter';
+                    blockingWaiterName = (createdByObj is Map)
+                        ? (createdByObj['name'] ??
+                                  createdByObj['email'] ??
+                                  'Unknown Waiter')
+                              .toString()
+                        : 'Unknown Waiter';
                   }
 
-                  blockingTableNumber = tableNum.isNotEmpty ? tableNum : 'Unknown Table';
+                  blockingTableNumber = tableNum.isNotEmpty
+                      ? tableNum
+                      : 'Unknown Table';
                   break;
                 }
               }
@@ -4706,17 +4719,23 @@ class _CartPageState extends State<CartPage> {
 
       // Redundant refetch removed. We now use ?depth=3 in the primary POST/PATCH.
 
-      final serverGst = readServerMoney(finalBillDoc['gstAmount']) ??
+      final serverGst =
+          readServerMoney(finalBillDoc['gstAmount']) ??
           readServerMoney(finalBillDoc['taxAmount']) ??
           0.0;
       final serverTotal = readServerMoney(finalBillDoc['totalAmount']);
-      final serverGross = readServerMoney(finalBillDoc['subtotal']) ??
+      final serverGross =
+          readServerMoney(finalBillDoc['subtotal']) ??
           readServerMoney(finalBillDoc['grossAmount']);
       double billedTotal = serverTotal ?? cartProvider.total;
-      if (serverTotal != null && serverGross != null && serverGst > 0 && serverTotal <= serverGross + 0.01) {
+      if (serverTotal != null &&
+          serverGross != null &&
+          serverGst > 0 &&
+          serverTotal <= serverGross + 0.01) {
         billedTotal = serverTotal + serverGst;
       }
-      final billedGrossAmount = serverGross ?? (serverTotal != null ? serverTotal : billedTotal);
+      final billedGrossAmount =
+          serverGross ?? (serverTotal != null ? serverTotal : billedTotal);
       final serverOfferApplied = finalBillDoc['customerOfferApplied'] == true;
       final serverOfferDiscount =
           readServerMoney(finalBillDoc['customerOfferDiscount']) ?? 0.0;
@@ -4874,9 +4893,9 @@ class _CartPageState extends State<CartPage> {
               : (fallback?.gstPercent ??
                     CartItem.parsePercent(
                       item['gstRate'] ??
-                      item['gstPercent'] ??
-                      item['gst'] ??
-                      item['taxPercent'],
+                          item['gstPercent'] ??
+                          item['gst'] ??
+                          item['taxPercent'],
                     ));
 
           double? lineSubtotal;
@@ -5671,7 +5690,8 @@ class _CartPageState extends State<CartPage> {
         }
 
         printer.hr(ch: '=');
-        final backendSubTotal = readBillingMoney(['subtotal', 'grossAmount', 'subTotal']) ??
+        final backendSubTotal =
+            readBillingMoney(['subtotal', 'grossAmount', 'subTotal']) ??
             (grossAmount > 0 ? grossAmount : totalAmount);
         final gstScale = grossAmount > 0.0001
             ? (backendSubTotal / grossAmount).clamp(0.0, 1.0)
@@ -5744,9 +5764,14 @@ class _CartPageState extends State<CartPage> {
           int lineTaxPaise = 0;
           if (item.gstPercent > 0 && effectiveLinePaise > 0) {
             if (_branchGstMode == 'exclusive') {
-              lineTaxPaise = (effectiveLinePaise * item.gstPercent / 100.0).round();
+              lineTaxPaise = (effectiveLinePaise * item.gstPercent / 100.0)
+                  .round();
             } else {
-              lineTaxPaise = (effectiveLinePaise * item.gstPercent / (100.0 + item.gstPercent)).round();
+              lineTaxPaise =
+                  (effectiveLinePaise *
+                          item.gstPercent /
+                          (100.0 + item.gstPercent))
+                      .round();
             }
           }
           final taxPercentToPrint = item.gstPercent > 0
@@ -5824,7 +5849,11 @@ class _CartPageState extends State<CartPage> {
         int cgstPaise = totalCgstPaise;
         int sgstPaise = totalSgstPaise;
         if (receiptGstPaise <= 0) {
-          final serverGstAmount = readBillingMoney(['gstAmount', 'taxAmount', 'tax']);
+          final serverGstAmount = readBillingMoney([
+            'gstAmount',
+            'taxAmount',
+            'tax',
+          ]);
           if (serverGstAmount != null && serverGstAmount > 0) {
             receiptGstPaise = (serverGstAmount * 100).round();
             cgstPaise = receiptGstPaise ~/ 2;
@@ -5834,7 +5863,8 @@ class _CartPageState extends State<CartPage> {
         double backendFinalTotalAmount =
             readBillingMoney(['totalAmount', 'finalAmount', 'payableAmount']) ??
             totalAmount;
-        if (receiptGstPaise > 0 && backendFinalTotalAmount <= backendSubTotal + 0.01) {
+        if (receiptGstPaise > 0 &&
+            backendFinalTotalAmount <= backendSubTotal + 0.01) {
           backendFinalTotalAmount += (receiptGstPaise / 100.0);
         }
         double? backendPreRoundTotalAmount = readBillingMoney([
@@ -5858,7 +5888,10 @@ class _CartPageState extends State<CartPage> {
         } else if (receiptItemsTotalPaise > 0) {
           receiptPreRoundPaise = receiptItemsTotalPaise + receiptGstPaise;
         } else {
-          receiptPreRoundPaise = max(0, (backendFinalTotalAmount * 100).round());
+          receiptPreRoundPaise = max(
+            0,
+            (backendFinalTotalAmount * 100).round(),
+          );
         }
         receiptPreRoundPaise = max(0, receiptPreRoundPaise);
         final receiptGrandTotalPaise = max(
@@ -6908,7 +6941,8 @@ class _CartPageState extends State<CartPage> {
     final overallItemLabel = overallItemQuantity == 1 ? 'item' : 'items';
     final overallTotalWithGst = allVisibleItems.fold<double>(
       0,
-      (sum, item) => sum + _cartItemInclusiveLineTotal(item, gstMode: _branchGstMode),
+      (sum, item) =>
+          sum + _cartItemInclusiveLineTotal(item, gstMode: _branchGstMode),
     );
     final overallGstAmount = allVisibleItems.fold<double>(
       0,
@@ -7076,7 +7110,8 @@ class _CartPageState extends State<CartPage> {
                             isOfferFreeItem || isRandomOfferItem;
                         final status = item.status?.toLowerCase() ?? 'ordered';
 
-                        final isSharedTable = cartProvider.isSharedTableOrder ||
+                        final isSharedTable =
+                            cartProvider.isSharedTableOrder ||
                             (cartProvider.selectedTable ?? '').contains('-S-');
                         String? nextStatus;
                         Color statusColor = const Color(0xFFE0A100);
@@ -7402,7 +7437,10 @@ class _CartPageState extends State<CartPage> {
             if (showSharedTableInput &&
                 _sharedTableController.text.trim().isEmpty &&
                 (cartProvider.selectedTable?.trim().isNotEmpty ?? false)) {
-              final selectedTable = cartProvider.selectedTable!.trim().split('-S-').first;
+              final selectedTable = cartProvider.selectedTable!
+                  .trim()
+                  .split('-S-')
+                  .first;
               _sharedTableController.value = TextEditingValue(
                 text: selectedTable,
                 selection: TextSelection.collapsed(
@@ -7423,11 +7461,14 @@ class _CartPageState extends State<CartPage> {
             final totalItemLabel = totalQuantity == 1 ? 'item' : 'items';
             final totalWithGst = allVisibleItems.fold<double>(
               0,
-              (sum, item) => sum + _cartItemInclusiveLineTotal(item, gstMode: _branchGstMode),
+              (sum, item) =>
+                  sum +
+                  _cartItemInclusiveLineTotal(item, gstMode: _branchGstMode),
             );
             final totalGstAmount = allVisibleItems.fold<double>(
               0,
-              (sum, item) => sum + _cartItemTaxAmount(item, gstMode: _branchGstMode),
+              (sum, item) =>
+                  sum + _cartItemTaxAmount(item, gstMode: _branchGstMode),
             );
             final subtotalWithoutGst = (totalWithGst - totalGstAmount).clamp(
               0.0,
@@ -7664,8 +7705,8 @@ class _CartPageState extends State<CartPage> {
 
                                   final isSharedTable =
                                       cartProvider.isSharedTableOrder ||
-                                          (cartProvider.selectedTable ?? '')
-                                              .contains('-S-');
+                                      (cartProvider.selectedTable ?? '')
+                                          .contains('-S-');
 
                                   // Workflow: Ordered -> Confirmed -> Prepared -> Delivered
                                   String? nextStatus;
@@ -7674,7 +7715,9 @@ class _CartPageState extends State<CartPage> {
 
                                   switch (status) {
                                     case 'ordered':
-                                      nextStatus = isSharedTable ? 'confirmed' : null; // Kitchen only
+                                      nextStatus = isSharedTable
+                                          ? 'confirmed'
+                                          : null; // Kitchen only
                                       statusColor = Colors.yellow;
                                       break;
                                     case 'confirmed':
@@ -8342,7 +8385,10 @@ class _CartItemCardState extends State<_CartItemCard> {
         widget.item.effectiveUnitPrice ?? widget.item.price;
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
     final gstMode = cartProvider.gstMode;
-    final lineTotalWithGst = _cartItemInclusiveLineTotal(widget.item, gstMode: gstMode);
+    final lineTotalWithGst = _cartItemInclusiveLineTotal(
+      widget.item,
+      gstMode: gstMode,
+    );
     final lineTaxAmount = _cartItemTaxAmount(widget.item, gstMode: gstMode);
     final lineSubtotal = (lineTotalWithGst - lineTaxAmount).clamp(
       0.0,
@@ -8792,7 +8838,10 @@ double _cartItemTaxAmount(CartItem item, {String gstMode = 'inclusive'}) {
   }
 }
 
-double _cartItemInclusiveLineTotal(CartItem item, {String gstMode = 'inclusive'}) {
+double _cartItemInclusiveLineTotal(
+  CartItem item, {
+  String gstMode = 'inclusive',
+}) {
   if (item.isOfferFreeItem || item.isRandomCustomerOfferItem) {
     return 0.0;
   }
@@ -9007,7 +9056,10 @@ class _KotEditableItemRow extends StatelessWidget {
     final step = _cartQuantityStep(qty);
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
     final gstMode = cartProvider.gstMode;
-    final currentLineTotal = _cartItemInclusiveLineTotal(item, gstMode: gstMode);
+    final currentLineTotal = _cartItemInclusiveLineTotal(
+      item,
+      gstMode: gstMode,
+    );
     final lineTotalWithGst = currentLineTotal;
     final lineTaxAmount = _cartItemTaxAmount(item, gstMode: gstMode);
     final lineSubtotal = (lineTotalWithGst - lineTaxAmount).clamp(
@@ -9240,7 +9292,10 @@ class _KotReadOnlyItemRow extends StatelessWidget {
     final displayName = _kotDisplayName(item.name);
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
     final gstMode = cartProvider.gstMode;
-    final lineTotalWithGst = _cartItemInclusiveLineTotal(item, gstMode: gstMode);
+    final lineTotalWithGst = _cartItemInclusiveLineTotal(
+      item,
+      gstMode: gstMode,
+    );
     final lineTaxAmount = _cartItemTaxAmount(item, gstMode: gstMode);
     final lineSubtotal = (lineTotalWithGst - lineTaxAmount).clamp(
       0.0,

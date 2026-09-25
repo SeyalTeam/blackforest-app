@@ -155,7 +155,9 @@ class AttendanceManager {
         if (modified && doc['id'] != null) {
           try {
             await http.patch(
-              Uri.parse('https://blackforest.vseyal.com/api/attendance/${doc['id']}'),
+              Uri.parse(
+                'https://blackforest.vseyal.com/api/attendance/${doc['id']}',
+              ),
               headers: {
                 'Authorization': 'Bearer $token',
                 'Content-Type': 'application/json',
@@ -244,7 +246,8 @@ class AttendanceManager {
                 : 0;
             activeSession['punchOutType'] = 'auto';
 
-            final patchUrl = 'https://blackforest.vseyal.com/api/attendance/$docId';
+            final patchUrl =
+                'https://blackforest.vseyal.com/api/attendance/$docId';
             final patchRes = await http.patch(
               Uri.parse(patchUrl),
               headers: {
@@ -315,7 +318,8 @@ class AttendanceManager {
           if (docId != null) {
             final updatedActivities = List<dynamic>.from(rawActivities)
               ..add(newActivity);
-            final patchUrl = 'https://blackforest.vseyal.com/api/attendance/$docId';
+            final patchUrl =
+                'https://blackforest.vseyal.com/api/attendance/$docId';
             final patchRes = await http.patch(
               Uri.parse(patchUrl),
               headers: {

@@ -3373,10 +3373,7 @@ class _HomePageState extends State<HomePage> {
                     SizedBox(height: 4),
                     Text(
                       'Upload & manage dealer bills',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.white70,
-                      ),
+                      style: TextStyle(fontSize: 13, color: Colors.white70),
                     ),
                   ],
                 ),
@@ -4373,9 +4370,7 @@ class _HomePageState extends State<HomePage> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildTopHeaderRow(context),
-                ],
+                children: [_buildTopHeaderRow(context)],
               ),
             ),
           ),
@@ -4452,9 +4447,7 @@ class _HomePageState extends State<HomePage> {
                 padding: const EdgeInsets.only(top: 10, left: 20, right: 20),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildTopHeaderRow(context),
-                  ],
+                  children: [_buildTopHeaderRow(context)],
                 ),
               ),
             ),

@@ -92,9 +92,10 @@ class CartItem {
         }
       }
     }
-    unit ??= product['unit']?.toString().toLowerCase() ?? 
-             product['defaultPriceDetails']?['unit']?.toString().toLowerCase() ?? 
-             'pcs';
+    unit ??=
+        product['unit']?.toString().toLowerCase() ??
+        product['defaultPriceDetails']?['unit']?.toString().toLowerCase() ??
+        'pcs';
 
     // ✅ Extract department
     String? dept;
@@ -814,15 +815,12 @@ class CartProvider extends ChangeNotifier {
       (sum, item) => sum + item.lineTotal,
     );
     if (_gstMode == 'exclusive') {
-      final tax = (cartItems + recalledItems).fold(
-        0.0,
-        (sum, item) {
-          if (item.isOfferFreeItem || item.isRandomCustomerOfferItem) {
-            return sum;
-          }
-          return sum + (item.lineTotal * item.gstPercent / 100.0);
-        },
-      );
+      final tax = (cartItems + recalledItems).fold(0.0, (sum, item) {
+        if (item.isOfferFreeItem || item.isRandomCustomerOfferItem) {
+          return sum;
+        }
+        return sum + (item.lineTotal * item.gstPercent / 100.0);
+      });
       return subtotal + tax;
     } else {
       return subtotal;
@@ -1368,8 +1366,10 @@ class CartProvider extends ChangeNotifier {
           : currentTableNumber;
 
       String finalSection = selectedSection ?? '';
-      if (selectedSection == sharedTablesSectionName && !finalTableNumber.contains('-S-')) {
-        finalTableNumber = '$finalTableNumber-S-${DateTime.now().millisecondsSinceEpoch.toString().substring(10)}';
+      if (selectedSection == sharedTablesSectionName &&
+          !finalTableNumber.contains('-S-')) {
+        finalTableNumber =
+            '$finalTableNumber-S-${DateTime.now().millisecondsSinceEpoch.toString().substring(10)}';
         finalSection = 'AC';
       }
 
@@ -1408,7 +1408,11 @@ class CartProvider extends ChangeNotifier {
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: ${e.toString().replaceAll('Exception: Failed to submit billing: ', '')}')),
+        SnackBar(
+          content: Text(
+            'Error: ${e.toString().replaceAll('Exception: Failed to submit billing: ', '')}',
+          ),
+        ),
       );
       return null;
     }
@@ -1689,9 +1693,9 @@ class CartProvider extends ChangeNotifier {
           if (sGstPercent <= 0) {
             sGstPercent = CartItem.parsePercent(
               sItem['gstRate'] ??
-              sItem['gstPercent'] ??
-              sItem['gst'] ??
-              sItem['taxPercent'],
+                  sItem['gstPercent'] ??
+                  sItem['gst'] ??
+                  sItem['taxPercent'],
             );
           }
           final sSubtotal = sIsRandomCustomerOfferItem
@@ -1701,7 +1705,9 @@ class CartProvider extends ChangeNotifier {
               : sTaxableValue != null
               ? sTaxableValue
               : sExplicitLineTotal != null && sExplicitLineTotal > 0
-              ? (sGstPercent > 0 ? (sExplicitLineTotal * 100) / (100 + sGstPercent) : sExplicitLineTotal)
+              ? (sGstPercent > 0
+                    ? (sExplicitLineTotal * 100) / (100 + sGstPercent)
+                    : sExplicitLineTotal)
               : sExpectedLineTotalFromPrice > 0
               ? sExpectedLineTotalFromPrice
               : sSubtotalValue;
@@ -1814,7 +1820,8 @@ class CartProvider extends ChangeNotifier {
       if (token == null || userId == null) return;
       final normalizedUserId = userId.trim();
       final normalizedBranchId = branchId?.trim() ?? '';
-      final userKeys = WaiterCallRangeFilterService.resolveCandidateUserKeysFromPrefs(prefs);
+      final userKeys =
+          WaiterCallRangeFilterService.resolveCandidateUserKeysFromPrefs(prefs);
       final assignedRows = normalizedBranchId.isEmpty
           ? const <WaiterCallRangeSelection>[]
           : WaiterCallRangeFilterService.readSelectionsForAnyUser(
@@ -1824,7 +1831,9 @@ class CartProvider extends ChangeNotifier {
             );
       final hasSelectedTableRows = assignedRows.isNotEmpty;
 
-      final cachedTablesRaw = prefs.getString('cached_tables_$normalizedBranchId');
+      final cachedTablesRaw = prefs.getString(
+        'cached_tables_$normalizedBranchId',
+      );
       List<dynamic> cachedTables = [];
       if (cachedTablesRaw != null) {
         try {
@@ -1832,14 +1841,18 @@ class CartProvider extends ChangeNotifier {
         } catch (_) {}
       }
 
-      if (cachedTables.isEmpty && normalizedBranchId.isNotEmpty && token.isNotEmpty) {
+      if (cachedTables.isEmpty &&
+          normalizedBranchId.isNotEmpty &&
+          token.isNotEmpty) {
         try {
-          final tablesResponse = await http.get(
-            Uri.parse(
-              'https://blackforest.vseyal.com/api/tables?where[branch][equals]=$normalizedBranchId&limit=1&depth=1',
-            ),
-            headers: {'Authorization': 'Bearer $token'},
-          ).timeout(const Duration(seconds: 5));
+          final tablesResponse = await http
+              .get(
+                Uri.parse(
+                  'https://blackforest.vseyal.com/api/tables?where[branch][equals]=$normalizedBranchId&limit=1&depth=1',
+                ),
+                headers: {'Authorization': 'Bearer $token'},
+              )
+              .timeout(const Duration(seconds: 5));
           if (tablesResponse.statusCode == 200) {
             final tablesData = jsonDecode(tablesResponse.body);
             final List<dynamic> allDocs = tablesData['docs'] ?? [];
@@ -1848,7 +1861,10 @@ class CartProvider extends ChangeNotifier {
               final List<dynamic> sections = branchDoc['sections'] ?? [];
               if (sections.isNotEmpty) {
                 cachedTables = sections;
-                await prefs.setString('cached_tables_$normalizedBranchId', jsonEncode(sections));
+                await prefs.setString(
+                  'cached_tables_$normalizedBranchId',
+                  jsonEncode(sections),
+                );
               }
             }
           }
@@ -1980,15 +1996,19 @@ class CartProvider extends ChangeNotifier {
           // Table allocation check
           final sectionName = resolveSection(bill);
           final tableNumStr = resolveTableNumberToken(bill);
-          final tableNumber = WaiterCallRangeFilterService.parseTableToken(tableNumStr) ?? 0;
+          final tableNumber =
+              WaiterCallRangeFilterService.parseTableToken(tableNumStr) ?? 0;
           if (tableNumber > 0 && sectionName.isNotEmpty) {
             bool isAllocated = true;
             if (userKeys.isNotEmpty) {
-              final normalizedSearchSection = WaiterCallRangeFilterService.normalizeSection(sectionName);
+              final normalizedSearchSection =
+                  WaiterCallRangeFilterService.normalizeSection(sectionName);
               bool sectionHasAnyAllocations = false;
               for (final section in cachedTables) {
                 if (section is! Map) continue;
-                final name = WaiterCallRangeFilterService.normalizeSection(section['name']?.toString() ?? 'General');
+                final name = WaiterCallRangeFilterService.normalizeSection(
+                  section['name']?.toString() ?? 'General',
+                );
                 if (name == normalizedSearchSection) {
                   final allocations = section['waiterAllocations'];
                   if (allocations is List && allocations.isNotEmpty) {
@@ -2002,13 +2022,16 @@ class CartProvider extends ChangeNotifier {
                 bool foundMatch = false;
                 for (final section in cachedTables) {
                   if (section is! Map) continue;
-                  final name = WaiterCallRangeFilterService.normalizeSection(section['name']?.toString() ?? 'General');
+                  final name = WaiterCallRangeFilterService.normalizeSection(
+                    section['name']?.toString() ?? 'General',
+                  );
                   if (name == normalizedSearchSection) {
                     final allocations = section['waiterAllocations'];
                     if (allocations is List) {
                       for (final alloc in allocations) {
                         if (alloc is! Map) continue;
-                        final rawNum = alloc['tableNumber']?.toString().trim() ?? '';
+                        final rawNum =
+                            alloc['tableNumber']?.toString().trim() ?? '';
                         if (rawNum != tableNumber.toString()) continue;
 
                         final waiterVal = alloc['waiter'];
@@ -2017,13 +2040,20 @@ class CartProvider extends ChangeNotifier {
                         if (waiterVal is String) {
                           waiterId = waiterVal;
                         } else if (waiterVal is Map) {
-                          waiterId = (waiterVal['id'] ?? waiterVal['_id'] ?? '').toString().trim();
-                          waiterName = (waiterVal['name'] ?? waiterVal['username'] ?? '').toString().trim().toLowerCase();
+                          waiterId = (waiterVal['id'] ?? waiterVal['_id'] ?? '')
+                              .toString()
+                              .trim();
+                          waiterName =
+                              (waiterVal['name'] ?? waiterVal['username'] ?? '')
+                                  .toString()
+                                  .trim()
+                                  .toLowerCase();
                         }
 
                         for (final candidate in userKeys) {
                           if (candidate.isNotEmpty &&
-                              (candidate == waiterId || candidate.toLowerCase() == waiterName)) {
+                              (candidate == waiterId ||
+                                  candidate.toLowerCase() == waiterName)) {
                             foundMatch = true;
                             break;
                           }
@@ -2218,9 +2248,7 @@ class CartProvider extends ChangeNotifier {
                 final category = prod['category'] as Map;
                 if (category['department'] != null) {
                   final catDept = category['department'];
-                  dept = (catDept is Map)
-                      ? catDept['name']
-                      : catDept;
+                  dept = (catDept is Map) ? catDept['name'] : catDept;
                 }
               }
               if (prod['category'] != null) {
@@ -2249,9 +2277,9 @@ class CartProvider extends ChangeNotifier {
                 ? productGstPercent
                 : CartItem.parsePercent(
                     itemMap['gstRate'] ??
-                    itemMap['gstPercent'] ??
-                    itemMap['gst'] ??
-                    itemMap['taxPercent'],
+                        itemMap['gstPercent'] ??
+                        itemMap['gst'] ??
+                        itemMap['taxPercent'],
                   );
             final hasEffectiveUnitPrice = itemMap.containsKey(
               'effectiveUnitPrice',
@@ -2298,7 +2326,9 @@ class CartProvider extends ChangeNotifier {
                 : taxableValue != null
                 ? taxableValue
                 : explicitLineTotal != null && explicitLineTotal > 0
-                ? (gstPercent > 0 ? (explicitLineTotal * 100) / (100 + gstPercent) : explicitLineTotal)
+                ? (gstPercent > 0
+                      ? (explicitLineTotal * 100) / (100 + gstPercent)
+                      : explicitLineTotal)
                 : expectedLineTotalFromPrice > 0
                 ? expectedLineTotalFromPrice
                 : subtotalValue;

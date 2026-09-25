@@ -152,7 +152,9 @@ class _RawMaterialBillListPageState extends State<RawMaterialBillListPage> {
       if (rawEntries is List) {
         for (var entry in rawEntries) {
           if (entry is Map) {
-            final invNum = (entry['invoiceNumber'] ?? '').toString().toLowerCase();
+            final invNum = (entry['invoiceNumber'] ?? '')
+                .toString()
+                .toLowerCase();
             if (invNum.contains(q)) {
               invoiceMatches = true;
               break;
@@ -207,9 +209,11 @@ class _RawMaterialBillListPageState extends State<RawMaterialBillListPage> {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F6FA),
       appBar: AppBar(
-        title: Text(widget.dealerName != null
-            ? '${widget.dealerName} Bills'
-            : 'Raw Material Bills'),
+        title: Text(
+          widget.dealerName != null
+              ? '${widget.dealerName} Bills'
+              : 'Raw Material Bills',
+        ),
         backgroundColor: const Color(0xFF2E7D32),
         foregroundColor: Colors.white,
         elevation: 0,
@@ -240,44 +244,42 @@ class _RawMaterialBillListPageState extends State<RawMaterialBillListPage> {
           Expanded(
             child: _isLoading
                 ? const Center(
-                    child: CircularProgressIndicator(
-                      color: Color(0xFF2E7D32),
-                    ),
+                    child: CircularProgressIndicator(color: Color(0xFF2E7D32)),
                   )
                 : filtered.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.receipt_long,
-                              size: 64,
-                              color: Colors.grey.shade400,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              _searchQuery.isEmpty
-                                  ? 'No bills yet'
-                                  : 'No bills matching "$_searchQuery"',
-                              style: TextStyle(
-                                fontSize: 16,
-                                color: Colors.grey.shade600,
-                              ),
-                            ),
-                          ],
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.receipt_long,
+                          size: 64,
+                          color: Colors.grey.shade400,
                         ),
-                      )
-                    : RefreshIndicator(
-                        onRefresh: _loadBills,
-                        color: const Color(0xFF2E7D32),
-                        child: ListView.builder(
-                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
-                          itemCount: filtered.length,
-                          itemBuilder: (context, index) {
-                            return _buildBillCard(filtered[index]);
-                          },
+                        const SizedBox(height: 16),
+                        Text(
+                          _searchQuery.isEmpty
+                              ? 'No bills yet'
+                              : 'No bills matching "$_searchQuery"',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.grey.shade600,
+                          ),
                         ),
-                      ),
+                      ],
+                    ),
+                  )
+                : RefreshIndicator(
+                    onRefresh: _loadBills,
+                    color: const Color(0xFF2E7D32),
+                    child: ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
+                      itemCount: filtered.length,
+                      itemBuilder: (context, index) {
+                        return _buildBillCard(filtered[index]);
+                      },
+                    ),
+                  ),
           ),
         ],
       ),
@@ -286,9 +288,8 @@ class _RawMaterialBillListPageState extends State<RawMaterialBillListPage> {
           final result = await Navigator.push<bool>(
             context,
             MaterialPageRoute(
-              builder: (_) => RawMaterialBillingPage(
-                preselectedDealerId: widget.dealerId,
-              ),
+              builder: (_) =>
+                  RawMaterialBillingPage(preselectedDealerId: widget.dealerId),
             ),
           );
           if (result == true) _loadBills();
@@ -486,8 +487,7 @@ class _RawMaterialBillingDetailScreen extends StatelessWidget {
     final total = (bill['total'] ?? 0).toDouble();
     final dateStr = bill['date']?.toString();
 
-    final rawMaterialsList =
-        bill['rawMaterialsList'] as List<dynamic>? ?? [];
+    final rawMaterialsList = bill['rawMaterialsList'] as List<dynamic>? ?? [];
     final billsList = bill['bills'] as List<dynamic>? ?? [];
 
     // Photos
@@ -554,10 +554,7 @@ class _RawMaterialBillingDetailScreen extends StatelessWidget {
                   const SizedBox(height: 4),
                   Text(
                     _dealerContact(),
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: Colors.grey.shade600,
-                    ),
+                    style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
                   ),
                 ],
               ],
@@ -576,10 +573,8 @@ class _RawMaterialBillingDetailScreen extends StatelessWidget {
                   final unit = material is Map
                       ? material['unit']?.toString() ?? ''
                       : '';
-                  final qty =
-                      (item['quantity'] ?? 0).toDouble();
-                  final amt =
-                      (item['totalAmount'] ?? 0).toDouble();
+                  final qty = (item['quantity'] ?? 0).toDouble();
+                  final amt = (item['totalAmount'] ?? 0).toDouble();
 
                   return Padding(
                     padding: const EdgeInsets.symmetric(vertical: 4),
@@ -662,7 +657,9 @@ class _RawMaterialBillingDetailScreen extends StatelessWidget {
                     _PhotoEntry(label: 'Bill Copy', url: billCopyUrl),
                   if (deliveryPersonUrl != null)
                     _PhotoEntry(
-                        label: 'Delivery Person', url: deliveryPersonUrl),
+                      label: 'Delivery Person',
+                      url: deliveryPersonUrl,
+                    ),
                   ...productPhotos.map((p) {
                     final url = _resolvePhotoUrl(p);
                     return url != null
@@ -741,10 +738,8 @@ class _RawMaterialBillingDetailScreen extends StatelessWidget {
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (_) => _FullScreenPhotoViewer(
-                  url: entry.url,
-                  label: entry.label,
-                ),
+                builder: (_) =>
+                    _FullScreenPhotoViewer(url: entry.url, label: entry.label),
               ),
             );
           },
@@ -812,11 +807,8 @@ class _FullScreenPhotoViewer extends StatelessWidget {
           child: Image.network(
             url,
             fit: BoxFit.contain,
-            errorBuilder: (_, __, ___) => const Icon(
-              Icons.broken_image,
-              color: Colors.grey,
-              size: 64,
-            ),
+            errorBuilder: (_, __, ___) =>
+                const Icon(Icons.broken_image, color: Colors.grey, size: 64),
           ),
         ),
       ),

@@ -74,10 +74,7 @@ class AppUpdateRequiredPage extends StatelessWidget {
                   const SizedBox(height: 40),
 
                   // Divider line
-                  Container(
-                    height: 1,
-                    color: const Color(0xFF2A2A4A),
-                  ),
+                  Container(height: 1, color: const Color(0xFF2A2A4A)),
 
                   const SizedBox(height: 24),
 
@@ -94,10 +91,7 @@ class AppUpdateRequiredPage extends StatelessWidget {
 
                   const Text(
                     'Please ask your administrator for the latest version of the app.',
-                    style: TextStyle(
-                      color: Color(0xFF606080),
-                      fontSize: 13,
-                    ),
+                    style: TextStyle(color: Color(0xFF606080), fontSize: 13),
                     textAlign: TextAlign.center,
                   ),
                 ],

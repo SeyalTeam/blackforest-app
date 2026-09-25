@@ -67,17 +67,18 @@ class _RawMaterialBillingPageState extends State<RawMaterialBillingPage> {
   @override
   void initState() {
     super.initState();
-    _billCopySlot =
-        _PhotoSlot(label: 'Dealer Bill Copy', prefix: 'dealerbill');
-    _deliveryPersonSlot =
-        _PhotoSlot(label: 'Delivery Person Photo', prefix: 'deliveryperson');
+    _billCopySlot = _PhotoSlot(label: 'Dealer Bill Copy', prefix: 'dealerbill');
+    _deliveryPersonSlot = _PhotoSlot(
+      label: 'Delivery Person Photo',
+      prefix: 'deliveryperson',
+    );
     _addBillField();
-    
+
     if (widget.preselectedDealerId != null) {
       _selectedDealerId = widget.preselectedDealerId;
       _fetchProducts(widget.preselectedDealerId!);
     }
-    
+
     _fetchDealers();
   }
 
@@ -122,10 +123,7 @@ class _RawMaterialBillingPageState extends State<RawMaterialBillingPage> {
                   maxScale: 4.0,
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(16),
-                    child: Image.file(
-                      file,
-                      fit: BoxFit.contain,
-                    ),
+                    child: Image.file(file, fit: BoxFit.contain),
                   ),
                 ),
               ),
@@ -144,7 +142,10 @@ class _RawMaterialBillingPageState extends State<RawMaterialBillingPage> {
                 top: 24,
                 left: 16,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.6),
                     borderRadius: BorderRadius.circular(12),
@@ -183,9 +184,7 @@ class _RawMaterialBillingPageState extends State<RawMaterialBillingPage> {
 
     final headers = await _authHeaders();
     final response = await http.get(
-      Uri.parse(
-        'https://$apiHostPrimary/api/branches/$branchId?depth=1',
-      ),
+      Uri.parse('https://$apiHostPrimary/api/branches/$branchId?depth=1'),
       headers: headers,
     );
     if (response.statusCode == 200) {
@@ -277,17 +276,19 @@ class _RawMaterialBillingPageState extends State<RawMaterialBillingPage> {
 
           if (isAllowed || companyId == null) {
             final id = doc['id']?.toString() ?? '';
-            final name = doc['companyName']?.toString() ??
+            final name =
+                doc['companyName']?.toString() ??
                 doc['name']?.toString() ??
                 'Unknown Dealer';
             loaded.add({'id': id, 'name': name});
           }
         }
 
-        loaded.sort((a, b) => a['name']
-            .toString()
-            .toLowerCase()
-            .compareTo(b['name'].toString().toLowerCase()));
+        loaded.sort(
+          (a, b) => a['name'].toString().toLowerCase().compareTo(
+            b['name'].toString().toLowerCase(),
+          ),
+        );
 
         setState(() => _dealers = loaded);
       } else {
@@ -333,10 +334,11 @@ class _RawMaterialBillingPageState extends State<RawMaterialBillingPage> {
             'unit': doc['unit']?.toString() ?? '',
           });
         }
-        loaded.sort((a, b) => a['name']
-            .toString()
-            .toLowerCase()
-            .compareTo(b['name'].toString().toLowerCase()));
+        loaded.sort(
+          (a, b) => a['name'].toString().toLowerCase().compareTo(
+            b['name'].toString().toLowerCase(),
+          ),
+        );
         setState(() => _products = loaded);
       } else {
         throw Exception('Failed to load raw materials: ${response.statusCode}');
@@ -464,19 +466,23 @@ class _RawMaterialBillingPageState extends State<RawMaterialBillingPage> {
     request.headers['Authorization'] = 'Bearer $token';
     request.headers['Accept'] = 'application/json';
     request.fields['alt'] = altText;
-    request.files.add(http.MultipartFile.fromBytes(
-      'file',
-      bytes,
-      filename: filename,
-      contentType: MediaType('image', 'jpeg'),
-    ));
+    request.files.add(
+      http.MultipartFile.fromBytes(
+        'file',
+        bytes,
+        filename: filename,
+        contentType: MediaType('image', 'jpeg'),
+      ),
+    );
 
     final streamed = await request.send();
     final respBody = await streamed.stream.bytesToString();
     if (streamed.statusCode == 200 || streamed.statusCode == 201) {
       final data = jsonDecode(respBody);
       final mediaId = (data is Map)
-          ? (data['doc'] is Map ? data['doc']['id']?.toString() : data['id']?.toString())
+          ? (data['doc'] is Map
+                ? data['doc']['id']?.toString()
+                : data['id']?.toString())
           : null;
       if (mediaId != null && mediaId.isNotEmpty) {
         return mediaId;
@@ -484,7 +490,9 @@ class _RawMaterialBillingPageState extends State<RawMaterialBillingPage> {
       throw Exception('Invalid media response: $respBody');
     } else {
       debugPrint('Media upload failed [${streamed.statusCode}]: $respBody');
-      throw Exception('Photo upload failed (${streamed.statusCode}): $respBody');
+      throw Exception(
+        'Photo upload failed (${streamed.statusCode}): $respBody',
+      );
     }
   }
 
@@ -553,10 +561,7 @@ class _RawMaterialBillingPageState extends State<RawMaterialBillingPage> {
       for (var i = 0; i < _billControllers.length; i++) {
         final amount = double.tryParse(_billControllers[i].text) ?? 0;
         final invoiceNumber = _invoiceNumberControllers[i].text.trim();
-        bills.add({
-          'amount': amount,
-          'invoiceNumber': invoiceNumber,
-        });
+        bills.add({'amount': amount, 'invoiceNumber': invoiceNumber});
       }
 
       final companyId = await _resolveCompanyId();
@@ -710,7 +715,8 @@ class _RawMaterialBillingPageState extends State<RawMaterialBillingPage> {
                   )
                 : DropdownButtonFormField<String>(
                     isExpanded: true,
-                    initialValue: _dealers.any((d) => d['id'] == _selectedDealerId)
+                    initialValue:
+                        _dealers.any((d) => d['id'] == _selectedDealerId)
                         ? _selectedDealerId
                         : null,
                     decoration: InputDecoration(
@@ -784,8 +790,7 @@ class _RawMaterialBillingPageState extends State<RawMaterialBillingPage> {
               const Center(
                 child: Padding(
                   padding: EdgeInsets.all(12),
-                  child:
-                      CircularProgressIndicator(color: Color(0xFF2E7D32)),
+                  child: CircularProgressIndicator(color: Color(0xFF2E7D32)),
                 ),
               )
             else ...[
@@ -816,7 +821,9 @@ class _RawMaterialBillingPageState extends State<RawMaterialBillingPage> {
                 ),
               const SizedBox(height: 12),
               OutlinedButton.icon(
-                onPressed: _products.isEmpty ? null : _navigateToRawMaterialSelection,
+                onPressed: _products.isEmpty
+                    ? null
+                    : _navigateToRawMaterialSelection,
                 icon: const Icon(Icons.add_circle_outline),
                 label: Text(
                   _selectedRawMaterialQuantities.isEmpty
@@ -894,8 +901,9 @@ class _RawMaterialBillingPageState extends State<RawMaterialBillingPage> {
                     flex: 2,
                     child: TextFormField(
                       controller: _billControllers[i],
-                      keyboardType:
-                          const TextInputType.numberWithOptions(decimal: true),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
                       decoration: InputDecoration(
                         labelText: 'Amount (₹)',
                         border: OutlineInputBorder(
@@ -977,8 +985,11 @@ class _RawMaterialBillingPageState extends State<RawMaterialBillingPage> {
                       backgroundColor: Colors.red.withValues(alpha: 0.9),
                       child: IconButton(
                         padding: EdgeInsets.zero,
-                        icon: const Icon(Icons.close,
-                            size: 16, color: Colors.white),
+                        icon: const Icon(
+                          Icons.close,
+                          size: 16,
+                          color: Colors.white,
+                        ),
                         onPressed: () => _removePhoto(slot),
                       ),
                     ),
@@ -1076,8 +1087,11 @@ class _RawMaterialBillingPageState extends State<RawMaterialBillingPage> {
                             backgroundColor: Colors.red.withValues(alpha: 0.9),
                             child: IconButton(
                               padding: EdgeInsets.zero,
-                              icon: const Icon(Icons.close,
-                                  size: 14, color: Colors.white),
+                              icon: const Icon(
+                                Icons.close,
+                                size: 14,
+                                color: Colors.white,
+                              ),
                               onPressed: () {
                                 setState(() {
                                   try {
@@ -1267,8 +1281,10 @@ class _RawMaterialSelectionPageState extends State<_RawMaterialSelectionPage> {
                 final amt = _selections[id]?['totalAmount'] ?? 0;
 
                 return Card(
-                  margin:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                  margin: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 4,
+                  ),
                   child: ExpansionTile(
                     leading: Checkbox(
                       value: isSelected,
@@ -1277,10 +1293,7 @@ class _RawMaterialSelectionPageState extends State<_RawMaterialSelectionPage> {
                         setState(() {
                           if (val == true) {
                             _selectedIds.add(id);
-                            _selections[id] = {
-                              'quantity': 0,
-                              'totalAmount': 0,
-                            };
+                            _selections[id] = {'quantity': 0, 'totalAmount': 0};
                           } else {
                             _selectedIds.remove(id);
                             _selections.remove(id);
@@ -1306,15 +1319,19 @@ class _RawMaterialSelectionPageState extends State<_RawMaterialSelectionPage> {
                                           ? qty.toStringAsFixed(
                                               qty.truncateToDouble() == qty
                                                   ? 0
-                                                  : 2)
+                                                  : 2,
+                                            )
                                           : '',
-                                      keyboardType: const TextInputType
-                                          .numberWithOptions(decimal: true),
+                                      keyboardType:
+                                          const TextInputType.numberWithOptions(
+                                            decimal: true,
+                                          ),
                                       decoration: InputDecoration(
                                         labelText: 'Quantity',
                                         border: OutlineInputBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(8),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
                                         ),
                                         isDense: true,
                                       ),
@@ -1330,13 +1347,16 @@ class _RawMaterialSelectionPageState extends State<_RawMaterialSelectionPage> {
                                       initialValue: amt > 0
                                           ? amt.toStringAsFixed(2)
                                           : '',
-                                      keyboardType: const TextInputType
-                                          .numberWithOptions(decimal: true),
+                                      keyboardType:
+                                          const TextInputType.numberWithOptions(
+                                            decimal: true,
+                                          ),
                                       decoration: InputDecoration(
                                         labelText: 'Amount (₹)',
                                         border: OutlineInputBorder(
-                                          borderRadius:
-                                              BorderRadius.circular(8),
+                                          borderRadius: BorderRadius.circular(
+                                            8,
+                                          ),
                                         ),
                                         isDense: true,
                                       ),

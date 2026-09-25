@@ -361,11 +361,7 @@ class TableCustomerDetailsVisibilityService {
           'skip_confirm',
         ], false);
 
-        int readIntFromTree(
-          dynamic node,
-          List<String> keys,
-          int defaultValue,
-        ) {
+        int readIntFromTree(dynamic node, List<String> keys, int defaultValue) {
           final wanted = keys.map((k) => k.toLowerCase()).toSet();
 
           int? scan(dynamic current) {
@@ -466,7 +462,9 @@ class TableCustomerDetailsVisibilityService {
         List<String> skipDeliverWaiters = [];
         final skipDeliverWaitersNode = source['skipDeliverWaiters'];
         if (skipDeliverWaitersNode is List) {
-          skipDeliverWaiters = skipDeliverWaitersNode.map((item) => item.toString()).toList();
+          skipDeliverWaiters = skipDeliverWaitersNode
+              .map((item) => item.toString())
+              .toList();
         }
 
         final skipConfirmWaiterSelectionType = readStringFromTree(source, [
@@ -477,7 +475,9 @@ class TableCustomerDetailsVisibilityService {
         List<String> skipConfirmWaiters = [];
         final skipConfirmWaitersNode = source['skipConfirmWaiters'];
         if (skipConfirmWaitersNode is List) {
-          skipConfirmWaiters = skipConfirmWaitersNode.map((item) => item.toString()).toList();
+          skipConfirmWaiters = skipConfirmWaitersNode
+              .map((item) => item.toString())
+              .toList();
         }
 
         final entireBillBlocking = readBoolFromTree(source, [

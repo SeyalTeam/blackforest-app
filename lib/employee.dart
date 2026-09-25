@@ -110,7 +110,10 @@ class _EmployeePageState extends State<EmployeePage> {
     try {
       final response = await http.get(
         Uri.parse('https://$apiHostPrimary/api/branches/$branchId?depth=1'),
-        headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
       );
       if (response.statusCode == 200) {
         final decoded = jsonDecode(response.body);
@@ -139,7 +142,6 @@ class _EmployeePageState extends State<EmployeePage> {
     return 0;
   }
 
-
   Future<void> _fetchEmployeeProfile() async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
@@ -150,7 +152,10 @@ class _EmployeePageState extends State<EmployeePage> {
     try {
       final response = await http.get(
         Uri.parse('https://$apiHostPrimary/api/employees/$employeeId'),
-        headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
       );
 
       if (response.statusCode == 200) {
@@ -158,9 +163,10 @@ class _EmployeePageState extends State<EmployeePage> {
         final photo = data['photo'];
         String? photoUrl;
         if (photo is Map) {
-          photoUrl = photo['thumbnailURL']?.toString() ??
-                     photo['thumbnailUrl']?.toString() ??
-                     photo['url']?.toString();
+          photoUrl =
+              photo['thumbnailURL']?.toString() ??
+              photo['thumbnailUrl']?.toString() ??
+              photo['url']?.toString();
         } else if (photo is String) {
           photoUrl = photo;
         }
@@ -181,7 +187,6 @@ class _EmployeePageState extends State<EmployeePage> {
   }
 
   Future<void> _fetchAttendance() async {
-
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
     final userId = prefs.getString('user_id');
@@ -200,13 +205,17 @@ class _EmployeePageState extends State<EmployeePage> {
         Uri.parse(
           'https://$apiHostPrimary/api/attendance?where[user][equals]=$userId&where[date][greater_than_equal]=$queryDate&sort=-date&limit=10',
         ),
-        headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
       );
 
       if (response.statusCode != 200) return;
 
       final data = jsonDecode(response.body);
-      final docs = (data is Map<String, dynamic> ? data['docs'] : null) as List?;
+      final docs =
+          (data is Map<String, dynamic> ? data['docs'] : null) as List?;
       if (docs == null) return;
 
       final allActivities = <Map<String, dynamic>>[];
@@ -219,9 +228,9 @@ class _EmployeePageState extends State<EmployeePage> {
         final firstDoc = docs.first as Map<String, dynamic>;
         final docDateStr = firstDoc['dateString']?.toString() ?? '';
         final queryDateStr = localMidnight.toIso8601String().split('T')[0];
-        
+
         // Ensure the doc we found is actually for today
-        if (docDateStr == queryDateStr || 
+        if (docDateStr == queryDateStr ||
             (firstDoc['date']?.toString().startsWith(queryDateStr) == true)) {
           _attendanceDocId = firstDoc['id']?.toString();
           _rawActivities = (firstDoc['activities'] as List?) ?? [];
@@ -235,8 +244,8 @@ class _EmployeePageState extends State<EmployeePage> {
       }
 
       for (final dynamic doc in docs) {
-        final activities = (doc is Map<String, dynamic> ? doc['activities'] : null)
-            as List?;
+        final activities =
+            (doc is Map<String, dynamic> ? doc['activities'] : null) as List?;
         if (activities == null) continue;
 
         for (final dynamic rawActivity in activities) {
@@ -256,8 +265,9 @@ class _EmployeePageState extends State<EmployeePage> {
               : null;
 
           final inTimeStr = DateFormat('hh:mm a').format(punchIn);
-          final outTimeStr =
-              punchOut != null ? DateFormat('hh:mm a').format(punchOut) : 'Active';
+          final outTimeStr = punchOut != null
+              ? DateFormat('hh:mm a').format(punchOut)
+              : 'Active';
 
           if (type == 'session') {
             final duration = punchOut != null
@@ -285,12 +295,14 @@ class _EmployeePageState extends State<EmployeePage> {
             if (status == 'active') {
               activeSessionFound = true;
               final activeStart = punchIn;
-              final pastWork = totalWork - DateTime.now().difference(activeStart);
+              final pastWork =
+                  totalWork - DateTime.now().difference(activeStart);
               _timer?.cancel();
               _timer = Timer.periodic(const Duration(seconds: 1), (_) {
                 if (!mounted) return;
                 setState(() {
-                  _workDuration = pastWork + DateTime.now().difference(activeStart);
+                  _workDuration =
+                      pastWork + DateTime.now().difference(activeStart);
                 });
               });
             }
@@ -327,8 +339,9 @@ class _EmployeePageState extends State<EmployeePage> {
       if (!mounted) return;
       setState(() {
         allActivities.sort(
-          (a, b) =>
-              (b['startTime'] as DateTime).compareTo(a['startTime'] as DateTime),
+          (a, b) => (b['startTime'] as DateTime).compareTo(
+            a['startTime'] as DateTime,
+          ),
         );
         _activities = allActivities;
         _workDuration = totalWork;
@@ -366,9 +379,9 @@ class _EmployeePageState extends State<EmployeePage> {
       if (length < 1500 * 1024) return originalFile;
 
       final bytes = await originalFile.readAsBytes();
-      
+
       final compressedBytes = await compute(_compressImageIsolate, bytes);
-      
+
       if (compressedBytes == null) return originalFile;
 
       final tempDir = await getTemporaryDirectory();
@@ -420,20 +433,19 @@ class _EmployeePageState extends State<EmployeePage> {
     return null;
   }
 
-  
   Future<void> _capturePhoto() async {
     if (_hasActiveSession || _isProcessingPunch) {
-       ScaffoldMessenger.of(context).showSnackBar(
-         const SnackBar(content: Text('You are already punched in.')),
-       );
-       return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('You are already punched in.')),
+      );
+      return;
     }
 
     final cameras = await availableCameras();
     if (cameras.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No camera found')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('No camera found')));
       return;
     }
 
@@ -452,8 +464,11 @@ class _EmployeePageState extends State<EmployeePage> {
   }
 
   Future<void> _submitPunchIn() async {
-    if (_capturedPunchInPhoto == null || _hasActiveSession || _isProcessingPunch) return;
-    
+    if (_capturedPunchInPhoto == null ||
+        _hasActiveSession ||
+        _isProcessingPunch)
+      return;
+
     setState(() {
       _isProcessingPunch = true;
     });
@@ -519,7 +534,10 @@ class _EmployeePageState extends State<EmployeePage> {
         final url = 'https://$apiHostPrimary/api/attendance/$_attendanceDocId';
         final response = await http.patch(
           Uri.parse(url),
-          headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
           body: jsonEncode({'activities': updatedActivities}),
         );
         if (response.statusCode == 200) {
@@ -527,21 +545,22 @@ class _EmployeePageState extends State<EmployeePage> {
             const SnackBar(content: Text('Successfully punched in!')),
           );
           await _fetchEmployeeProfile();
-    await _fetchAttendance();
-
-
+          await _fetchAttendance();
         }
       } else {
         // POST new
         final localMidnight = DateTime(now.year, now.month, now.day);
         final dateString = DateFormat('yyyy-MM-dd').format(localMidnight);
-        
+
         // Find employee id from current user if needed, but attendance can just have user and no employee, or we fetch employee id.
         // Actually the backend payload config creates attendance with `user`. We will just omit `employee` if we don't have it.
         final url = 'https://$apiHostPrimary/api/attendance';
         final response = await http.post(
           Uri.parse(url),
-          headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+          headers: {
+            'Authorization': 'Bearer $token',
+            'Content-Type': 'application/json',
+          },
           body: jsonEncode({
             'user': userId,
             'date': localMidnight.toUtc().toIso8601String(),
@@ -554,9 +573,7 @@ class _EmployeePageState extends State<EmployeePage> {
             const SnackBar(content: Text('Successfully punched in!')),
           );
           await _fetchEmployeeProfile();
-    await _fetchAttendance();
-
-
+          await _fetchAttendance();
         }
       }
     } catch (e) {
@@ -571,8 +588,9 @@ class _EmployeePageState extends State<EmployeePage> {
   }
 
   Future<void> _punchOut() async {
-    if (!_hasActiveSession || _attendanceDocId == null || _isProcessingPunch) return;
-    
+    if (!_hasActiveSession || _attendanceDocId == null || _isProcessingPunch)
+      return;
+
     setState(() {
       _isProcessingPunch = true;
     });
@@ -583,26 +601,29 @@ class _EmployeePageState extends State<EmployeePage> {
 
     try {
       final updatedActivities = List.from(_rawActivities);
-      
+
       // Find the active session and close it
       for (var i = updatedActivities.length - 1; i >= 0; i--) {
         final activity = updatedActivities[i];
         if (activity['type'] == 'session' && activity['status'] == 'active') {
-           final punchInTime = DateTime.parse(activity['punchIn']);
-           final punchOutTime = DateTime.now();
-           final durationSecs = punchOutTime.difference(punchInTime).inSeconds;
-           
-           activity['punchOut'] = punchOutTime.toUtc().toIso8601String();
-           activity['status'] = 'closed';
-           activity['durationSeconds'] = durationSecs;
-           break;
+          final punchInTime = DateTime.parse(activity['punchIn']);
+          final punchOutTime = DateTime.now();
+          final durationSecs = punchOutTime.difference(punchInTime).inSeconds;
+
+          activity['punchOut'] = punchOutTime.toUtc().toIso8601String();
+          activity['status'] = 'closed';
+          activity['durationSeconds'] = durationSecs;
+          break;
         }
       }
 
       final url = 'https://$apiHostPrimary/api/attendance/$_attendanceDocId';
       final response = await http.patch(
         Uri.parse(url),
-        headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
         body: jsonEncode({'activities': updatedActivities}),
       );
 
@@ -611,7 +632,7 @@ class _EmployeePageState extends State<EmployeePage> {
           const SnackBar(content: Text('Successfully punched out!')),
         );
         await _fetchEmployeeProfile();
-    await _fetchAttendance();
+        await _fetchAttendance();
       }
     } catch (e) {
       debugPrint('Punch Out Error: $e');
@@ -662,7 +683,10 @@ class _EmployeePageState extends State<EmployeePage> {
     });
     try {
       final prefs = await SharedPreferences.getInstance();
-      await Provider.of<CartProvider>(context, listen: false).clearAllDrafts(notify: false);
+      await Provider.of<CartProvider>(
+        context,
+        listen: false,
+      ).clearAllDrafts(notify: false);
       await clearSessionPreservingFavorites(prefs);
       if (mounted) {
         Navigator.pushReplacementNamed(context, '/login');
@@ -710,7 +734,9 @@ class _EmployeePageState extends State<EmployeePage> {
                             decoration: BoxDecoration(
                               shape: BoxShape.circle,
                               border: Border.all(
-                                color: _hasActiveSession ? Colors.green : Colors.grey[300]!,
+                                color: _hasActiveSession
+                                    ? Colors.green
+                                    : Colors.grey[300]!,
                                 width: _hasActiveSession ? 3 : 2,
                               ),
                               boxShadow: [
@@ -725,12 +751,21 @@ class _EmployeePageState extends State<EmployeePage> {
                               radius: 50,
                               backgroundColor: Colors.white,
                               backgroundImage: _capturedPunchInPhoto != null
-                                  ? FileImage(_capturedPunchInPhoto!) as ImageProvider
-                                  : (_employeePhotoUrl != null && _employeePhotoUrl!.isNotEmpty
-                                      ? NetworkImage(_employeePhotoUrl!)
-                                      : null),
-                              child: _capturedPunchInPhoto == null && (_employeePhotoUrl == null || _employeePhotoUrl!.isEmpty)
-                                  ? Icon(Icons.person, size: 50, color: Colors.grey[400])
+                                  ? FileImage(_capturedPunchInPhoto!)
+                                        as ImageProvider
+                                  : (_employeePhotoUrl != null &&
+                                            _employeePhotoUrl!.isNotEmpty
+                                        ? NetworkImage(_employeePhotoUrl!)
+                                        : null),
+                              child:
+                                  _capturedPunchInPhoto == null &&
+                                      (_employeePhotoUrl == null ||
+                                          _employeePhotoUrl!.isEmpty)
+                                  ? Icon(
+                                      Icons.person,
+                                      size: 50,
+                                      color: Colors.grey[400],
+                                    )
                                   : null,
                             ),
                           ),
@@ -744,7 +779,11 @@ class _EmployeePageState extends State<EmployeePage> {
                                   color: Colors.blue,
                                   shape: BoxShape.circle,
                                 ),
-                                child: const Icon(Icons.camera_alt, color: Colors.white, size: 18),
+                                child: const Icon(
+                                  Icons.camera_alt,
+                                  color: Colors.white,
+                                  size: 18,
+                                ),
                               ),
                             ),
                         ],
@@ -919,7 +958,8 @@ class _EmployeePageState extends State<EmployeePage> {
                     ),
 
                     const SizedBox(height: 16),
-                    if (!_hasActiveSession && _capturedPunchInPhoto != null) ...[
+                    if (!_hasActiveSession &&
+                        _capturedPunchInPhoto != null) ...[
                       SizedBox(
                         width: double.infinity,
                         height: 50,
@@ -992,15 +1032,17 @@ class _EmployeePageState extends State<EmployeePage> {
                       width: double.infinity,
                       child: FilledButton.icon(
                         style: FilledButton.styleFrom(
-                          backgroundColor: _hasActiveSession ? Colors.orange[800] : const Color(0xFFD32F2F),
+                          backgroundColor: _hasActiveSession
+                              ? Colors.orange[800]
+                              : const Color(0xFFD32F2F),
                           foregroundColor: Colors.white,
                           minimumSize: const Size.fromHeight(52),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14),
                           ),
                         ),
-                        onPressed: (_isLoggingOut || _isProcessingPunch) 
-                            ? null 
+                        onPressed: (_isLoggingOut || _isProcessingPunch)
+                            ? null
                             : (_hasActiveSession ? _punchOut : _confirmLogout),
                         icon: (_isLoggingOut || _isProcessingPunch)
                             ? const SizedBox(
@@ -1014,15 +1056,17 @@ class _EmployeePageState extends State<EmployeePage> {
                                 ),
                               )
                             : Icon(
-                                _hasActiveSession ? Icons.punch_clock : Icons.logout_rounded, 
-                                size: 20
+                                _hasActiveSession
+                                    ? Icons.punch_clock
+                                    : Icons.logout_rounded,
+                                size: 20,
                               ),
                         label: Text(
-                          _isProcessingPunch 
-                              ? 'Processing...' 
-                              : _isLoggingOut 
-                                  ? 'Logging out...' 
-                                  : (_hasActiveSession ? 'Punch Out' : 'Logout'),
+                          _isProcessingPunch
+                              ? 'Processing...'
+                              : _isLoggingOut
+                              ? 'Logging out...'
+                              : (_hasActiveSession ? 'Punch Out' : 'Logout'),
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.w700,
@@ -1112,7 +1156,8 @@ class _EmployeePageState extends State<EmployeePage> {
                                     ),
                                   ),
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Row(
                                         children: [
@@ -1159,7 +1204,8 @@ class _EmployeePageState extends State<EmployeePage> {
                                     ),
                                   ),
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Row(
                                         children: [
@@ -1174,7 +1220,8 @@ class _EmployeePageState extends State<EmployeePage> {
                                           Text(
                                             'Punch Out',
                                             style: TextStyle(
-                                              color: activity['isActive'] == true
+                                              color:
+                                                  activity['isActive'] == true
                                                   ? Colors.grey[600]
                                                   : Colors.red[800],
                                               fontWeight: FontWeight.bold,

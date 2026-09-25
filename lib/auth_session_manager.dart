@@ -134,10 +134,13 @@ class AuthSessionManager {
       final requestUri = candidateUris[index];
       try {
         final response = await raw_http
-            .get(requestUri, headers: {
-              'Authorization': 'Bearer $token',
-              'x-app-version': AppVersion.current,
-            })
+            .get(
+              requestUri,
+              headers: {
+                'Authorization': 'Bearer $token',
+                'x-app-version': AppVersion.current,
+              },
+            )
             .timeout(timeout);
 
         if (response.statusCode < 500) {

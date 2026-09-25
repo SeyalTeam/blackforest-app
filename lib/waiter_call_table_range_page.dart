@@ -38,7 +38,8 @@ class _WaiterCallTableRangePageState extends State<WaiterCallTableRangePage> {
     return map;
   }
 
-  bool get _hasChanges => !_setEquals(_selectedTableKeys, _initialSelectedTableKeys);
+  bool get _hasChanges =>
+      !_setEquals(_selectedTableKeys, _initialSelectedTableKeys);
 
   bool _setEquals(Set<String> left, Set<String> right) {
     if (left.length != right.length) return false;
@@ -175,7 +176,9 @@ class _WaiterCallTableRangePageState extends State<WaiterCallTableRangePage> {
     final prefs = await SharedPreferences.getInstance();
     final branchId = prefs.getString('branchId')?.trim() ?? '';
     final token = prefs.getString('token')?.trim() ?? '';
-    final waiterId = WaiterCallRangeFilterService.resolveUserKeyFromPrefs(prefs);
+    final waiterId = WaiterCallRangeFilterService.resolveUserKeyFromPrefs(
+      prefs,
+    );
 
     if (branchId.isEmpty || token.isEmpty) {
       if (!mounted) return;
@@ -238,7 +241,8 @@ class _WaiterCallTableRangePageState extends State<WaiterCallTableRangePage> {
         }
       }
 
-      final candidateKeys = WaiterCallRangeFilterService.resolveCandidateUserKeysFromPrefs(prefs);
+      final candidateKeys =
+          WaiterCallRangeFilterService.resolveCandidateUserKeysFromPrefs(prefs);
       for (final candidate in candidateKeys) {
         await WaiterCallRangeFilterService.saveSelections(
           prefs: prefs,
@@ -257,9 +261,9 @@ class _WaiterCallTableRangePageState extends State<WaiterCallTableRangePage> {
       await _loadPage();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to save allocations: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to save allocations: $e')));
     } finally {
       if (mounted) {
         setState(() {
@@ -415,7 +419,9 @@ class _WaiterCallTableRangePageState extends State<WaiterCallTableRangePage> {
         if (parsedNumber == null || parsedNumber <= 0) continue;
 
         final bool isOffline = rawTable['isOffline'] == true;
-        final String tableLabel = rawLabel.isNotEmpty ? rawLabel : 'Table $parsedNumber';
+        final String tableLabel = rawLabel.isNotEmpty
+            ? rawLabel
+            : 'Table $parsedNumber';
         final bool occupied = rawTable['occupied'] == true;
         final String tableState = _readText(rawTable['tableState']);
         final String servedBy = _readText(rawTable['servedBy']);
@@ -427,7 +433,9 @@ class _WaiterCallTableRangePageState extends State<WaiterCallTableRangePage> {
           tableLabel: tableLabel,
           occupied: occupied,
           tableState: tableState,
-          servedBy: servedBy.isNotEmpty ? servedBy : (assignedWaiterName.isNotEmpty ? assignedWaiterName : ''),
+          servedBy: servedBy.isNotEmpty
+              ? servedBy
+              : (assignedWaiterName.isNotEmpty ? assignedWaiterName : ''),
           assignedWaiterId: assignedWaiterId,
           assignedWaiterName: assignedWaiterName,
           isOffline: isOffline,
@@ -514,7 +522,6 @@ class _WaiterCallTableRangePageState extends State<WaiterCallTableRangePage> {
 
     return sections;
   }
-
 
   List<_TableSectionViewModel> _readTableSectionsFromCache({
     required SharedPreferences prefs,
@@ -715,8 +722,6 @@ class _WaiterCallTableRangePageState extends State<WaiterCallTableRangePage> {
     return null;
   }
 
-
-
   List<Map<String, dynamic>> _asMapList(dynamic value) {
     if (value is! List) return const <Map<String, dynamic>>[];
     final rows = <Map<String, dynamic>>[];
@@ -745,19 +750,25 @@ class _WaiterCallTableRangePageState extends State<WaiterCallTableRangePage> {
   Widget _buildTableTile(_TableCellViewModel table) {
     final isSelected = _selectedTableKeys.contains(table.key);
     final isOffline = table.isOffline;
-    final subtitle = isOffline ? 'Offline' : (table.servedBy.isEmpty ? null : table.servedBy);
+    final subtitle = isOffline
+        ? 'Offline'
+        : (table.servedBy.isEmpty ? null : table.servedBy);
 
     return GestureDetector(
       onTap: isOffline ? null : () => _toggleTableSelection(table.key),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 120),
         decoration: BoxDecoration(
-          color: isOffline ? const Color(0xFFF5F5F5) : (isSelected ? _selectedTileColor : Colors.white),
+          color: isOffline
+              ? const Color(0xFFF5F5F5)
+              : (isSelected ? _selectedTileColor : Colors.white),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: isOffline
                 ? const Color(0xFFE0E0E0)
-                : (isSelected ? const Color(0xFFF59E0B) : const Color(0xFFE0E0E0)),
+                : (isSelected
+                      ? const Color(0xFFF59E0B)
+                      : const Color(0xFFE0E0E0)),
             width: isSelected ? 2 : 1.2,
           ),
           boxShadow: [
@@ -933,7 +944,10 @@ class _WaiterCallTableRangePageState extends State<WaiterCallTableRangePage> {
       bottomNavigationBar: _hasChanges
           ? SafeArea(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF006C67),
@@ -951,7 +965,9 @@ class _WaiterCallTableRangePageState extends State<WaiterCallTableRangePage> {
                           width: 20,
                           child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                            valueColor: AlwaysStoppedAnimation<Color>(
+                              Colors.white,
+                            ),
                           ),
                         )
                       : const Text(
@@ -1010,7 +1026,10 @@ class _TableCellViewModel {
 }
 
 class _WaiterAllocationInfo {
-  const _WaiterAllocationInfo({required this.waiterId, required this.waiterName});
+  const _WaiterAllocationInfo({
+    required this.waiterId,
+    required this.waiterName,
+  });
   final String waiterId;
   final String waiterName;
 }
@@ -1021,4 +1040,3 @@ class _RangeBounds {
   final int start;
   final int end;
 }
-

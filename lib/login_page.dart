@@ -140,9 +140,7 @@ class _LoginPageState extends State<LoginPage> {
   static const String _appVersion = '1.0.0+1';
   static const Duration _loginRequestTimeout = Duration(seconds: 20);
   static const int _loginTimeoutRetryCount = 2;
-  static const Set<String> _staffRoles = <String>{
-    'waiter',
-  };
+  static const Set<String> _staffRoles = <String>{'waiter'};
   static const String _waiterDefaultPassword = '12345';
 
   final _formKey = GlobalKey<FormState>();
@@ -1666,11 +1664,7 @@ class _LoginPageState extends State<LoginPage> {
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Color(0xFFFFF9F6),
-              Color(0xFFF7ECE6),
-              Color(0xFFEFE2DB),
-            ],
+            colors: [Color(0xFFFFF9F6), Color(0xFFF7ECE6), Color(0xFFEFE2DB)],
             stops: [0.0, 0.55, 1.0],
           ),
         ),

@@ -24,11 +24,10 @@ Future<void> showCustomerHistoryDialog(
     await navigator.push<void>(
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (ctx) =>
-            _CustomerHistoryRouteScreen(
-              phoneNumber: normalizedPhone,
-              customerName: customerName,
-            ),
+        builder: (ctx) => _CustomerHistoryRouteScreen(
+          phoneNumber: normalizedPhone,
+          customerName: customerName,
+        ),
       ),
     );
   } finally {
@@ -220,8 +219,9 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
   String _extractCustomerNameFromBill(Map<String, dynamic> bill) {
     final customerDetails = bill['customerDetails'];
     if (customerDetails is Map) {
-      final fromCustomerDetails =
-          _normalizeCustomerName(customerDetails['name']);
+      final fromCustomerDetails = _normalizeCustomerName(
+        customerDetails['name'],
+      );
       if (fromCustomerDetails.isNotEmpty) return fromCustomerDetails;
     }
 
@@ -355,7 +355,9 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
 
       _knownTotalBills = totalBillsHint;
       if (_resolvedCustomerName.isEmpty) {
-        _resolvedCustomerName = _resolveCustomerNameFromBills(mergedInitialBills);
+        _resolvedCustomerName = _resolveCustomerNameFromBills(
+          mergedInitialBills,
+        );
       }
       _nextSingleItemPage = mergedInitialBills.length + 1;
       if (mounted) {
@@ -3298,7 +3300,6 @@ class _ReceiptContentState extends State<ReceiptContent> {
         .clamp(0.0, double.infinity)
         .toDouble();
 
-
     final storedRoundOff = _moneyOrNull(
       bill['roundOffAmount'] ??
           bill['roundOff'] ??
@@ -3339,7 +3340,8 @@ class _ReceiptContentState extends State<ReceiptContent> {
 
     final roundedGrandTotal =
         storedRoundedGrandTotal ?? _roundDoubleSpecial(computedPreRoundTotal);
-    final roundOffAmount = storedRoundOff ?? (roundedGrandTotal - computedPreRoundTotal);
+    final roundOffAmount =
+        storedRoundOff ?? (roundedGrandTotal - computedPreRoundTotal);
     final roundOffSign = roundOffAmount >= 0 ? '+' : '-';
 
     const printInk = Color(0xFF1F1B17);

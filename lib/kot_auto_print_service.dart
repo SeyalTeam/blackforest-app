@@ -39,7 +39,9 @@ class PrintTaskHandler extends TaskHandler {
       debugPrint('🛎️ Error syncing chat notifications in background: $e');
     }
 
-    final alerts = await KotAutoPrintService.syncPendingWebsiteKots(isBackground: true);
+    final alerts = await KotAutoPrintService.syncPendingWebsiteKots(
+      isBackground: true,
+    );
 
     try {
       final isForeground = await FlutterForegroundTask.isAppOnForeground;
@@ -55,7 +57,10 @@ class PrintTaskHandler extends TaskHandler {
       }
 
       final notificationService = NotificationService();
-      await notificationService.init().timeout(const Duration(seconds: 5)).catchError((_) {});
+      await notificationService
+          .init()
+          .timeout(const Duration(seconds: 5))
+          .catchError((_) {});
 
       final prefs = await SharedPreferences.getInstance();
       await prefs.reload();
@@ -63,7 +68,8 @@ class PrintTaskHandler extends TaskHandler {
       if (branchId.isEmpty) return;
 
       final notifiedKey = 'auto_waiter_call_notified_v1_$branchId';
-      final notifiedEventKeys = prefs.getStringList(notifiedKey)?.toSet() ?? <String>{};
+      final notifiedEventKeys =
+          prefs.getStringList(notifiedKey)?.toSet() ?? <String>{};
 
       var didUpdatePrefs = false;
       for (final alert in waiterCallAlerts) {
@@ -85,7 +91,8 @@ class PrintTaskHandler extends TaskHandler {
           }
           body += ' | Section: ${payload.section}';
         } else {
-          body = 'Section: ${payload.section} | Customer: ${payload.customerName.trim().isEmpty ? 'Guest' : payload.customerName}';
+          body =
+              'Section: ${payload.section} | Customer: ${payload.customerName.trim().isEmpty ? 'Guest' : payload.customerName}';
         }
 
         await notificationService.showWaiterCallNotification(
@@ -140,12 +147,14 @@ class KotAutoPrintService {
 
   static Future<void> startService() async {
     if (defaultTargetPlatform == TargetPlatform.android) {
-      final notificationPermission = await FlutterForegroundTask.checkNotificationPermission();
+      final notificationPermission =
+          await FlutterForegroundTask.checkNotificationPermission();
       if (notificationPermission != NotificationPermission.granted) {
         await FlutterForegroundTask.requestNotificationPermission();
       }
 
-      final isIgnoringBattery = await FlutterForegroundTask.isIgnoringBatteryOptimizations;
+      final isIgnoringBattery =
+          await FlutterForegroundTask.isIgnoringBatteryOptimizations;
       if (!isIgnoringBattery) {
         await FlutterForegroundTask.requestIgnoreBatteryOptimization();
       }
@@ -206,7 +215,8 @@ class KotAutoPrintService {
 
       // Fetch or use cached thread ID
       var threadId = prefs.getString('cached_chat_thread_id')?.trim() ?? '';
-      var participantName = prefs.getString('cached_chat_participant_name')?.trim() ?? 'Admin';
+      var participantName =
+          prefs.getString('cached_chat_participant_name')?.trim() ?? 'Admin';
 
       final headers = {
         'Authorization': 'Bearer $token',
@@ -218,7 +228,7 @@ class KotAutoPrintService {
           '$_apiBase/message-threads'
           '?limit=1'
           '&depth=0'
-          '&where[staffUser][equals]=$userId'
+          '&where[staffUser][equals]=$userId',
         );
         final response = await http.get(threadUrl, headers: headers);
         if (response.statusCode == 200) {
@@ -227,10 +237,14 @@ class KotAutoPrintService {
           if (docs != null && docs.isNotEmpty) {
             final threadDoc = docs.first;
             threadId = (threadDoc['id'] ?? threadDoc['_id']) as String? ?? '';
-            participantName = threadDoc['participantName'] as String? ?? 'Admin';
+            participantName =
+                threadDoc['participantName'] as String? ?? 'Admin';
             if (threadId.isNotEmpty) {
               await prefs.setString('cached_chat_thread_id', threadId);
-              await prefs.setString('cached_chat_participant_name', participantName);
+              await prefs.setString(
+                'cached_chat_participant_name',
+                participantName,
+              );
             }
           }
         }
@@ -245,7 +259,7 @@ class KotAutoPrintService {
         '?limit=10'
         '&depth=1'
         '&sort=-seq'
-        '&where[thread][equals]=$threadId'
+        '&where[thread][equals]=$threadId',
       );
       final msgResponse = await http.get(messagesUrl, headers: headers);
       if (msgResponse.statusCode == 200) {
@@ -254,7 +268,8 @@ class KotAutoPrintService {
         if (msgDocs != null && msgDocs.isNotEmpty) {
           final notifiedKey = 'notified_chat_message_ids_$userId';
           final seededKey = 'is_chat_notified_seeded_$userId';
-          final notifiedIds = prefs.getStringList(notifiedKey)?.toSet() ?? <String>{};
+          final notifiedIds =
+              prefs.getStringList(notifiedKey)?.toSet() ?? <String>{};
           final isSeeded = prefs.getBool(seededKey) ?? false;
           var didUpdate = false;
 
@@ -280,7 +295,10 @@ class KotAutoPrintService {
           }
 
           final notificationService = NotificationService();
-          await notificationService.init().timeout(const Duration(seconds: 5)).catchError((_) {});
+          await notificationService
+              .init()
+              .timeout(const Duration(seconds: 5))
+              .catchError((_) {});
 
           for (final doc in reversedDocs) {
             if (doc is! Map<String, dynamic>) continue;
@@ -288,7 +306,8 @@ class KotAutoPrintService {
             if (msgId.isEmpty) continue;
 
             final senderRole = doc['senderRole'] as String? ?? '';
-            final isFromAdmin = senderRole == 'admin' || senderRole == 'superadmin';
+            final isFromAdmin =
+                senderRole == 'admin' || senderRole == 'superadmin';
             if (!isFromAdmin) {
               continue;
             }
@@ -303,10 +322,12 @@ class KotAutoPrintService {
             final senderUser = doc['senderUser'];
             String senderName = participantName;
             if (senderUser is Map<String, dynamic>) {
-              final name = (senderUser['name'] as String? ??
-                            senderUser['username'] as String? ??
-                            senderUser['email'] as String? ??
-                            '').trim();
+              final name =
+                  (senderUser['name'] as String? ??
+                          senderUser['username'] as String? ??
+                          senderUser['email'] as String? ??
+                          '')
+                      .trim();
               if (name.isNotEmpty) {
                 senderName = name;
               }
@@ -684,7 +705,10 @@ class KotAutoPrintService {
   }) async {
     final now = DateTime.now();
     // Use 24 hours ago as start time to be safe against midnight shifts and timezone differences
-    final todayStart = now.subtract(const Duration(hours: 24)).toUtc().toIso8601String();
+    final todayStart = now
+        .subtract(const Duration(hours: 24))
+        .toUtc()
+        .toIso8601String();
 
     final url = Uri.parse(
       '$_apiBase/billings'
@@ -753,7 +777,8 @@ class KotAutoPrintService {
       userId: waiterUserKey,
       branchId: branchId,
     );
-    final userKeys = WaiterCallRangeFilterService.resolveCandidateUserKeysFromPrefs(prefs);
+    final userKeys =
+        WaiterCallRangeFilterService.resolveCandidateUserKeysFromPrefs(prefs);
     final cachedTablesRaw = prefs.getString('cached_tables_$branchId');
     List<dynamic> cachedTables = [];
     if (cachedTablesRaw != null) {
@@ -804,7 +829,9 @@ class KotAutoPrintService {
           continue;
         }
 
-        final tableNumberInt = WaiterCallRangeFilterService.parseTableToken(entry.tableNumber) ?? 0;
+        final tableNumberInt =
+            WaiterCallRangeFilterService.parseTableToken(entry.tableNumber) ??
+            0;
         bool shouldNotify = false;
 
         if (entry.targetWaiterId != null && entry.targetWaiterId!.isNotEmpty) {
@@ -863,10 +890,13 @@ class KotAutoPrintService {
     required String sectionName,
     required List<dynamic> cachedTables,
   }) {
-    final normalizedSearchSection = WaiterCallRangeFilterService.normalizeSection(sectionName);
+    final normalizedSearchSection =
+        WaiterCallRangeFilterService.normalizeSection(sectionName);
     for (final section in cachedTables) {
       if (section is! Map) continue;
-      final name = WaiterCallRangeFilterService.normalizeSection(section['name']?.toString() ?? 'General');
+      final name = WaiterCallRangeFilterService.normalizeSection(
+        section['name']?.toString() ?? 'General',
+      );
       if (name == normalizedSearchSection) {
         final allocations = section['waiterAllocations'];
         if (allocations is List && allocations.isNotEmpty) {
@@ -884,11 +914,14 @@ class KotAutoPrintService {
     required List<String> candidateKeys,
   }) {
     if (candidateKeys.isEmpty) return false;
-    final normalizedSearchSection = WaiterCallRangeFilterService.normalizeSection(sectionName);
+    final normalizedSearchSection =
+        WaiterCallRangeFilterService.normalizeSection(sectionName);
 
     for (final section in cachedTables) {
       if (section is! Map) continue;
-      final name = WaiterCallRangeFilterService.normalizeSection(section['name']?.toString() ?? 'General');
+      final name = WaiterCallRangeFilterService.normalizeSection(
+        section['name']?.toString() ?? 'General',
+      );
       if (name == normalizedSearchSection) {
         final allocations = section['waiterAllocations'];
         if (allocations is List) {
@@ -903,13 +936,19 @@ class KotAutoPrintService {
             if (waiterVal is String) {
               waiterId = waiterVal;
             } else if (waiterVal is Map) {
-              waiterId = (waiterVal['id'] ?? waiterVal['_id'] ?? '').toString().trim();
-              waiterName = (waiterVal['name'] ?? waiterVal['username'] ?? '').toString().trim().toLowerCase();
+              waiterId = (waiterVal['id'] ?? waiterVal['_id'] ?? '')
+                  .toString()
+                  .trim();
+              waiterName = (waiterVal['name'] ?? waiterVal['username'] ?? '')
+                  .toString()
+                  .trim()
+                  .toLowerCase();
             }
 
             for (final candidate in candidateKeys) {
               if (candidate.isNotEmpty &&
-                  (candidate == waiterId || candidate.toLowerCase() == waiterName)) {
+                  (candidate == waiterId ||
+                      candidate.toLowerCase() == waiterName)) {
                 return true;
               }
             }
@@ -951,7 +990,9 @@ class KotAutoPrintService {
       final callerRoleVal = match.groupCount >= 4 ? match.group(4) : null;
       final targetWaiterVal = match.groupCount >= 5 ? match.group(5) : null;
       final callerRole = callerRoleVal != null ? _toText(callerRoleVal) : null;
-      final targetWaiterId = targetWaiterVal != null ? _toText(targetWaiterVal) : null;
+      final targetWaiterId = targetWaiterVal != null
+          ? _toText(targetWaiterVal)
+          : null;
 
       if (timestampIso.isEmpty || tableNumber.isEmpty) {
         continue;
@@ -967,7 +1008,9 @@ class KotAutoPrintService {
           customerName: customerName,
           kotNumber: kotNumber,
           callerRole: callerRole?.isEmpty == true ? null : callerRole,
-          targetWaiterId: targetWaiterId?.isEmpty == true ? null : targetWaiterId,
+          targetWaiterId: targetWaiterId?.isEmpty == true
+              ? null
+              : targetWaiterId,
         ),
       );
     }

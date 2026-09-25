@@ -101,7 +101,9 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   final List<AutoSyncAlert> _websiteAlertQueue = [];
   final Set<String> _pendingWaiterEventKeys = <String>{};
   final Set<String> _resolvedWaiterEventKeys = <String>{};
-  static const MethodChannel _volumeChannel = MethodChannel('blackforest.app/volume');
+  static const MethodChannel _volumeChannel = MethodChannel(
+    'blackforest.app/volume',
+  );
   final AudioPlayer _waiterCallPlayer = AudioPlayer();
   WaiterCallAlertPayload? _activeWaiterCallPayload;
   Completer<void>? _activeWaiterCallCompleter;
@@ -209,8 +211,9 @@ class _CommonScaffoldState extends State<CommonScaffold> {
           final data = jsonDecode(threadRes.body);
           final docs = data['docs'] as List?;
           if (docs != null && docs.isNotEmpty) {
-            _cachedChatThreadId =
-                (docs.first['id'] ?? docs.first['_id'])?.toString().trim();
+            _cachedChatThreadId = (docs.first['id'] ?? docs.first['_id'])
+                ?.toString()
+                .trim();
           }
         }
       }
@@ -477,9 +480,9 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     if (dismissedPayload != null) {
       _resolvedWaiterEventKeys.add(dismissedPayload.eventKey);
       try {
-        await NotificationService()
-            .flutterLocalNotificationsPlugin
-            .cancel(id: dismissedPayload.eventKey.hashCode);
+        await NotificationService().flutterLocalNotificationsPlugin.cancel(
+          id: dismissedPayload.eventKey.hashCode,
+        );
       } catch (e) {
         debugPrint('Failed to cancel local notification: $e');
       }
@@ -536,7 +539,9 @@ class _CommonScaffoldState extends State<CommonScaffold> {
       return;
     }
 
-    final targetTableNum = WaiterCallRangeFilterService.parseTableToken(payload.tableNumber);
+    final targetTableNum = WaiterCallRangeFilterService.parseTableToken(
+      payload.tableNumber,
+    );
     final scannedTableNum = _extractTableNumberFromQr(scannedValue);
 
     if (targetTableNum != null && scannedTableNum == targetTableNum) {
@@ -572,7 +577,8 @@ class _CommonScaffoldState extends State<CommonScaffold> {
 
     final pathSegments = uri?.pathSegments ?? const <String>[];
     for (int i = 0; i < pathSegments.length - 1; i++) {
-      if (pathSegments[i].toLowerCase() == 'table' || pathSegments[i].toLowerCase() == 't') {
+      if (pathSegments[i].toLowerCase() == 'table' ||
+          pathSegments[i].toLowerCase() == 't') {
         final nextSeg = pathSegments[i + 1].trim();
         final parsed = int.tryParse(nextSeg);
         if (parsed != null && parsed > 0) return parsed;
@@ -3111,13 +3117,16 @@ class _KotPageState extends State<KotPage> {
     required List<String> candidateKeys,
   }) {
     if (candidateKeys.isEmpty) return false;
-    final normalizedSearchSection = WaiterCallRangeFilterService.normalizeSection(sectionName);
+    final normalizedSearchSection =
+        WaiterCallRangeFilterService.normalizeSection(sectionName);
 
     // 1. Check if the section even has any allocations.
     bool sectionHasAnyAllocations = false;
     for (final section in cachedTables) {
       if (section is! Map) continue;
-      final name = WaiterCallRangeFilterService.normalizeSection(section['name']?.toString() ?? 'General');
+      final name = WaiterCallRangeFilterService.normalizeSection(
+        section['name']?.toString() ?? 'General',
+      );
       if (name == normalizedSearchSection) {
         final allocations = section['waiterAllocations'];
         if (allocations is List && allocations.isNotEmpty) {
@@ -3135,7 +3144,9 @@ class _KotPageState extends State<KotPage> {
     // 2. Check if there is an allocation matching our waiter name/ID for this table.
     for (final section in cachedTables) {
       if (section is! Map) continue;
-      final name = WaiterCallRangeFilterService.normalizeSection(section['name']?.toString() ?? 'General');
+      final name = WaiterCallRangeFilterService.normalizeSection(
+        section['name']?.toString() ?? 'General',
+      );
       if (name == normalizedSearchSection) {
         final allocations = section['waiterAllocations'];
         if (allocations is List) {
@@ -3150,13 +3161,19 @@ class _KotPageState extends State<KotPage> {
             if (waiterVal is String) {
               waiterId = waiterVal;
             } else if (waiterVal is Map) {
-              waiterId = (waiterVal['id'] ?? waiterVal['_id'] ?? '').toString().trim();
-              waiterName = (waiterVal['name'] ?? waiterVal['username'] ?? '').toString().trim().toLowerCase();
+              waiterId = (waiterVal['id'] ?? waiterVal['_id'] ?? '')
+                  .toString()
+                  .trim();
+              waiterName = (waiterVal['name'] ?? waiterVal['username'] ?? '')
+                  .toString()
+                  .trim()
+                  .toLowerCase();
             }
 
             for (final candidate in candidateKeys) {
               if (candidate.isNotEmpty &&
-                  (candidate == waiterId || candidate.toLowerCase() == waiterName)) {
+                  (candidate == waiterId ||
+                      candidate.toLowerCase() == waiterName)) {
                 return true;
               }
             }
@@ -3676,12 +3693,14 @@ class _KotPageState extends State<KotPage> {
 
       if (cachedTables.isEmpty && branchId.isNotEmpty && token.isNotEmpty) {
         try {
-          final tablesResponse = await http.get(
-            Uri.parse(
-              'https://blackforest.vseyal.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
-            ),
-            headers: {'Authorization': 'Bearer $token'},
-          ).timeout(const Duration(seconds: 5));
+          final tablesResponse = await http
+              .get(
+                Uri.parse(
+                  'https://blackforest.vseyal.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
+                ),
+                headers: {'Authorization': 'Bearer $token'},
+              )
+              .timeout(const Duration(seconds: 5));
           if (tablesResponse.statusCode == 200) {
             final tablesData = jsonDecode(tablesResponse.body);
             final List<dynamic> allDocs = tablesData['docs'] ?? [];
@@ -3690,7 +3709,12 @@ class _KotPageState extends State<KotPage> {
               final List<dynamic> sections = branchDoc['sections'] ?? [];
               if (sections.isNotEmpty) {
                 cachedTables = sections;
-                unawaited(prefs.setString('cached_tables_$branchId', jsonEncode(sections)));
+                unawaited(
+                  prefs.setString(
+                    'cached_tables_$branchId',
+                    jsonEncode(sections),
+                  ),
+                );
               }
             }
           }
@@ -3745,7 +3769,7 @@ class _KotPageState extends State<KotPage> {
       for (final rawBill in bills) {
         final bill = _asMap(rawBill);
         if (bill.isEmpty) continue;
-        
+
         final isShared = _isSharedTableOrder(bill);
         if (!isShared) {
           if (!_matchesSelectedTableRange(bill, selectedTableRows)) continue;
@@ -3753,7 +3777,8 @@ class _KotPageState extends State<KotPage> {
           // Allocation Filter
           final sectionName = _resolveSectionForRangeFilter(bill);
           final tableNumStr = _resolveTableNumberTokenForRangeFilter(bill);
-          final tableNumber = WaiterCallRangeFilterService.parseTableToken(tableNumStr) ?? 0;
+          final tableNumber =
+              WaiterCallRangeFilterService.parseTableToken(tableNumStr) ?? 0;
           if (tableNumber > 0 && sectionName.isNotEmpty) {
             final isAllocated = _isTableAllocatedToMe(
               sectionName: sectionName,
@@ -4156,12 +4181,18 @@ class _KotPageState extends State<KotPage> {
                   .map((entry) => Map<String, dynamic>.from(entry))
                   .toList(growable: false);
           if (rawItems.isEmpty) {
-            rawItems = await _fetchBillItemsFromServer(activeItem.billId, token);
+            rawItems = await _fetchBillItemsFromServer(
+              activeItem.billId,
+              token,
+            );
           }
 
           var targetIndex = _findTargetItemIndex(rawItems, activeItem);
           if (targetIndex < 0) {
-            rawItems = await _fetchBillItemsFromServer(activeItem.billId, token);
+            rawItems = await _fetchBillItemsFromServer(
+              activeItem.billId,
+              token,
+            );
             targetIndex = _findTargetItemIndex(rawItems, activeItem);
             if (targetIndex < 0) {
               throw Exception(

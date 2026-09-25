@@ -226,7 +226,8 @@ class _TablePageState extends State<TablePage> {
       _branchId = prefs.getString('branchId');
       _branchName = prefs.getString('branchName')?.trim();
       _currentWaiterName = prefs.getString('user_name')?.trim();
-      _candidateWaiterKeys = WaiterCallRangeFilterService.resolveCandidateUserKeysFromPrefs(prefs);
+      _candidateWaiterKeys =
+          WaiterCallRangeFilterService.resolveCandidateUserKeysFromPrefs(prefs);
 
       // Load cached tables immediately to avoid the spinner
       final cachedTables = prefs.getString(
@@ -495,10 +496,7 @@ class _TablePageState extends State<TablePage> {
                 const SizedBox(height: 16),
                 const Text(
                   'Tables Pending Allocation',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 12),
                 Text(
@@ -506,10 +504,7 @@ class _TablePageState extends State<TablePage> {
                   '${unallocatedTables.join("\n")}\n\n'
                   'Please alert the concern person to assign them. Tapping orders will be enabled after all tables are allocated.',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    height: 1.5,
-                  ),
+                  style: const TextStyle(fontSize: 14, height: 1.5),
                 ),
                 const SizedBox(height: 24),
                 ElevatedButton.icon(
@@ -521,7 +516,10 @@ class _TablePageState extends State<TablePage> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.black,
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(8),
                     ),
@@ -630,7 +628,9 @@ class _TablePageState extends State<TablePage> {
     final normalizedSection = _normalizeSectionName(sectionName);
     for (final section in _tables) {
       if (section is! Map) continue;
-      final name = _normalizeSectionName(section['name']?.toString() ?? 'General');
+      final name = _normalizeSectionName(
+        section['name']?.toString() ?? 'General',
+      );
       if (name == normalizedSection) {
         final offlineTablesRaw = section['offlineTables'];
         if (offlineTablesRaw is List) {
@@ -649,7 +649,9 @@ class _TablePageState extends State<TablePage> {
     final normalizedSection = _normalizeSectionName(sectionName);
     for (final section in _tables) {
       if (section is! Map) continue;
-      final name = _normalizeSectionName(section['name']?.toString() ?? 'General');
+      final name = _normalizeSectionName(
+        section['name']?.toString() ?? 'General',
+      );
       if (name == normalizedSection) {
         final allocations = section['waiterAllocations'];
         if (allocations is List && allocations.isNotEmpty) {
@@ -660,12 +662,18 @@ class _TablePageState extends State<TablePage> {
     return false;
   }
 
-  bool _isTableAllocatedToMe(String sectionName, int tableNumber, List<String> candidateKeys) {
+  bool _isTableAllocatedToMe(
+    String sectionName,
+    int tableNumber,
+    List<String> candidateKeys,
+  ) {
     if (candidateKeys.isEmpty) return false;
     final normalizedSection = _normalizeSectionName(sectionName);
     for (final section in _tables) {
       if (section is! Map) continue;
-      final name = _normalizeSectionName(section['name']?.toString() ?? 'General');
+      final name = _normalizeSectionName(
+        section['name']?.toString() ?? 'General',
+      );
       if (name == normalizedSection) {
         final allocations = section['waiterAllocations'];
         if (allocations is List) {
@@ -680,13 +688,19 @@ class _TablePageState extends State<TablePage> {
             if (waiterVal is String) {
               waiterId = waiterVal;
             } else if (waiterVal is Map) {
-              waiterId = (waiterVal['id'] ?? waiterVal['_id'] ?? '').toString().trim();
-              waiterName = (waiterVal['name'] ?? waiterVal['username'] ?? '').toString().trim().toLowerCase();
+              waiterId = (waiterVal['id'] ?? waiterVal['_id'] ?? '')
+                  .toString()
+                  .trim();
+              waiterName = (waiterVal['name'] ?? waiterVal['username'] ?? '')
+                  .toString()
+                  .trim()
+                  .toLowerCase();
             }
 
             for (final candidate in candidateKeys) {
               if (candidate.isNotEmpty &&
-                  (candidate == waiterId || candidate.toLowerCase() == waiterName)) {
+                  (candidate == waiterId ||
+                      candidate.toLowerCase() == waiterName)) {
                 return true;
               }
             }
@@ -701,7 +715,9 @@ class _TablePageState extends State<TablePage> {
     final normalizedSection = _normalizeSectionName(sectionName);
     for (final section in _tables) {
       if (section is! Map) continue;
-      final name = _normalizeSectionName(section['name']?.toString() ?? 'General');
+      final name = _normalizeSectionName(
+        section['name']?.toString() ?? 'General',
+      );
       if (name == normalizedSection) {
         final allocations = section['waiterAllocations'];
         if (allocations is List) {
@@ -750,7 +766,9 @@ class _TablePageState extends State<TablePage> {
           if (waiterVal is String) {
             waiterId = waiterVal;
           } else if (waiterVal is Map) {
-            waiterId = (waiterVal['id'] ?? waiterVal['_id'] ?? '').toString().trim();
+            waiterId = (waiterVal['id'] ?? waiterVal['_id'] ?? '')
+                .toString()
+                .trim();
           }
           if (rawNum.isNotEmpty && waiterId.isNotEmpty) {
             allocatedTableSet.add(rawNum);
@@ -972,9 +990,16 @@ class _TablePageState extends State<TablePage> {
 
           final isOffline = _isTableOffline(categoryName, tableNumber);
           final hasAllocations = _sectionHasAllocations(categoryName);
-          final isAllocatedToMe = _isTableAllocatedToMe(categoryName, tableNumber, _candidateWaiterKeys);
+          final isAllocatedToMe = _isTableAllocatedToMe(
+            categoryName,
+            tableNumber,
+            _candidateWaiterKeys,
+          );
           final isLocked = hasAllocations && !isAllocatedToMe;
-          final assignedWaiterName = _getTableAssignedWaiterName(categoryName, tableNumber);
+          final assignedWaiterName = _getTableAssignedWaiterName(
+            categoryName,
+            tableNumber,
+          );
 
           return _buildTableTile(
             tableLabel: 'Table $tableNumber',
@@ -993,9 +1018,9 @@ class _TablePageState extends State<TablePage> {
                 final msg = assignedWaiterName != null
                     ? 'Table $tableNumber is allocated to $assignedWaiterName'
                     : 'Table $tableNumber is not allocated to you';
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(msg)),
-                );
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text(msg)));
                 return;
               }
               _handleTableTap(
@@ -1109,7 +1134,9 @@ class _TablePageState extends State<TablePage> {
           child: Container(
             clipBehavior: Clip.antiAlias,
             decoration: BoxDecoration(
-              color: isOffline || isLocked ? const Color(0xFFF5F5F5) : _getTableColor(runningBill),
+              color: isOffline || isLocked
+                  ? const Color(0xFFF5F5F5)
+                  : _getTableColor(runningBill),
               borderRadius: BorderRadius.circular(8),
               border: isOffline || isLocked
                   ? Border.all(color: const Color(0xFFE0E0E0), width: 1.2)
@@ -1153,7 +1180,9 @@ class _TablePageState extends State<TablePage> {
                               fontWeight: isRunning
                                   ? FontWeight.bold
                                   : FontWeight.w500,
-                              color: isOffline || isLocked ? Colors.grey[400] : Colors.black87,
+                              color: isOffline || isLocked
+                                  ? Colors.grey[400]
+                                  : Colors.black87,
                             ),
                           ),
                           if (isOffline) ...[
@@ -1179,7 +1208,9 @@ class _TablePageState extends State<TablePage> {
                                 const SizedBox(width: 2),
                                 Flexible(
                                   child: Text(
-                                    assignedWaiterName != null ? 'For $assignedWaiterName' : 'Locked',
+                                    assignedWaiterName != null
+                                        ? 'For $assignedWaiterName'
+                                        : 'Locked',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
@@ -1244,11 +1275,15 @@ class _TablePageState extends State<TablePage> {
                         alignment: Alignment.center,
                         child: Text(
                           (() {
-                            final name = _extractCustomerNameForHistory(runningBill);
+                            final name = _extractCustomerNameForHistory(
+                              runningBill,
+                            );
                             if (name != null && name.isNotEmpty) {
                               return name.toUpperCase();
                             }
-                            return isExistingCustomer ? 'EXISTING CUSTOMER' : 'NEW CUSTOMER';
+                            return isExistingCustomer
+                                ? 'EXISTING CUSTOMER'
+                                : 'NEW CUSTOMER';
                           })(),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -1354,7 +1389,7 @@ class _TablePageState extends State<TablePage> {
 
     if (runningBill is Map) {
       final bill = Map<String, dynamic>.from(runningBill);
-      
+
       bool hasSourceHint(dynamic value) {
         final normalized = value?.toString().trim().toLowerCase() ?? '';
         if (normalized.isEmpty) return false;
@@ -1366,16 +1401,33 @@ class _TablePageState extends State<TablePage> {
 
       bool containsQrHints(Map<String, dynamic> b) {
         const boolKeys = [
-          'isQrOrder', 'isQRorder', 'isQR', 'qrOrder',
-          'isWebsiteOrder', 'websiteOrder', 'isWebOrder', 'isOnlineOrder',
+          'isQrOrder',
+          'isQRorder',
+          'isQR',
+          'qrOrder',
+          'isWebsiteOrder',
+          'websiteOrder',
+          'isWebOrder',
+          'isOnlineOrder',
         ];
         const sourceKeys = [
-          'source', 'orderSource', 'sourceType', 'orderChannel',
-          'channel', 'origin', 'platform', 'placedVia', 'createdFrom', 'mode',
+          'source',
+          'orderSource',
+          'sourceType',
+          'orderChannel',
+          'channel',
+          'origin',
+          'platform',
+          'placedVia',
+          'createdFrom',
+          'mode',
         ];
         for (final key in boolKeys) {
           final val = b[key];
-          if (val == true || val?.toString().toLowerCase() == 'true' || val?.toString() == '1') return true;
+          if (val == true ||
+              val?.toString().toLowerCase() == 'true' ||
+              val?.toString() == '1')
+            return true;
         }
         for (final key in sourceKeys) {
           if (hasSourceHint(b[key])) return true;
@@ -1383,20 +1435,25 @@ class _TablePageState extends State<TablePage> {
         return false;
       }
 
-      final doc = bill['doc'] is Map ? Map<String, dynamic>.from(bill['doc']) : <String, dynamic>{};
-      
+      final doc = bill['doc'] is Map
+          ? Map<String, dynamic>.from(bill['doc'])
+          : <String, dynamic>{};
+
       String? resolvedWaiterName;
       bool isBranchRole = false;
       final createdBy = runningBill['createdBy'];
       if (createdBy is Map) {
         final user = Map<String, dynamic>.from(createdBy);
         isBranchRole = user['role']?.toString().toLowerCase() == 'branch';
-        resolvedWaiterName = [
-          user['name'],
-          user['username'],
-          user['fullName'],
-          user['displayName'],
-        ].map(readText).firstWhere((value) => value.isNotEmpty, orElse: () => '');
+        resolvedWaiterName =
+            [
+                  user['name'],
+                  user['username'],
+                  user['fullName'],
+                  user['displayName'],
+                ]
+                .map(readText)
+                .firstWhere((value) => value.isNotEmpty, orElse: () => '');
         if (resolvedWaiterName.isEmpty) {
           final employee = user['employee'];
           if (employee is Map) {
@@ -1405,40 +1462,55 @@ class _TablePageState extends State<TablePage> {
         }
       }
       if (resolvedWaiterName == null || resolvedWaiterName.isEmpty) {
-        resolvedWaiterName = [
-          runningBill['createdByName'],
-          runningBill['waiterName'],
-          runningBill['assignedBy'],
-        ].map(readText).firstWhere((value) => value.isNotEmpty, orElse: () => '');
+        resolvedWaiterName =
+            [
+                  runningBill['createdByName'],
+                  runningBill['waiterName'],
+                  runningBill['assignedBy'],
+                ]
+                .map(readText)
+                .firstWhere((value) => value.isNotEmpty, orElse: () => '');
       }
 
-      final isBranchOrder = isBranchRole || (_branchName != null &&
-          _branchName!.isNotEmpty &&
-          resolvedWaiterName != null &&
-          resolvedWaiterName.toLowerCase() == _branchName!.toLowerCase());
-          
-      final isQrOrder = containsQrHints(bill) || containsQrHints(doc) || isBranchOrder;
+      final isBranchOrder =
+          isBranchRole ||
+          (_branchName != null &&
+              _branchName!.isNotEmpty &&
+              resolvedWaiterName != null &&
+              resolvedWaiterName.toLowerCase() == _branchName!.toLowerCase());
+
+      final isQrOrder =
+          containsQrHints(bill) || containsQrHints(doc) || isBranchOrder;
 
       if (isQrOrder) {
         String? custName;
-        final customerDetails = bill['customerDetails'] ?? doc['customerDetails'];
-        if (customerDetails is Map && customerDetails['name'] != null && customerDetails['name'].toString().trim().isNotEmpty) {
+        final customerDetails =
+            bill['customerDetails'] ?? doc['customerDetails'];
+        if (customerDetails is Map &&
+            customerDetails['name'] != null &&
+            customerDetails['name'].toString().trim().isNotEmpty) {
           custName = customerDetails['name'].toString().trim();
-        } else if (bill['customerName'] != null && bill['customerName'].toString().trim().isNotEmpty) {
+        } else if (bill['customerName'] != null &&
+            bill['customerName'].toString().trim().isNotEmpty) {
           custName = bill['customerName'].toString().trim();
-        } else if (doc['customerName'] != null && doc['customerName'].toString().trim().isNotEmpty) {
+        } else if (doc['customerName'] != null &&
+            doc['customerName'].toString().trim().isNotEmpty) {
           custName = doc['customerName'].toString().trim();
-        } else if (doc['name'] != null && doc['name'].toString().trim().isNotEmpty) {
+        } else if (doc['name'] != null &&
+            doc['name'].toString().trim().isNotEmpty) {
           custName = doc['name'].toString().trim();
-        } else if (bill['name'] != null && bill['name'].toString().trim().isNotEmpty) {
+        } else if (bill['name'] != null &&
+            bill['name'].toString().trim().isNotEmpty) {
           custName = bill['name'].toString().trim();
         }
 
-        if (custName != null && custName.isNotEmpty && custName.toLowerCase() != 'unknown') {
+        if (custName != null &&
+            custName.isNotEmpty &&
+            custName.toLowerCase() != 'unknown') {
           return custName;
         }
       }
-      
+
       if (resolvedWaiterName != null && resolvedWaiterName.isNotEmpty) {
         return resolvedWaiterName;
       }
@@ -1845,12 +1917,18 @@ class _TablePageState extends State<TablePage> {
       final rawTableNumber = tableDetails['tableNumber']?.toString() ?? '';
       final tableNumberStr = rawTableNumber.split('-S-').first;
       final tableNumberInt = int.tryParse(tableNumberStr) ?? 0;
-      final sectionName = tableDetails['section']?.toString() ?? CartProvider.sharedTablesSectionName;
+      final sectionName =
+          tableDetails['section']?.toString() ??
+          CartProvider.sharedTablesSectionName;
 
       final hasAllocations = _sectionHasAllocations(sectionName);
       if (!hasAllocations) return true;
 
-      return _isTableAllocatedToMe(sectionName, tableNumberInt, _candidateWaiterKeys);
+      return _isTableAllocatedToMe(
+        sectionName,
+        tableNumberInt,
+        _candidateWaiterKeys,
+      );
     }).toList();
 
     return Column(
@@ -1954,51 +2032,58 @@ class _TablePageState extends State<TablePage> {
           sectionName: sectionName,
         );
 
-          final isOffline = _isTableOffline(sectionName, tableNumber);
-          final hasAllocations = _sectionHasAllocations(sectionName);
-          final isAllocatedToMe = _isTableAllocatedToMe(sectionName, tableNumber, _candidateWaiterKeys);
-          final isLocked = hasAllocations && !isAllocatedToMe;
-          final assignedWaiterName = _getTableAssignedWaiterName(sectionName, tableNumber);
+        final isOffline = _isTableOffline(sectionName, tableNumber);
+        final hasAllocations = _sectionHasAllocations(sectionName);
+        final isAllocatedToMe = _isTableAllocatedToMe(
+          sectionName,
+          tableNumber,
+          _candidateWaiterKeys,
+        );
+        final isLocked = hasAllocations && !isAllocatedToMe;
+        final assignedWaiterName = _getTableAssignedWaiterName(
+          sectionName,
+          tableNumber,
+        );
 
-          return _buildTableTile(
-            tableLabel: 'Table $tableNumber',
-            runningBill: runningBill,
-            isOffline: isOffline,
-            isLocked: isLocked,
-            assignedWaiterName: assignedWaiterName,
-            onTap: () {
-              if (isOffline) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('This table is offline')),
-                );
-                return;
-              }
-              if (isLocked) {
-                final msg = assignedWaiterName != null
-                    ? 'Table $tableNumber is allocated to $assignedWaiterName'
-                    : 'Table $tableNumber is not allocated to you';
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(msg)),
-                );
-                return;
-              }
-              _handleTableTap(
-                runningBill,
-                tableNumber,
-                sectionName,
-                openCart: false,
+        return _buildTableTile(
+          tableLabel: 'Table $tableNumber',
+          runningBill: runningBill,
+          isOffline: isOffline,
+          isLocked: isLocked,
+          assignedWaiterName: assignedWaiterName,
+          onTap: () {
+            if (isOffline) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('This table is offline')),
               );
-            },
-            onDoubleTap: () {
-              if (isOffline || isLocked) return;
-              _handleTableTap(
-                runningBill,
-                tableNumber,
-                sectionName,
-                openCart: true,
-              );
-            },
-          );
+              return;
+            }
+            if (isLocked) {
+              final msg = assignedWaiterName != null
+                  ? 'Table $tableNumber is allocated to $assignedWaiterName'
+                  : 'Table $tableNumber is not allocated to you';
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text(msg)));
+              return;
+            }
+            _handleTableTap(
+              runningBill,
+              tableNumber,
+              sectionName,
+              openCart: false,
+            );
+          },
+          onDoubleTap: () {
+            if (isOffline || isLocked) return;
+            _handleTableTap(
+              runningBill,
+              tableNumber,
+              sectionName,
+              openCart: true,
+            );
+          },
+        );
       },
     );
   }
@@ -3358,9 +3443,9 @@ class _TablePageState extends State<TablePage> {
               ? productGstPercent
               : CartItem.parsePercent(
                   itemMap['gstRate'] ??
-                  itemMap['gstPercent'] ??
-                  itemMap['gst'] ??
-                  itemMap['taxPercent'],
+                      itemMap['gstPercent'] ??
+                      itemMap['gst'] ??
+                      itemMap['taxPercent'],
                 );
           final lineSubtotal = isRandomCustomerOfferItem
               ? 0.0
@@ -3369,7 +3454,9 @@ class _TablePageState extends State<TablePage> {
               : taxableValue != null
               ? taxableValue
               : explicitLineTotal != null && explicitLineTotal > 0
-              ? (gstPercent > 0 ? (explicitLineTotal * 100) / (100 + gstPercent) : explicitLineTotal)
+              ? (gstPercent > 0
+                    ? (explicitLineTotal * 100) / (100 + gstPercent)
+                    : explicitLineTotal)
               : expectedLineTotalFromPrice > 0
               ? expectedLineTotalFromPrice
               : subtotalValue;

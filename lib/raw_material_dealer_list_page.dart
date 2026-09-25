@@ -9,7 +9,8 @@ class RawMaterialDealerListPage extends StatefulWidget {
   const RawMaterialDealerListPage({super.key});
 
   @override
-  State<RawMaterialDealerListPage> createState() => _RawMaterialDealerListPageState();
+  State<RawMaterialDealerListPage> createState() =>
+      _RawMaterialDealerListPageState();
 }
 
 class _RawMaterialDealerListPageState extends State<RawMaterialDealerListPage> {
@@ -167,45 +168,43 @@ class _RawMaterialDealerListPageState extends State<RawMaterialDealerListPage> {
           Expanded(
             child: _isLoading
                 ? const Center(
-                    child: CircularProgressIndicator(
-                      color: Color(0xFF2E7D32),
-                    ),
+                    child: CircularProgressIndicator(color: Color(0xFF2E7D32)),
                   )
                 : filtered.isEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.storefront,
-                              size: 72,
-                              color: Colors.grey.shade400,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              _searchQuery.isEmpty
-                                  ? 'No dealers available'
-                                  : 'No matching dealers found',
-                              style: TextStyle(
-                                fontSize: 16,
-                                color: Colors.grey.shade600,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ],
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.storefront,
+                          size: 72,
+                          color: Colors.grey.shade400,
                         ),
-                      )
-                    : RefreshIndicator(
-                        onRefresh: _loadDealers,
-                        color: const Color(0xFF2E7D32),
-                        child: ListView.builder(
-                          padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
-                          itemCount: filtered.length,
-                          itemBuilder: (context, index) {
-                            return _buildDealerCard(filtered[index]);
-                          },
+                        const SizedBox(height: 16),
+                        Text(
+                          _searchQuery.isEmpty
+                              ? 'No dealers available'
+                              : 'No matching dealers found',
+                          style: TextStyle(
+                            fontSize: 16,
+                            color: Colors.grey.shade600,
+                            fontWeight: FontWeight.w500,
+                          ),
                         ),
-                      ),
+                      ],
+                    ),
+                  )
+                : RefreshIndicator(
+                    onRefresh: _loadDealers,
+                    color: const Color(0xFF2E7D32),
+                    child: ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
+                      itemCount: filtered.length,
+                      itemBuilder: (context, index) {
+                        return _buildDealerCard(filtered[index]);
+                      },
+                    ),
+                  ),
           ),
         ],
       ),
@@ -213,9 +212,7 @@ class _RawMaterialDealerListPageState extends State<RawMaterialDealerListPage> {
         onPressed: () {
           Navigator.push(
             context,
-            MaterialPageRoute(
-              builder: (_) => const RawMaterialBillingPage(),
-            ),
+            MaterialPageRoute(builder: (_) => const RawMaterialBillingPage()),
           );
         },
         backgroundColor: const Color(0xFF2E7D32),
@@ -234,9 +231,7 @@ class _RawMaterialDealerListPageState extends State<RawMaterialDealerListPage> {
     return Card(
       elevation: 1,
       margin: const EdgeInsets.symmetric(vertical: 6),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: () {

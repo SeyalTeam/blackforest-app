@@ -826,8 +826,6 @@ class _EmployeeSettingsPageState extends State<EmployeeSettingsPage> {
     );
   }
 
-
-
   Widget _buildBranchRadiusStatusCard() {
     final isLocationReady =
         !_isCheckingLocation && _isLocationEnabled && _hasLocationPermission;

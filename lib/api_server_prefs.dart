@@ -22,8 +22,6 @@ bool get isApiRoutingPrimaryOnlyMode => _isApiRoutingPrimaryOnlyMode;
 List<String> get runtimeApiFallbackHosts =>
     List<String>.unmodifiable(_runtimeApiFallbackHosts);
 
-
-
 String _normalizeHost(String? value) {
   var normalized = (value ?? '').trim().toLowerCase();
   if (normalized.isEmpty) return '';
@@ -54,12 +52,6 @@ bool isKnownApiHost(String host) {
   final normalized = _normalizeHost(host);
   return normalized == apiHostPrimary;
 }
-
-
-
-
-
-
 
 Future<Map<String, bool>> loadApiServerSelections({
   SharedPreferences? prefs,

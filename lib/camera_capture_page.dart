@@ -126,9 +126,7 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
   Future<void> _capturePhoto() async {
     final controller = _controller;
-    if (controller == null ||
-        !controller.value.isInitialized ||
-        _isCapturing) {
+    if (controller == null || !controller.value.isInitialized || _isCapturing) {
       return;
     }
 
@@ -151,7 +149,8 @@ class _CameraCapturePageState extends State<CameraCapturePage>
 
   @override
   Widget build(BuildContext context) {
-    final isFrontCamera = _availableCameras.isNotEmpty &&
+    final isFrontCamera =
+        _availableCameras.isNotEmpty &&
         _availableCameras[_selectedCameraIndex].lensDirection ==
             CameraLensDirection.front;
 
