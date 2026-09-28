@@ -1,9 +1,7 @@
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import 'api_server_prefs.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'api_config.dart';
 
 class GeofenceResult {
   final bool isInside;
@@ -87,9 +85,8 @@ class GeofenceUtil {
     }
 
     try {
-      final data = await fetchBranchGeoSettings(
-        (await SharedPreferences.getInstance()).getString('token') ?? '',
-      );
+      final prefs = await SharedPreferences.getInstance();
+      final data = await ApiConfig.fetchBranchGeoSettings(prefs.getString('token') ?? '');
       final locations = data['locations'] as List?;
       if (locations != null && locations.isNotEmpty) {
         double nearestDistance = double.infinity;
@@ -198,24 +195,4 @@ class GeofenceUtil {
 
     return result.isInside;
   }
-}
-
-Future<Map<String, dynamic>> fetchBranchGeoSettings(String token) async {
-  try {
-    final response = await http.get(
-      Uri.parse('https://blackforest.vseyal.com/api/globals/branchGeoSettings'),
-      headers: token.isNotEmpty
-          ? {
-              'Authorization': 'Bearer $token',
-              'Content-Type': 'application/json',
-            }
-          : {'Content-Type': 'application/json'},
-    );
-    if (response.statusCode == 200) {
-      return json.decode(response.body);
-    }
-  } catch (e) {
-    debugPrint('fetchBranchGeoSettings error: $e');
-  }
-  return {};
 }

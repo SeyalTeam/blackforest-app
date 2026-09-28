@@ -3,10 +3,9 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
-import 'api_server_prefs.dart';
+import 'api_config.dart';
 import 'geofence_util.dart';
 
 class AttendanceManager {
@@ -97,7 +96,7 @@ class AttendanceManager {
       final queryDateStr = DateFormat('yyyy-MM-dd').format(localMidnight);
 
       final url =
-          'https://blackforest.vseyal.com/api/attendance?where[user][equals]=$userId&where[date][greater_than_equal]=$queryDate&sort=-date&limit=5';
+          '${ApiConfig.baseUrl}/attendance?where[user][equals]=$userId&where[date][greater_than_equal]=$queryDate&sort=-date&limit=5';
 
       final response = await http
           .get(
@@ -156,7 +155,7 @@ class AttendanceManager {
           try {
             await http.patch(
               Uri.parse(
-                'https://blackforest.vseyal.com/api/attendance/${doc['id']}',
+                '${ApiConfig.baseUrl}/attendance/${doc['id']}',
               ),
               headers: {
                 'Authorization': 'Bearer $token',
@@ -247,7 +246,7 @@ class AttendanceManager {
             activeSession['punchOutType'] = 'auto';
 
             final patchUrl =
-                'https://blackforest.vseyal.com/api/attendance/$docId';
+                '${ApiConfig.baseUrl}/attendance/$docId';
             final patchRes = await http.patch(
               Uri.parse(patchUrl),
               headers: {
@@ -319,7 +318,7 @@ class AttendanceManager {
             final updatedActivities = List<dynamic>.from(rawActivities)
               ..add(newActivity);
             final patchUrl =
-                'https://blackforest.vseyal.com/api/attendance/$docId';
+                '${ApiConfig.baseUrl}/attendance/$docId';
             final patchRes = await http.patch(
               Uri.parse(patchUrl),
               headers: {
@@ -355,7 +354,7 @@ class AttendanceManager {
             }
           } else {
             // Create new today document
-            final postUrl = 'https://blackforest.vseyal.com/api/attendance';
+            final postUrl = '${ApiConfig.baseUrl}/attendance';
             final postRes = await http.post(
               Uri.parse(postUrl),
               headers: {
