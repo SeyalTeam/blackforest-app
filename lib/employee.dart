@@ -38,7 +38,7 @@ typedef ProfilePage = EmployeePage;
 
 class _EmployeePageState extends State<EmployeePage> {
   final _storage = const FlutterSecureStorage();
-  bool _profileLoading = true;
+  bool _profileLoading = false;
   String? _employeeName;
   String? _employeeRole;
   List<String> _managerCompanyNames = [];
@@ -112,17 +112,83 @@ class _EmployeePageState extends State<EmployeePage> {
       final cachedRole = (await _storage.read(key: 'userRole')) ??
           prefs.getString('userRole') ??
           prefs.getString('role');
+      final cachedKitchenName = await _storage.read(key: 'userKitchenName');
+      final cachedBranchName = await _storage.read(key: 'userBranchName');
+      final cachedEmpId = await _storage.read(key: 'employeeId');
+      final cachedCompaniesStr = await _storage.read(key: 'managerCompanyNames');
+      final cachedHasPhotoStr = await _storage.read(key: 'activeSessionHasPhoto');
+      final cachedPunchIn = await _storage.read(key: 'activePunchIn');
+      final cachedPastSecsStr = await _storage.read(key: 'pastWorkSeconds');
+      final cachedBreakSecsStr = await _storage.read(key: 'totalBreakSeconds');
+
+      Duration initialWorkDuration = Duration.zero;
+      Duration initialBreakDuration = Duration.zero;
+      bool hasCachedActive = false;
+
+      if (cachedPunchIn != null && cachedPunchIn.isNotEmpty) {
+        final activeStart = DateTime.tryParse(cachedPunchIn)?.toLocal();
+        if (activeStart != null) {
+          final now = DateTime.now();
+          final localMidnight = DateTime(now.year, now.month, now.day);
+          if (activeStart.isAfter(localMidnight)) {
+            final pastWorkSecs = int.tryParse(cachedPastSecsStr ?? '0') ?? 0;
+            final pastWork = Duration(seconds: pastWorkSecs);
+            initialWorkDuration = pastWork + DateTime.now().difference(activeStart);
+            hasCachedActive = true;
+
+            _timer?.cancel();
+            _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+              if (!mounted) return;
+              setState(() {
+                _workDuration =
+                    pastWork + DateTime.now().difference(activeStart);
+              });
+            });
+          }
+        }
+      }
+
+      if (cachedBreakSecsStr != null) {
+        final breakSecs = int.tryParse(cachedBreakSecsStr) ?? 0;
+        if (breakSecs > 0) {
+          initialBreakDuration = Duration(seconds: breakSecs);
+        }
+      }
 
       if (mounted) {
         setState(() {
           _employeeName = cachedName;
           _employeeRole = cachedRole;
+          if (cachedKitchenName != null && cachedKitchenName.isNotEmpty) {
+            _branchName = cachedKitchenName;
+          }
+          if (cachedBranchName != null && cachedBranchName.isNotEmpty) {
+            _branchName = cachedBranchName;
+          }
+          if (cachedEmpId != null && cachedEmpId.isNotEmpty) {
+            _employeeId = cachedEmpId;
+          }
+          if (cachedCompaniesStr != null && cachedCompaniesStr.isNotEmpty) {
+            _managerCompanyNames = cachedCompaniesStr.split('||');
+          }
+          if (cachedHasPhotoStr != null) {
+            _activeSessionHasPhoto = cachedHasPhotoStr == 'true';
+          }
+          if (initialBreakDuration > Duration.zero) {
+            _breakDuration = initialBreakDuration;
+          }
+          if (hasCachedActive) {
+            _workDuration = initialWorkDuration;
+            _hasActiveSession = true;
+          }
         });
       }
 
-      await _fetchEmployeeProfile();
-      await _fetchAttendance();
-      await _fetchDailyTasks();
+      await Future.wait([
+        _fetchEmployeeProfile(),
+        _fetchAttendance(),
+        _fetchDailyTasks(),
+      ]);
     } catch (e) {
       debugPrint('Error loading employee data: $e');
     } finally {
@@ -196,6 +262,15 @@ class _EmployeePageState extends State<EmployeePage> {
               }
             }
           }
+        }
+
+        if (code != null) await _storage.write(key: 'employeeId', value: code);
+        if (bName != null) await _storage.write(key: 'userBranchName', value: bName);
+        if (companyNames.isNotEmpty) {
+          await _storage.write(
+            key: 'managerCompanyNames',
+            value: companyNames.join('||'),
+          );
         }
 
         if (mounted) {
@@ -436,6 +511,8 @@ class _EmployeePageState extends State<EmployeePage> {
               final activeStart = punchIn;
               final pastWork =
                   totalWork - DateTime.now().difference(activeStart);
+              _storage.write(key: 'activePunchIn', value: activeStart.toIso8601String());
+              _storage.write(key: 'pastWorkSeconds', value: pastWork.inSeconds.toString());
               _timer?.cancel();
               _timer = Timer.periodic(const Duration(seconds: 1), (_) {
                 if (!mounted) return;
@@ -473,7 +550,11 @@ class _EmployeePageState extends State<EmployeePage> {
 
       if (!activeSessionFound) {
         _timer?.cancel();
+        await _storage.delete(key: 'activePunchIn');
+        await _storage.delete(key: 'pastWorkSeconds');
       }
+      await _storage.write(key: 'totalBreakSeconds', value: totalBreak.inSeconds.toString());
+      await _storage.write(key: 'activeSessionHasPhoto', value: activePhotoFound.toString());
 
       if (!mounted) return;
       setState(() {
@@ -1404,9 +1485,15 @@ class _EmployeePageState extends State<EmployeePage> {
         width: double.infinity,
         height: double.infinity,
         color: const Color(0xFFF8F9FA),
-        child: _profileLoading
-            ? const Center(child: CircularProgressIndicator(color: Colors.blue))
-            : RefreshIndicator(
+        child: AnimatedCrossFade(
+          duration: const Duration(milliseconds: 250),
+          crossFadeState: _profileLoading
+              ? CrossFadeState.showFirst
+              : CrossFadeState.showSecond,
+          firstChild: const Center(
+            child: CircularProgressIndicator(color: Colors.blue),
+          ),
+          secondChild: RefreshIndicator(
                 onRefresh: () async {
                   await _fetchEmployeeProfile();
                   await _fetchAttendance();
@@ -1507,73 +1594,79 @@ class _EmployeePageState extends State<EmployeePage> {
                           ],
                         ),
                       ),
-                      if (_hasActiveSession && !_activeSessionHasPhoto) ...[
-                        const SizedBox(height: 12),
-                        GestureDetector(
-                          onTap: _attachSelfieToActiveSession,
-                          child: Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 10,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFFEBEE),
-                              borderRadius: BorderRadius.circular(14),
-                              border: Border.all(
-                                color: Colors.redAccent,
-                                width: 1.5,
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.all(7),
-                                  decoration: const BoxDecoration(
-                                    color: Colors.red,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: const Icon(
-                                    Icons.warning_amber_rounded,
-                                    color: Colors.white,
-                                    size: 18,
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                const Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Selfie Required for Punch-In',
-                                        style: TextStyle(
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOut,
+                        child: (_hasActiveSession && !_activeSessionHasPhoto)
+                            ? Padding(
+                                padding: const EdgeInsets.only(top: 12),
+                                child: GestureDetector(
+                                  onTap: _attachSelfieToActiveSession,
+                                  child: Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 10,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFFEBEE),
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(
+                                        color: Colors.redAccent,
+                                        width: 1.5,
+                                      ),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(7),
+                                          decoration: const BoxDecoration(
+                                            color: Colors.red,
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: const Icon(
+                                            Icons.warning_amber_rounded,
+                                            color: Colors.white,
+                                            size: 18,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        const Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                'Selfie Required for Punch-In',
+                                                style: TextStyle(
+                                                  color: Colors.red,
+                                                  fontWeight: FontWeight.bold,
+                                                  fontSize: 14,
+                                                ),
+                                              ),
+                                              SizedBox(height: 2),
+                                              Text(
+                                                'Tap here to add selfie. Punch-out is blocked until added.',
+                                                style: TextStyle(
+                                                  color: Colors.black87,
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        const Icon(
+                                          Icons.camera_alt,
                                           color: Colors.red,
-                                          fontWeight: FontWeight.bold,
-                                          fontSize: 14,
+                                          size: 20,
                                         ),
-                                      ),
-                                      SizedBox(height: 2),
-                                      Text(
-                                        'Tap here to add selfie. Punch-out is blocked until added.',
-                                        style: TextStyle(
-                                          color: Colors.black87,
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                    ],
+                                      ],
+                                    ),
                                   ),
                                 ),
-                                const Icon(
-                                  Icons.camera_alt,
-                                  color: Colors.red,
-                                  size: 20,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ],
+                              )
+                            : const SizedBox.shrink(),
+                      ),
                       const SizedBox(height: 15),
                       Wrap(
                         alignment: WrapAlignment.center,
@@ -1897,62 +1990,68 @@ class _EmployeePageState extends State<EmployeePage> {
                         const SizedBox(height: 16),
                       ],
 
-                      if (_breakDuration > Duration.zero) ...[
-                        SizedBox(
-                          height: 52,
-                          child: Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.symmetric(horizontal: 20),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFFFE0B2),
-                              borderRadius: BorderRadius.circular(16),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.orange.withValues(alpha: 0.15),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 3),
-                                ),
-                              ],
-                            ),
-                            child: Row(
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.all(7),
-                                  decoration: BoxDecoration(
-                                    color: Colors.orange[800],
-                                    shape: BoxShape.circle,
+                      AnimatedSize(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeInOut,
+                        child: (_breakDuration > Duration.zero)
+                            ? Padding(
+                                padding: const EdgeInsets.only(bottom: 16),
+                                child: SizedBox(
+                                  height: 52,
+                                  child: Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFFE0B2),
+                                      borderRadius: BorderRadius.circular(16),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.orange.withValues(alpha: 0.15),
+                                          blurRadius: 8,
+                                          offset: const Offset(0, 3),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          padding: const EdgeInsets.all(7),
+                                          decoration: BoxDecoration(
+                                            color: Colors.orange[800],
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: const Icon(
+                                            Icons.coffee,
+                                            color: Colors.white,
+                                            size: 18,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 14),
+                                        Text(
+                                          'Total Break  ',
+                                          style: TextStyle(
+                                            color: Colors.orange[900],
+                                            fontWeight: FontWeight.w600,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                        const Spacer(),
+                                        Text(
+                                          '${_formatTwoDigits(_breakDuration.inHours)}h : ${_formatTwoDigits(_breakDuration.inMinutes % 60)}m',
+                                          style: TextStyle(
+                                            color: Colors.orange[900],
+                                            fontWeight: FontWeight.w900,
+                                            fontSize: 22,
+                                            letterSpacing: 1.5,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                  child: const Icon(
-                                    Icons.coffee,
-                                    color: Colors.white,
-                                    size: 18,
-                                  ),
                                 ),
-                                const SizedBox(width: 14),
-                                Text(
-                                  'Total Break  ',
-                                  style: TextStyle(
-                                    color: Colors.orange[900],
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                                const Spacer(),
-                                Text(
-                                  '${_formatTwoDigits(_breakDuration.inHours)}h : ${_formatTwoDigits(_breakDuration.inMinutes % 60)}m',
-                                  style: TextStyle(
-                                    color: Colors.orange[900],
-                                    fontWeight: FontWeight.w900,
-                                    fontSize: 22,
-                                    letterSpacing: 1.5,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                      ],
+                              )
+                            : const SizedBox.shrink(),
+                      ),
 
                       SizedBox(
                         width: double.infinity,
@@ -2081,8 +2180,9 @@ class _EmployeePageState extends State<EmployeePage> {
                   ),
                 ),
               ),
-      ),
-    );
+            ),
+          ),
+        );
   }
 
   void _showActivitiesBottomSheet(BuildContext context) {
