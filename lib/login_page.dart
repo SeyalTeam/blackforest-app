@@ -427,8 +427,6 @@ class _LoginPageState extends State<LoginPage> {
 
             final geoResult = await GeofenceUtil.checkLocationAndGeofence(
               existingPosition: loginPosition,
-              targetBranchId: (userRole == 'manager' || branchId.isEmpty) ? null : branchId,
-              targetBranchName: (userRole == 'manager' || branchName.isEmpty) ? null : branchName,
             );
 
             if (!geoResult.isInside) {
@@ -458,9 +456,8 @@ class _LoginPageState extends State<LoginPage> {
               return; // STRICTLY BLOCK LOGIN! Do not save session or navigate.
             }
 
-            // If user is manager or account had no branch pre-assigned, bind to current physical branch
-            if ((branchId.isEmpty || userRole == 'manager') &&
-                geoResult.branchId != null &&
+            // Bind to current physical branch
+            if (geoResult.branchId != null &&
                 geoResult.branchId!.isNotEmpty) {
               branchId = geoResult.branchId!;
               if (geoResult.branchName != null && geoResult.branchName!.isNotEmpty) {
