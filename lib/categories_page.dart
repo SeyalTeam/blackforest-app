@@ -1522,7 +1522,7 @@ class _CategoriesPageState extends State<CategoriesPage> {
   Future<void> _fetchUserData(String token) async {
     try {
       final response = await http.get(
-        Uri.parse('https://blackforest.vseyal.com/api/users/me?depth=2'),
+        Uri.parse('https://blackforest.vseyal.com/api/users/me?depth=0'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {

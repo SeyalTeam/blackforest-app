@@ -168,7 +168,7 @@ class _CartPageState extends State<CartPage> {
   }
 
   void _startPolling() {
-    _refreshTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+    _refreshTimer = Timer.periodic(const Duration(seconds: 60), (timer) {
       if (mounted) {
         final cartProvider = Provider.of<CartProvider>(context, listen: false);
         if (cartProvider.recalledBillId != null) {
@@ -1560,7 +1560,7 @@ class _CartPageState extends State<CartPage> {
               now.day,
             ).toUtc().toIso8601String();
             final urlString =
-                'https://blackforest.vseyal.com/api/billings?where[branch][equals]=$resolvedBranchId&where[status][in]=pending,ordered,confirmed,prepared&where[createdAt][greater_than_equal]=$todayStart&limit=150&depth=2';
+                'https://blackforest.vseyal.com/api/billings?where[branch][equals]=$resolvedBranchId&where[status][in]=pending,ordered,confirmed,prepared&where[createdAt][greater_than_equal]=$todayStart&limit=30&depth=1';
             final tablesUrlString =
                 'https://blackforest.vseyal.com/api/tables?where[branch][equals]=$resolvedBranchId&limit=1&depth=1';
 

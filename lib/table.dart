@@ -35,7 +35,7 @@ class _TablePageState extends State<TablePage> {
   static const String _cachedPendingBillsPrefix = 'cached_pending_bills_';
   static const String _cachedExistingCustomersPrefix =
       'cached_existing_customers_';
-  static const Duration _tableRefreshInterval = Duration(seconds: 10);
+  static const Duration _tableRefreshInterval = Duration(seconds: 60);
   List<dynamic> _tables = [];
   List<String> _candidateWaiterKeys = [];
   bool _isLoading = true;
@@ -341,7 +341,7 @@ class _TablePageState extends State<TablePage> {
       final todayStart = localDayStart.toUtc().toIso8601String();
 
       final url = Uri.parse(
-        'https://blackforest.vseyal.com/api/billings?where[status][in]=pending,ordered,confirmed,prepared,delivered&where[branch][equals]=$_branchId&where[createdAt][greater_than_equal]=$todayStart&limit=100&depth=2',
+        'https://blackforest.vseyal.com/api/billings?where[status][in]=pending,ordered,confirmed,prepared,delivered&where[branch][equals]=$_branchId&where[createdAt][greater_than_equal]=$todayStart&limit=40&depth=1',
       );
 
       final response = await http.get(

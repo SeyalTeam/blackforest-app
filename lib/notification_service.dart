@@ -159,6 +159,43 @@ class NotificationService {
     );
   }
 
+  Future<void> showOrderNotification({
+    required int id,
+    required String title,
+    required String body,
+    String? payload,
+  }) async {
+    const AndroidNotificationDetails androidNotificationDetails =
+        AndroidNotificationDetails(
+          'order_realtime_alerts',
+          'Order Alerts',
+          channelDescription: 'High priority alerts for new orders and status updates',
+          importance: Importance.max,
+          priority: Priority.high,
+          ticker: 'New Order Alert',
+          playSound: true,
+          enableVibration: true,
+          fullScreenIntent: true,
+          category: AndroidNotificationCategory.status,
+          visibility: NotificationVisibility.public,
+          sound: RawResourceAndroidNotificationSound('order'),
+        );
+
+    const NotificationDetails notificationDetails = NotificationDetails(
+      android: androidNotificationDetails,
+      iOS: DarwinNotificationDetails(presentSound: true, sound: 'order.wav'),
+      macOS: DarwinNotificationDetails(presentSound: true),
+    );
+
+    await flutterLocalNotificationsPlugin.show(
+      id: id,
+      title: title,
+      body: body,
+      notificationDetails: notificationDetails,
+      payload: payload,
+    );
+  }
+
   Future<void> showBackgroundNotification(
     int id,
     String title,

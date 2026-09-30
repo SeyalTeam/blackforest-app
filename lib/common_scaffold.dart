@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io' as io; // For Platform check
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
+import 'package:blackforest_app/instock_categories_page.dart';
+
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:blackforest_app/app_http.dart' as http;
@@ -1766,6 +1768,21 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                 ),
               ListTile(
                 leading: const Icon(
+                  Icons.inventory_2_outlined,
+                  color: Colors.black87,
+                ),
+                title: const Text('Instock count'),
+                onTap: () {
+                  _resetTimer();
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const InstockCategoriesPage()),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(
                   Icons.receipt_outlined,
                   color: Colors.black87,
                 ),
@@ -2079,7 +2096,7 @@ class KotPage extends StatefulWidget {
 }
 
 class _KotPageState extends State<KotPage> {
-  static const Duration _fallbackPollInterval = Duration(seconds: 30);
+  static const Duration _fallbackPollInterval = Duration(seconds: 60);
   static const Duration _wsRefreshDebounceInterval = Duration(
     milliseconds: 250,
   );
@@ -2106,6 +2123,7 @@ class _KotPageState extends State<KotPage> {
   final Map<String, DateTime> _latestItemUpdatedAtById = <String, DateTime>{};
   Timer? _refreshTimer;
   Timer? _clockTimer;
+  final AudioPlayer _audioPlayer = AudioPlayer();
   Timer? _wsReconnectTimer;
   Timer? _wsRefreshTimer;
   io.WebSocket? _wsSocket;
@@ -2213,6 +2231,7 @@ class _KotPageState extends State<KotPage> {
     _clockTimer?.cancel();
     _wsReconnectTimer?.cancel();
     _wsRefreshTimer?.cancel();
+    _audioPlayer.dispose();
     unawaited(_closeKotSocket(sendUnsubscribe: true));
     super.dispose();
   }
@@ -2611,6 +2630,40 @@ class _KotPageState extends State<KotPage> {
     if (!_shouldApplyKotRealtimeEvent(message, eventType)) {
       return;
     }
+
+    // Play alert sound and show WhatsApp-style lockscreen notification for new orders & updates
+    final statusAfter = _readText(message['statusAfter']).toLowerCase();
+    final billingId = _readText(message['billingId']);
+    final tableName = _readText(message['tableName'] ?? message['tableNo'] ?? message['table']);
+
+    if (statusAfter == 'ordered' || statusAfter == 'pending' || statusAfter == 'confirmed') {
+      try {
+        _audioPlayer.play(AssetSource('sounds/alert.wav'));
+      } catch (_) {}
+
+      try {
+        final notifTitle = (statusAfter == 'ordered' || statusAfter == 'pending')
+            ? '🔔 New Order Received!'
+            : '✅ Order Status Updated: ${statusAfter.toUpperCase()}';
+        final notifBody = tableName.isNotEmpty
+            ? 'Table: $tableName • Status: ${statusAfter.toUpperCase()}'
+            : 'Order #${billingId.isNotEmpty ? billingId : ''} • Status: ${statusAfter.toUpperCase()}';
+
+        NotificationService().showOrderNotification(
+          id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+          title: notifTitle,
+          body: notifBody,
+        );
+      } catch (nErr) {
+        debugPrint('Failed to display order notification: $nErr');
+      }
+    }
+
+    // Trigger instant thermal KOT auto-print
+    try {
+      KotAutoPrintService.syncPendingWebsiteKots();
+    } catch (_) {}
+
     _scheduleWsDrivenRefresh();
   }
 

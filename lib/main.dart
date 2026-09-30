@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:blackforest_app/cart_provider.dart';
+import 'package:blackforest_app/instock_provider.dart';
 import 'package:blackforest_app/categories_page.dart';
 import 'package:blackforest_app/login_page.dart';
 import 'package:blackforest_app/home_page.dart';
@@ -61,7 +62,7 @@ void main() async {
 
   runApp(
     MultiProvider(
-      providers: [ChangeNotifierProvider(create: (context) => CartProvider())],
+      providers: [ChangeNotifierProvider(create: (context) => CartProvider()), ChangeNotifierProvider(create: (context) => InstockProvider())],
       child: const MyApp(),
     ),
   );
