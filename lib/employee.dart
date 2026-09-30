@@ -737,20 +737,43 @@ class _EmployeePageState extends State<EmployeePage> {
     final role = (_employeeRole ?? await _storage.read(key: 'userRole'))?.toLowerCase();
     final isWatcher = role == 'watcher';
 
-    // GPS Geofence Check (bypassed for watcher working from home)
+    // GPS Geofence Check (bypassed for watcher working from home).
+    // We use checkLocationAndGeofence() directly so we can reuse the
+    // already-fetched Position in _punchIn — avoiding a second GPS call
+    // that would race against the selfie upload timeout.
+    Position? geofencePosition;
     if (!isWatcher) {
       if (!mounted) return;
-      final isInside = await GeofenceUtil.isInsideAnyBranch(context);
-      if (!isInside && mounted) {
+      final geo = await GeofenceUtil.checkLocationAndGeofence();
+      if (!geo.isInside && mounted) {
+        // Show the same error message that isInsideAnyBranch would show
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(geo.errorMessage ?? 'Not inside branch geofence area.')),
+        );
         setState(() => _isProcessingPunch = false);
         return; // Block punch in if not inside branch circle
+      }
+      geofencePosition = geo.position;
+    }
+
+    // If we didn't get a position from the geofence check (watcher role or
+    // position was null), try to get one now before the upload starts.
+    if (geofencePosition == null) {
+      try {
+        geofencePosition = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+          ),
+        ).timeout(const Duration(seconds: 5));
+      } catch (e) {
+        debugPrint('_submitPunchIn pre-upload location error: $e');
       }
     }
 
     try {
       final mediaId = await _uploadMedia(_capturedPunchInPhoto!);
       if (mediaId != null) {
-        await _punchIn(mediaId, isAuto: isAuto);
+        await _punchIn(mediaId, isAuto: isAuto, position: geofencePosition);
         if (mounted) {
           setState(() {
             _capturedPunchInPhoto = null;
@@ -774,20 +797,24 @@ class _EmployeePageState extends State<EmployeePage> {
     }
   }
 
-  Future<void> _punchIn(String mediaId, {bool isAuto = false}) async {
+  Future<void> _punchIn(String mediaId, {bool isAuto = false, Position? position}) async {
     final token = await _storage.read(key: 'token');
     final userId = await _storage.read(key: 'userId');
     if (token == null || userId == null) return;
 
-    Position? position;
-    try {
-      position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-        ),
-      ).timeout(const Duration(seconds: 5));
-    } catch (e) {
-      debugPrint('PunchIn location error: $e');
+    // Use the position that was already fetched during the geofence check.
+    // If it wasn't provided (e.g. called from an auto-punch path), fall back
+    // to a fresh GPS request.
+    if (position == null) {
+      try {
+        position = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+          ),
+        ).timeout(const Duration(seconds: 5));
+      } catch (e) {
+        debugPrint('PunchIn location error: $e');
+      }
     }
 
     final now = DateTime.now();
