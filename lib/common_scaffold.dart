@@ -2245,12 +2245,9 @@ class _KotPageState extends State<KotPage> {
   }
 
   void _startFallbackPolling() {
-    if (_wsSubscribed) return;
-    if (_refreshTimer != null) return;
-    _refreshTimer = Timer.periodic(_fallbackPollInterval, (_) {
-      if (!mounted) return;
-      unawaited(_refreshConfirmedItems(hydrateImages: false));
-    });
+    // Background polling timer disabled - 100% WebSocket and notification driven
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
   }
 
   void _stopFallbackPolling() {

@@ -168,19 +168,9 @@ class _CartPageState extends State<CartPage> {
   }
 
   void _startPolling() {
-    _refreshTimer = Timer.periodic(const Duration(seconds: 60), (timer) {
-      if (mounted) {
-        final cartProvider = Provider.of<CartProvider>(context, listen: false);
-        if (cartProvider.recalledBillId != null) {
-          cartProvider.refreshRecalledBill();
-          // Auto-clear notifications only if THIS cart page is the active screen
-          // (i.e. not in background when notification page is open)
-          if (ModalRoute.of(context)?.isCurrent == true) {
-            cartProvider.markBillAsRead(cartProvider.recalledBillId!);
-          }
-        }
-      }
-    });
+    // Background polling timer disabled - 100% WebSocket and notification driven
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
   }
 
   // -------------------------

@@ -88,15 +88,9 @@ class _TablePageState extends State<TablePage> {
   }
 
   void _startTimer() {
-    _timer = Timer.periodic(_tableRefreshInterval, (timer) {
-      if (mounted) {
-        setState(() {
-          // Keep elapsed-time labels fresh without per-second rebuild churn.
-        });
-        // Refresh table occupancy every 10s.
-        unawaited(_fetchPendingBills());
-      }
-    });
+    // Background polling timer disabled - 100% WebSocket and notification driven
+    _timer?.cancel();
+    _timer = null;
   }
 
   String? _branchScopedCacheKey(String prefix) {
