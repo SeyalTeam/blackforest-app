@@ -45,6 +45,7 @@ class _EmployeePageState extends State<EmployeePage> {
   String? _employeeId;
   String? _employeePhotoUrl;
   String? _branchName;
+  String? _gpsBranchName;
   String? _employeePhone;
   bool _isLoggingOut = false;
   bool _isProcessingPunch = false;
@@ -120,6 +121,7 @@ class _EmployeePageState extends State<EmployeePage> {
       final cachedPunchIn = await _storage.read(key: 'activePunchIn');
       final cachedPastSecsStr = await _storage.read(key: 'pastWorkSeconds');
       final cachedBreakSecsStr = await _storage.read(key: 'totalBreakSeconds');
+      final cachedGpsBranchName = prefs.getString('lastGpsBranchName');
 
       Duration initialWorkDuration = Duration.zero;
       Duration initialBreakDuration = Duration.zero;
@@ -164,6 +166,9 @@ class _EmployeePageState extends State<EmployeePage> {
           }
           if (cachedBranchName != null && cachedBranchName.isNotEmpty) {
             _branchName = cachedBranchName;
+          }
+          if (cachedGpsBranchName != null && cachedGpsBranchName.isNotEmpty) {
+            _gpsBranchName = cachedGpsBranchName;
           }
           if (cachedEmpId != null && cachedEmpId.isNotEmpty) {
             _employeeId = cachedEmpId;
@@ -754,6 +759,15 @@ class _EmployeePageState extends State<EmployeePage> {
         return; // Block punch in if not inside branch circle
       }
       geofencePosition = geo.position;
+      if (geo.branchName != null && geo.branchName!.isNotEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('lastGpsBranchName', geo.branchName!);
+        if (mounted) {
+          setState(() {
+            _gpsBranchName = geo.branchName;
+          });
+        }
+      }
     }
 
     // If we didn't get a position from the geofence check (watcher role or
@@ -915,6 +929,18 @@ class _EmployeePageState extends State<EmployeePage> {
   Future<void> _checkGeofence() async {
     if (!mounted || _isProcessingPunch) return;
     await AttendanceManager.instance.checkNow();
+    try {
+      final geo = await GeofenceUtil.checkLocationAndGeofence();
+      if (geo.branchName != null && geo.branchName!.isNotEmpty) {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('lastGpsBranchName', geo.branchName!);
+        if (mounted) {
+          setState(() {
+            _gpsBranchName = geo.branchName;
+          });
+        }
+      }
+    } catch (_) {}
   }
 
   Future<void> _autoPunchInWithoutSelfie() async {
@@ -1761,6 +1787,42 @@ class _EmployeePageState extends State<EmployeePage> {
                             fontWeight: FontWeight.w600,
                           ),
                         ),
+                      if (_gpsBranchName != null &&
+                          _gpsBranchName!.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE8F5E9),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(
+                              color: const Color(0xFFA5D6A7),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const Icon(
+                                Icons.location_on,
+                                color: Color(0xFF2E7D32),
+                                size: 14,
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                'GPS Punch-In: $_gpsBranchName',
+                                style: const TextStyle(
+                                  color: Color(0xFF1B5E20),
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
 
                       const SizedBox(height: 16),
                       if (!_hasActiveSession) ...[

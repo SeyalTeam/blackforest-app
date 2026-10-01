@@ -108,6 +108,19 @@ class GeofenceUtil {
         data = await ApiConfig.fetchBranchGeoSettings(prefs.getString('token') ?? '');
       }
 
+      // Helper map to resolve branch names accurately from branch IDs
+      Map<String, String> branchNameMap = {};
+      try {
+        final branchesList = await ApiService.instance.fetchBranches();
+        for (var b in branchesList) {
+          final bId = (b['id'] ?? b['_id'])?.toString();
+          final bName = b['name']?.toString();
+          if (bId != null && bName != null) {
+            branchNameMap[bId] = bName;
+          }
+        }
+      } catch (_) {}
+
       final locations = data['locations'] as List?;
       if (locations != null && locations.isNotEmpty) {
         double nearestDistance = double.infinity;
@@ -147,11 +160,16 @@ class GeofenceUtil {
               lngD,
             );
 
-            final branchName = loc['name'] ?? loc['branchName'] ?? '';
-            final branchId = (loc['branch'] is Map ? loc['branch']['id'] : loc['branch'])
+            final branchObj = loc['branch'];
+            final branchId = (branchObj is Map ? (branchObj['id'] ?? branchObj['_id']) : branchObj)
                     ?.toString() ??
                 loc['branchId']?.toString() ??
                 '';
+            final branchName = (branchObj is Map ? branchObj['name']?.toString() : null) ??
+                branchNameMap[branchId] ??
+                loc['name']?.toString() ??
+                loc['branchName']?.toString() ??
+                'Branch';
 
             if (distance < nearestDistance) {
               nearestDistance = distance;
