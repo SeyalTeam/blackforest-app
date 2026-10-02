@@ -66,6 +66,7 @@ class _EmployeePageState extends State<EmployeePage> {
   Duration _breakDuration = Duration.zero;
   List<Map<String, dynamic>> _activities = [];
   String? _dayType; // 'full_day' | 'half_day' | null
+  String? _loginBranchName;
   bool _loadingTasks = false;
   List<Map<String, dynamic>> _dailyTasks = [];
   final Set<String> _togglingTaskIds = {};
@@ -341,14 +342,23 @@ class _EmployeePageState extends State<EmployeePage> {
           _attendanceDocId = firstDoc['id']?.toString();
           _rawActivities = (firstDoc['activities'] as List?) ?? [];
           _dayType = firstDoc['dayType']?.toString();
+          
+          final loginBranchData = firstDoc['loginBranch'];
+          if (loginBranchData is Map<String, dynamic>) {
+            _loginBranchName = loginBranchData['name']?.toString();
+          } else {
+            _loginBranchName = null;
+          }
         } else {
           _attendanceDocId = null;
           _rawActivities = [];
           _dayType = null;
+          _loginBranchName = null;
         }
       } else {
         _attendanceDocId = null;
         _rawActivities = [];
+        _loginBranchName = null;
       }
 
       for (final dynamic doc in docs) {
@@ -1768,7 +1778,7 @@ class _EmployeePageState extends State<EmployeePage> {
                       ),
                       const SizedBox(height: 8),
                       if (_employeeRole == 'manager' &&
-                          _managerCompanyNames.isNotEmpty)
+                          _managerCompanyNames.isNotEmpty) ...[
                         Text(
                           _managerCompanyNames.join(' • '),
                           style: const TextStyle(
@@ -1777,10 +1787,23 @@ class _EmployeePageState extends State<EmployeePage> {
                             fontWeight: FontWeight.w600,
                           ),
                           textAlign: TextAlign.center,
-                        )
-                      else if (_branchName != null && _branchName!.isNotEmpty)
+                        ),
+                        if ((_loginBranchName ?? _branchName) != null && (_loginBranchName ?? _branchName)!.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            (_loginBranchName ?? _branchName)!,
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ]
+                      else if ((_loginBranchName ?? _branchName) != null && (_loginBranchName ?? _branchName)!.isNotEmpty)
                         Text(
-                          _branchName!,
+                          (_loginBranchName ?? _branchName)!,
                           style: const TextStyle(
                             color: Colors.blue,
                             fontSize: 16,
