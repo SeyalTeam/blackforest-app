@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'api_config.dart';
@@ -55,7 +55,7 @@ class AttendanceManager {
   static Future<void> checkAndProcessAttendance({
     bool isBackground = false,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
+    const storage = FlutterSecureStorage();
     if (_isExecuting) {
       debugPrint(
         'AttendanceManager: Check already in progress, skipping tick.',
@@ -65,8 +65,13 @@ class AttendanceManager {
 
     _isExecuting = true;
     try {
-      final token = prefs.getString('token');
-      final userId = prefs.getString('userId');
+      final token = await storage.read(key: 'token');
+      final userId = await storage.read(key: 'userId');
+      final userRole = (await storage.read(key: 'userRole'))?.toLowerCase();
+      
+      if (userRole == 'watcher') {
+        return;
+      }
 
       if (token == null || token.isEmpty || userId == null || userId.isEmpty) {
         // User not logged in, nothing to do
@@ -219,7 +224,7 @@ class AttendanceManager {
         }
 
         if (latestPunchOutType == null) {
-          latestPunchOutType = prefs.getString('lastPunchOutType');
+          latestPunchOutType = await storage.read(key: 'lastPunchOutType');
         }
       }
 
@@ -229,10 +234,12 @@ class AttendanceManager {
 
       // ── 5. AUTO PUNCH OUT EVALUATION ──────────────────────────────────────
       if (activeSession != null) {
-        if (!isInside) {
+        final isApiError = geo.errorMessage != null && geo.errorMessage!.contains('API error');
+        if (!isInside && !isApiError) {
           _consecutiveOutsideTicks++;
 
-          if (_consecutiveOutsideTicks >= 1) {
+          int requiredTicks = isBackground ? 1 : 2;
+          if (_consecutiveOutsideTicks >= requiredTicks) {
             // Punch out
             final punchInStr = activeSession['punchIn']?.toString() ?? '';
             final punchInTime = DateTime.tryParse(punchInStr)?.toLocal() ?? now;
@@ -258,7 +265,7 @@ class AttendanceManager {
 
             if (patchRes.statusCode == 200) {
               debugPrint('AttendanceManager: Auto punch-out SUCCESS!');
-              await prefs.setString('lastPunchOutType', 'auto');
+              await storage.write(key: 'lastPunchOutType', value: 'auto');
               _consecutiveOutsideTicks = 0;
 
               await _showLocalNotification(
@@ -330,7 +337,7 @@ class AttendanceManager {
 
             if (patchRes.statusCode == 200) {
               debugPrint('AttendanceManager: Auto punch-in SUCCESS (patched)!');
-              await prefs.remove('lastPunchOutType');
+              await storage.delete(key: 'lastPunchOutType');
 
               await _showLocalNotification(
                 id: 992,
@@ -366,6 +373,7 @@ class AttendanceManager {
                 'date': localMidnight.toUtc().toIso8601String(),
                 'dateString': queryDateStr,
                 'activities': [newActivity],
+                if (geo.branchId != null) 'loginBranch': geo.branchId,
               }),
             );
 
@@ -373,7 +381,7 @@ class AttendanceManager {
               debugPrint(
                 'AttendanceManager: Auto punch-in SUCCESS (posted new doc)!',
               );
-              await prefs.remove('lastPunchOutType');
+              await storage.delete(key: 'lastPunchOutType');
 
               await _showLocalNotification(
                 id: 992,
