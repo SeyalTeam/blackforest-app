@@ -42,6 +42,7 @@ class _EmployeePageState extends State<EmployeePage> {
   String? _employeeName;
   String? _employeeRole;
   List<String> _managerCompanyNames = [];
+  String? _kitchenName;
   String? _employeeId;
   String? _employeePhotoUrl;
   String? _branchName;
@@ -163,7 +164,7 @@ class _EmployeePageState extends State<EmployeePage> {
           _employeeName = cachedName;
           _employeeRole = cachedRole;
           if (cachedKitchenName != null && cachedKitchenName.isNotEmpty) {
-            _branchName = cachedKitchenName;
+            _kitchenName = cachedKitchenName;
           }
           if (cachedBranchName != null && cachedBranchName.isNotEmpty) {
             _branchName = cachedBranchName;
@@ -270,6 +271,93 @@ class _EmployeePageState extends State<EmployeePage> {
           }
         }
 
+        String? kName;
+        String? kId;
+
+        // 1. Check user['kitchen']
+        final userKitchen = user['kitchen'];
+        if (userKitchen is List && userKitchen.isNotEmpty) {
+          final firstK = userKitchen.first;
+          if (firstK is Map) {
+            kName = firstK['name']?.toString();
+            kId = (firstK['id'] ?? firstK['_id'])?.toString();
+          } else if (firstK is String && firstK.isNotEmpty) {
+            kId = firstK;
+          }
+        } else if (userKitchen is Map) {
+          kName = userKitchen['name']?.toString();
+          kId = (userKitchen['id'] ?? userKitchen['_id'])?.toString();
+        } else if (userKitchen is String && userKitchen.isNotEmpty) {
+          kId = userKitchen;
+        }
+
+        // 2. Fallback: Check employee['kitchen']
+        if (employee is Map) {
+          final empKitchen = employee['kitchen'];
+          if (empKitchen is Map) {
+            kName ??= empKitchen['name']?.toString();
+            kId ??= (empKitchen['id'] ?? empKitchen['_id'])?.toString();
+          } else if (empKitchen is String && empKitchen.isNotEmpty) {
+            kId ??= empKitchen;
+          }
+        }
+
+        // 3. Fallback: Check user['kitchens'] list if any
+        final userKitchens = user['kitchens'];
+        if (userKitchens is List && userKitchens.isNotEmpty) {
+          final firstK = userKitchens.first;
+          if (firstK is Map) {
+            kName ??= firstK['name']?.toString();
+            kId ??= (firstK['id'] ?? firstK['_id'])?.toString();
+          } else if (firstK is String && firstK.isNotEmpty) {
+            kId ??= firstK;
+          }
+        }
+
+        // 4. Fetch kitchen details if we have kId but not kName
+        if ((kName == null || kName.isEmpty) && kId != null && kId.isNotEmpty) {
+          try {
+            final kDetails = await ApiService.instance.fetchKitchenDetails(kId);
+            kName = kDetails['name']?.toString();
+          } catch (e) {
+            debugPrint('DEBUG: Error fetching kitchen details in profile: $e');
+          }
+        }
+
+        // 5. Fallback: check storage for userKitchenId
+        if (kName == null || kName.isEmpty) {
+          final storedKId = await _storage.read(key: 'userKitchenId');
+          if (storedKId != null && storedKId.isNotEmpty) {
+            try {
+              final kDetails = await ApiService.instance.fetchKitchenDetails(storedKId);
+              kName = kDetails['name']?.toString();
+            } catch (e) {
+              debugPrint('DEBUG: Error fetching stored kitchen details in profile: $e');
+            }
+          }
+        }
+
+        // 6. Fallback: check kitchens matching user's branch
+        if (kName == null || kName.isEmpty) {
+          final bId = (branch is Map ? (branch['id'] ?? branch['_id']) : branch)?.toString();
+          if (bId != null && bId.isNotEmpty) {
+            try {
+              final allKitchens = await ApiService.instance.fetchKitchens();
+              for (final k in allKitchens) {
+                final targetBId = (k['branch'] is Map ? (k['branch']['id'] ?? k['branch']['_id']) : k['branch'])?.toString();
+                if (targetBId == bId) {
+                  kName = k['name']?.toString();
+                  if (kName != null && kName.isNotEmpty) break;
+                }
+              }
+            } catch (_) {}
+          }
+        }
+
+        if (kName != null && kName.isNotEmpty) {
+          await _storage.write(key: 'userKitchenName', value: kName);
+        }
+
         if (code != null) await _storage.write(key: 'employeeId', value: code);
         if (bName != null) await _storage.write(key: 'userBranchName', value: bName);
         if (companyNames.isNotEmpty) {
@@ -286,6 +374,7 @@ class _EmployeePageState extends State<EmployeePage> {
             if (code != null) _employeeId = code;
             if (phone != null) _employeePhone = phone;
             if (bName != null) _branchName = bName;
+            if (kName != null && kName.isNotEmpty) _kitchenName = kName;
             if (resolvedUrl != null) _employeePhotoUrl = resolvedUrl;
             if (companyNames.isNotEmpty) _managerCompanyNames = companyNames;
           });
@@ -1784,6 +1873,32 @@ class _EmployeePageState extends State<EmployeePage> {
                           style: const TextStyle(
                             color: Colors.blue,
                             fontSize: 14,
+                            fontWeight: FontWeight.w600,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                        if ((_loginBranchName ?? _branchName) != null && (_loginBranchName ?? _branchName)!.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            (_loginBranchName ?? _branchName)!,
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                      ]
+                      else if ((_employeeRole?.toLowerCase() == 'chef' ||
+                              _employeeRole?.toLowerCase() == 'kitchen') &&
+                          _kitchenName != null &&
+                          _kitchenName!.isNotEmpty) ...[
+                        Text(
+                          _kitchenName!,
+                          style: const TextStyle(
+                            color: Colors.blue,
+                            fontSize: 16,
                             fontWeight: FontWeight.w600,
                           ),
                           textAlign: TextAlign.center,
