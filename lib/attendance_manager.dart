@@ -298,7 +298,8 @@ class AttendanceManager {
       else {
         _consecutiveOutsideTicks = 0;
         // User rule: Auto punch-in only proceeds IF previous session ended via AUTO punch-out
-        final shouldAutoPunchIn = latestPunchOutType == 'auto';
+        // AND it's NOT the first punch of the day (docId != null)
+        final shouldAutoPunchIn = latestPunchOutType == 'auto' && docId != null;
 
         if (shouldAutoPunchIn && isInside) {
           // Debounce to prevent rapid re-triggering
