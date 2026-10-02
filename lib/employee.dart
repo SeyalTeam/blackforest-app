@@ -1060,17 +1060,18 @@ class _EmployeePageState extends State<EmployeePage> {
     }
 
     if (position == null) {
-    try {
-      position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-        ),
-      ).timeout(const Duration(seconds: 5));
-    } catch (e) {
-      debugPrint('AutoPunchIn location error: $e');
       try {
-        position = await Geolocator.getLastKnownPosition();
-      } catch (_) {}
+        position = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.medium,
+          ),
+        ).timeout(const Duration(seconds: 5));
+      } catch (e) {
+        debugPrint('AutoPunchIn location error: $e');
+        try {
+          position = await Geolocator.getLastKnownPosition();
+        } catch (_) {}
+      }
     }
 
     final now = DateTime.now();
