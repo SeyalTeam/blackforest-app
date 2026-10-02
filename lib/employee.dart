@@ -435,6 +435,18 @@ class _EmployeePageState extends State<EmployeePage> {
           final loginBranchData = firstDoc['loginBranch'];
           if (loginBranchData is Map<String, dynamic>) {
             _loginBranchName = loginBranchData['name']?.toString();
+            final newBranchId = loginBranchData['id']?.toString() ?? loginBranchData['_id']?.toString();
+            if (newBranchId != null && _loginBranchName != null) {
+              final prefs = await SharedPreferences.getInstance();
+              await prefs.setString('branchId', newBranchId);
+              await prefs.setString('userBranchName', _loginBranchName!);
+              await _storage.write(key: 'userBranchName', value: _loginBranchName!);
+              if (mounted) {
+                setState(() {
+                  _branchName = _loginBranchName;
+                });
+              }
+            }
           } else {
             _loginBranchName = null;
           }
