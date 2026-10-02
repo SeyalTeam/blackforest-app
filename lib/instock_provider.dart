@@ -58,6 +58,22 @@ class InstockProvider extends ChangeNotifier {
   Map<String, String> get productNames => _productNames;
   Map<String, double> get prices => _prices;
 
+  void setBranchId(String? branchId) {
+    if (_branchId != branchId) {
+      _branchId = branchId;
+      notifyListeners();
+    }
+  }
+
+  Future<void> syncBranchId() async {
+    final prefs = await SharedPreferences.getInstance();
+    final localBranchId = prefs.getString('branchId');
+    if (localBranchId != null && localBranchId.isNotEmpty && _branchId != localBranchId) {
+      _branchId = localBranchId;
+      notifyListeners();
+    }
+  }
+
   // ========== CONSTRUCTOR ==========
   InstockProvider() {
     _loadCategories();
