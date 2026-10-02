@@ -846,6 +846,7 @@ class _EmployeePageState extends State<EmployeePage> {
     // already-fetched Position in _punchIn — avoiding a second GPS call
     // that would race against the selfie upload timeout.
     Position? geofencePosition;
+    String? geofenceBranchId;
     if (!isWatcher) {
       if (!mounted) return;
       final geo = await GeofenceUtil.checkLocationAndGeofence();
@@ -858,6 +859,7 @@ class _EmployeePageState extends State<EmployeePage> {
         return; // Block punch in if not inside branch circle
       }
       geofencePosition = geo.position;
+      geofenceBranchId = geo.branchId;
       if (geo.branchName != null && geo.branchName!.isNotEmpty) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('lastGpsBranchName', geo.branchName!);
@@ -886,7 +888,7 @@ class _EmployeePageState extends State<EmployeePage> {
     try {
       final mediaId = await _uploadMedia(_capturedPunchInPhoto!);
       if (mediaId != null) {
-        await _punchIn(mediaId, isAuto: isAuto, position: geofencePosition);
+        await _punchIn(mediaId, isAuto: isAuto, position: geofencePosition, branchId: geofenceBranchId);
         if (mounted) {
           setState(() {
             _capturedPunchInPhoto = null;
@@ -910,7 +912,7 @@ class _EmployeePageState extends State<EmployeePage> {
     }
   }
 
-  Future<void> _punchIn(String mediaId, {bool isAuto = false, Position? position}) async {
+  Future<void> _punchIn(String mediaId, {bool isAuto = false, Position? position, String? branchId}) async {
     final token = await _storage.read(key: 'token');
     final userId = await _storage.read(key: 'userId');
     if (token == null || userId == null) return;
@@ -982,6 +984,7 @@ class _EmployeePageState extends State<EmployeePage> {
             'date': localMidnight.toUtc().toIso8601String(),
             'dateString': dateString,
             'activities': [newActivity],
+            if (branchId != null) 'loginBranch': branchId,
           }),
         );
         if (response.statusCode == 200 || response.statusCode == 201) {
@@ -1042,7 +1045,7 @@ class _EmployeePageState extends State<EmployeePage> {
     } catch (_) {}
   }
 
-  Future<void> _autoPunchInWithoutSelfie() async {
+  Future<void> _autoPunchInWithoutSelfie({Position? position, String? branchId}) async {
     if (_hasActiveSession || _isProcessingPunch) return;
 
     setState(() {
@@ -1056,7 +1059,7 @@ class _EmployeePageState extends State<EmployeePage> {
       return;
     }
 
-    Position? position;
+    if (position == null) {
     try {
       position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
@@ -1153,6 +1156,7 @@ class _EmployeePageState extends State<EmployeePage> {
             'date': localMidnight.toUtc().toIso8601String(),
             'dateString': dateString,
             'activities': [newActivity],
+            if (branchId != null) 'loginBranch': branchId,
           }),
         );
         debugPrint(
