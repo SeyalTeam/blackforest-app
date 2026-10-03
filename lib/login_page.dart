@@ -173,6 +173,7 @@ class _LoginPageState extends State<LoginPage> {
             HomeNavigationService.loadTableVisibilityForCurrentBranch(
               prefs: prefs,
               forceRefresh: true,
+              fallback: false,
             ),
           ]);
           final showHomeNavigation = navigationVisibility[0];
@@ -337,27 +338,29 @@ class _LoginPageState extends State<LoginPage> {
         };
 
         var res = await http.post(
-          Uri.parse('${ApiConfig.baseUrl}/users/login'),
+          Uri.parse('${ApiConfig.baseUrl}/users/login-phone'),
           headers: headers,
           body: jsonEncode({
-            'email': emailToUse,
+            'phoneNumber': rawInput,
             'password': _passwordController.text,
             'privateIp': _privateIp,
           }),
         );
 
-        // Fallback: If @bf.com failed and input had no @, try sending rawInput directly
-        if (res.statusCode != 200 && !rawInput.contains('@')) {
+        // Fallback: If phone login fails, try standard username/email login
+        if (res.statusCode != 200) {
           final fallbackRes = await http.post(
             Uri.parse('${ApiConfig.baseUrl}/users/login'),
             headers: headers,
             body: jsonEncode({
-              'email': rawInput,
+              'email': emailToUse,
               'password': _passwordController.text,
               'privateIp': _privateIp,
             }),
           );
-          if (fallbackRes.statusCode == 200) {
+          
+          // If fallback succeeds, or if we want to show its error message, we assign it back
+          if (fallbackRes.statusCode == 200 || !rawInput.contains('@')) {
             res = fallbackRes;
           }
         }
@@ -745,7 +748,7 @@ class _LoginPageState extends State<LoginPage> {
                   const SizedBox(height: 6),
                   Center(
                     child: Text(
-                      'Sign in with your username and password',
+                      'Sign in with your phone number and password',
                       style: TextStyle(fontSize: 13, color: Colors.grey[600]),
                     ),
                   ),
@@ -769,13 +772,14 @@ class _LoginPageState extends State<LoginPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        // Username Field
+                        // Phone Number Field
                         TextFormField(
                           controller: _branchController,
+                          keyboardType: TextInputType.phone,
                           decoration: InputDecoration(
-                            labelText: 'Username',
-                            hintText: 'Enter username or email',
-                            prefixIcon: const Icon(Icons.person_outline_rounded),
+                            labelText: 'Phone Number',
+                            hintText: 'Enter phone number',
+                            prefixIcon: const Icon(Icons.phone_outlined),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
@@ -784,7 +788,7 @@ class _LoginPageState extends State<LoginPage> {
                           ),
                           validator: (value) {
                             if (value == null || value.trim().isEmpty) {
-                              return 'Please enter username';
+                              return 'Please enter phone number';
                             }
                             return null;
                           },
