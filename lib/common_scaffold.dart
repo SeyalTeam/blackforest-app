@@ -4,6 +4,13 @@ import 'dart:io' as io; // For Platform check
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:blackforest_app/instock_categories_page.dart';
+import 'package:blackforest_app/instock_provider.dart';
+import 'package:blackforest_app/instock_cart_page.dart';
+import 'package:blackforest_app/return_provider.dart';
+import 'package:blackforest_app/return_categories_page.dart';
+import 'package:blackforest_app/return_cart_page.dart';
+
+
 
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
@@ -45,6 +52,8 @@ enum PageType {
   editbill,
   employee,
   chat,
+  instock,
+  returnorder,
 }
 
 class CommonScaffold extends StatefulWidget {
@@ -95,7 +104,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   String _branchName = '';
   String _role = '';
   bool _showHomeNavigation = true;
-  bool _showTableNavigation = true;
+  bool _showTableNavigation = false;
   Timer? _sessionCheckTimer;
   bool _isLoggingOut = false;
   bool _isPrinterTestRunning = false;
@@ -166,12 +175,9 @@ class _CommonScaffoldState extends State<CommonScaffold> {
 
   Future<void> _initChatUnreadCheck() async {
     await _checkUnreadChatMessages();
+    // Periodic timer disabled: unread count is updated in real time via WebSocket
     _chatUnreadTimer?.cancel();
-    _chatUnreadTimer = Timer.periodic(const Duration(seconds: 15), (_) {
-      if (mounted) {
-        _checkUnreadChatMessages();
-      }
-    });
+    _chatUnreadTimer = null;
   }
 
   Future<void> _checkUnreadChatMessages() async {
@@ -260,8 +266,8 @@ class _CommonScaffoldState extends State<CommonScaffold> {
       }
     });
 
-    // Periodic sync every 10 seconds
-    _kitchenSyncTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+    // Periodic sync every 45 seconds
+    _kitchenSyncTimer = Timer.periodic(const Duration(seconds: 45), (timer) {
       if (mounted) {
         Provider.of<CartProvider>(
           context,
@@ -791,7 +797,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
 
       final response = await http
           .post(
-            Uri.parse('https://blackforest.vseyal.com/api/call-waiter/ack'),
+            Uri.parse('https://blackforest1.vseyal.com/api/call-waiter/ack'),
             headers: {
               'Authorization': 'Bearer $token',
               'Content-Type': 'application/json',
@@ -866,9 +872,9 @@ class _CommonScaffoldState extends State<CommonScaffold> {
 
   void _startSessionCheck() {
     _checkSessionValidity();
-    _sessionCheckTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
-      _checkSessionValidity();
-    });
+    // Periodic polling timer disabled: Session is monitored via WebSocket push and resume checks
+    _sessionCheckTimer?.cancel();
+    _sessionCheckTimer = null;
   }
 
   Future<void> _checkSessionValidity() async {
@@ -881,7 +887,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     try {
       final response = await http
           .get(
-            Uri.parse('https://blackforest.vseyal.com/api/users/me'),
+            Uri.parse('https://blackforest1.vseyal.com/api/users/me'),
             headers: {'Authorization': 'Bearer $token'},
           )
           .timeout(const Duration(seconds: 5));
@@ -953,7 +959,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
         HomeNavigationService.readCachedTableVisibility(
           prefs,
           branchId: branchId,
-          fallback: true,
+          fallback: false,
         );
 
     if (mounted &&
@@ -1008,7 +1014,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
 
           // 1. Find the log record that has an ACTIVE session
           final searchUrl =
-              'https://blackforest.vseyal.com/api/attendance?where[user][equals]=$userId&where[activities.status][equals]=active&limit=1';
+              'https://blackforest1.vseyal.com/api/attendance?where[user][equals]=$userId&where[activities.status][equals]=active&limit=1';
           final searchResp = await http
               .get(
                 Uri.parse(searchUrl),
@@ -1047,7 +1053,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                 final updateResp = await http
                     .patch(
                       Uri.parse(
-                        'https://blackforest.vseyal.com/api/attendance/$sessionId',
+                        'https://blackforest1.vseyal.com/api/attendance/$sessionId',
                       ),
                       headers: {
                         'Authorization': 'Bearer $token',
@@ -1255,7 +1261,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
       final branchRes = await http
           .get(
             Uri.parse(
-              'https://blackforest.vseyal.com/api/branches/$branchId?depth=1',
+              'https://blackforest1.vseyal.com/api/branches/$branchId?depth=1',
             ),
             headers: headers,
           )
@@ -1272,7 +1278,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
       final globalRes = await http
           .get(
             Uri.parse(
-              'https://blackforest.vseyal.com/api/globals/branch-geo-settings',
+              'https://blackforest1.vseyal.com/api/globals/branch-geo-settings',
             ),
             headers: headers,
           )
@@ -1527,50 +1533,139 @@ class _CommonScaffoldState extends State<CommonScaffold> {
           );
         },
       ),
-      Consumer<CartProvider>(
-        builder: (context, cartProvider, child) {
-          final int itemCount = cartProvider.cartItems.length;
-
-          return Stack(
-            children: [
-              IconButton(
-                icon: const Icon(
-                  Icons.shopping_cart_outlined,
-                  color: Colors.black87,
+      if (widget.pageType == PageType.instock)
+        Consumer<InstockProvider>(
+          builder: (context, sp, child) {
+            final int itemCount = sp.inStockQuery.length;
+            return Stack(
+              children: [
+                IconButton(
+                  icon: const Icon(
+                    Icons.shopping_cart_outlined,
+                    color: Colors.black87,
+                  ),
+                  onPressed: () {
+                    _resetTimer();
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const InstockCartPage()),
+                    );
+                  },
                 ),
-                onPressed: () {
-                  _resetTimer();
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const CartPage()),
-                  );
-                },
-              ),
-              if (itemCount > 0)
-                Positioned(
-                  right: 8,
-                  top: 8,
-                  child: Container(
-                    padding: const EdgeInsets.all(2),
-                    decoration: BoxDecoration(
-                      color: Colors.red,
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    constraints: const BoxConstraints(
-                      minWidth: 16,
-                      minHeight: 16,
-                    ),
-                    child: Text(
-                      '$itemCount',
-                      style: const TextStyle(color: Colors.white, fontSize: 10),
-                      textAlign: TextAlign.center,
+                if (itemCount > 0)
+                  Positioned(
+                    right: 8,
+                    top: 8,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      constraints: const BoxConstraints(
+                        minWidth: 16,
+                        minHeight: 16,
+                      ),
+                      child: Text(
+                        '$itemCount',
+                        style: const TextStyle(color: Colors.white, fontSize: 10),
+                        textAlign: TextAlign.center,
+                      ),
                     ),
                   ),
+              ],
+            );
+          },
+        )
+      else if (widget.pageType == PageType.returnorder)
+        Consumer<ReturnProvider>(
+          builder: (context, provider, child) {
+            final int itemCount = provider.returnItems.length;
+            return Stack(
+              children: [
+                IconButton(
+                  icon: const Icon(
+                    Icons.shopping_cart_outlined,
+                    color: Colors.black87,
+                  ),
+                  onPressed: () {
+                    _resetTimer();
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const ReturnCartPage()),
+                    );
+                  },
                 ),
-            ],
-          );
-        },
-      ),
+                if (itemCount > 0)
+                  Positioned(
+                    right: 8,
+                    top: 8,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      constraints: const BoxConstraints(
+                        minWidth: 16,
+                        minHeight: 16,
+                      ),
+                      child: Text(
+                        '$itemCount',
+                        style: const TextStyle(color: Colors.white, fontSize: 10),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        )
+      else
+        Consumer<CartProvider>(
+          builder: (context, cartProvider, child) {
+            final int itemCount = cartProvider.cartItems.length;
+
+            return Stack(
+              children: [
+                IconButton(
+                  icon: const Icon(
+                    Icons.shopping_cart_outlined,
+                    color: Colors.black87,
+                  ),
+                  onPressed: () {
+                    _resetTimer();
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const CartPage()),
+                    );
+                  },
+                ),
+                if (itemCount > 0)
+                  Positioned(
+                    right: 8,
+                    top: 8,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      constraints: const BoxConstraints(
+                        minWidth: 16,
+                        minHeight: 16,
+                      ),
+                      child: Text(
+                        '$itemCount',
+                        style: const TextStyle(color: Colors.white, fontSize: 10),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
     ];
     final appBarActions = <Widget>[
       if (widget.showDefaultAppBarActions) ...defaultAppBarActions,
@@ -1778,6 +1873,21 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                   Navigator.push(
                     context,
                     MaterialPageRoute(builder: (context) => const InstockCategoriesPage()),
+                  );
+                },
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.assignment_return_outlined,
+                  color: Colors.black87,
+                ),
+                title: const Text('Return Order'),
+                onTap: () {
+                  _resetTimer();
+                  Navigator.pop(context);
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const ReturnCategoriesPage()),
                   );
                 },
               ),
@@ -2190,7 +2300,7 @@ class _KotPageState extends State<KotPage> {
     String token,
   ) async {
     final billResponse = await http.get(
-      Uri.parse('https://blackforest.vseyal.com/api/billings/$billId'),
+      Uri.parse('https://blackforest1.vseyal.com/api/billings/$billId'),
       headers: {
         'Authorization': 'Bearer $token',
         'Content-Type': 'application/json',
@@ -2681,10 +2791,30 @@ class _KotPageState extends State<KotPage> {
     if (value.startsWith('http://') || value.startsWith('https://')) {
       return resolveApiAssetUrl(value);
     }
+    if (value.startsWith('//')) return resolveApiAssetUrl('https:$value');
+    if (value.startsWith('blackforest1.vseyal.com')) {
+      return resolveApiAssetUrl('https://$value');
+    }
     if (value.startsWith('/')) {
       return resolveApiAssetUrl(value);
     }
-    return resolveApiAssetUrl('/$value');
+    final lower = value.toLowerCase();
+    final maybeFilePath =
+        lower.endsWith('.png') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.webp') ||
+        lower.endsWith('.gif') ||
+        lower.endsWith('.svg') ||
+        lower.endsWith('.avif');
+    if (value.startsWith('uploads/') ||
+        value.startsWith('media/') ||
+        value.startsWith('files/') ||
+        value.startsWith('api/') ||
+        maybeFilePath) {
+      return resolveApiAssetUrl('/$value');
+    }
+    return null;
   }
 
   String? _extractImageFromAny(dynamic node) {
@@ -3427,7 +3557,7 @@ class _KotPageState extends State<KotPage> {
         final foundIds = <String>{};
         final response = await http.get(
           Uri.parse(
-            'https://blackforest.vseyal.com/api/products?where[id][in]=$idsParam&depth=3&limit=100',
+            'https://blackforest1.vseyal.com/api/products?where[id][in]=$idsParam&depth=3&limit=100',
           ),
           headers: {
             'Authorization': 'Bearer $token',
@@ -3446,7 +3576,7 @@ class _KotPageState extends State<KotPage> {
         if (docs.isEmpty) {
           final fallbackResponse = await http.get(
             Uri.parse(
-              'https://blackforest.vseyal.com/api/products?where[_id][in]=$idsParam&depth=3&limit=100',
+              'https://blackforest1.vseyal.com/api/products?where[_id][in]=$idsParam&depth=3&limit=100',
             ),
             headers: {
               'Authorization': 'Bearer $token',
@@ -3464,7 +3594,7 @@ class _KotPageState extends State<KotPage> {
         if (docs.isEmpty) {
           final productIdFallbackResponse = await http.get(
             Uri.parse(
-              'https://blackforest.vseyal.com/api/products?where[productId][in]=$idsParam&depth=3&limit=100',
+              'https://blackforest1.vseyal.com/api/products?where[productId][in]=$idsParam&depth=3&limit=100',
             ),
             headers: {
               'Authorization': 'Bearer $token',
@@ -3520,7 +3650,7 @@ class _KotPageState extends State<KotPage> {
 
           final idEndpointResponse = await http.get(
             Uri.parse(
-              'https://blackforest.vseyal.com/api/products/${Uri.encodeComponent(id)}?depth=3',
+              'https://blackforest1.vseyal.com/api/products/${Uri.encodeComponent(id)}?depth=3',
             ),
             headers: {
               'Authorization': 'Bearer $token',
@@ -3534,7 +3664,7 @@ class _KotPageState extends State<KotPage> {
           if (productDoc.isEmpty) {
             final productIdLookup = await http.get(
               Uri.parse(
-                'https://blackforest.vseyal.com/api/products?where[productId][equals]=${Uri.encodeQueryComponent(id)}&depth=3&limit=1',
+                'https://blackforest1.vseyal.com/api/products?where[productId][equals]=${Uri.encodeQueryComponent(id)}&depth=3&limit=1',
               ),
               headers: {
                 'Authorization': 'Bearer $token',
@@ -3555,7 +3685,7 @@ class _KotPageState extends State<KotPage> {
           if (productDoc.isEmpty) {
             final upcLookup = await http.get(
               Uri.parse(
-                'https://blackforest.vseyal.com/api/products?where[upc][equals]=${Uri.encodeQueryComponent(id)}&depth=3&limit=1',
+                'https://blackforest1.vseyal.com/api/products?where[upc][equals]=${Uri.encodeQueryComponent(id)}&depth=3&limit=1',
               ),
               headers: {
                 'Authorization': 'Bearer $token',
@@ -3624,7 +3754,7 @@ class _KotPageState extends State<KotPage> {
             final query = Uri.encodeQueryComponent(queryText);
             final response = await http.get(
               Uri.parse(
-                'https://blackforest.vseyal.com/api/products?where[name][$operator]=$query&depth=3&limit=18',
+                'https://blackforest1.vseyal.com/api/products?where[name][$operator]=$query&depth=3&limit=18',
               ),
               headers: {
                 'Authorization': 'Bearer $token',
@@ -3746,7 +3876,7 @@ class _KotPageState extends State<KotPage> {
           final tablesResponse = await http
               .get(
                 Uri.parse(
-                  'https://blackforest.vseyal.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
+                  'https://blackforest1.vseyal.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
                 ),
                 headers: {'Authorization': 'Bearer $token'},
               )
@@ -3788,7 +3918,7 @@ class _KotPageState extends State<KotPage> {
 
       const billStatusFilter = 'pending,ordered,confirmed,prepared,delivered';
       String urlString =
-          'https://blackforest.vseyal.com/api/billings?where[status][in]=$billStatusFilter&where[createdAt][greater_than_equal]=$todayStartUtc&where[createdAt][less_than]=$tomorrowStartUtc&limit=300&sort=-updatedAt&depth=3';
+          'https://blackforest1.vseyal.com/api/billings?where[status][in][0]=pending&where[status][in][1]=ordered&where[status][in][2]=confirmed&where[status][in][3]=prepared&where[status][in][4]=delivered&where[createdAt][greater_than_equal]=$todayStartUtc&where[createdAt][less_than]=$tomorrowStartUtc&limit=300&sort=-updatedAt&depth=3';
       if (branchId.isNotEmpty) {
         urlString += '&where[branch][equals]=$branchId';
       }
@@ -4002,6 +4132,17 @@ class _KotPageState extends State<KotPage> {
 
       if (hydrateImages) {
         await _hydrateMissingProductImages(nextItems, token);
+        for (var i = 0; i < nextItems.length; i++) {
+          final existing = nextItems[i];
+          if (_readText(existing.imageUrl).isNotEmpty) continue;
+          String? resolvedImage;
+          if (existing.productId.isNotEmpty) {
+            resolvedImage = _productImageById[existing.productId];
+          }
+          resolvedImage ??= _productImageByName[existing.productName.toLowerCase()];
+          if (resolvedImage == null || resolvedImage.isEmpty) continue;
+          nextItems[i] = existing.copyWith(imageUrl: resolvedImage);
+        }
       } else {
         unawaited(
           _hydrateMissingProductImages(nextItems, token).then((_) {
@@ -4268,7 +4409,7 @@ class _KotPageState extends State<KotPage> {
 
           return http.patch(
             Uri.parse(
-              'https://blackforest.vseyal.com/api/billings/${activeItem.billId}',
+              'https://blackforest1.vseyal.com/api/billings/${activeItem.billId}',
             ),
             headers: {
               'Authorization': 'Bearer $token',
@@ -4295,7 +4436,7 @@ class _KotPageState extends State<KotPage> {
 
           updateResponse = await http.patch(
             Uri.parse(
-              'https://blackforest.vseyal.com/api/billings/${activeItem.billId}/items/status',
+              'https://blackforest1.vseyal.com/api/billings/${activeItem.billId}/items/status',
             ),
             headers: {
               'Authorization': 'Bearer $token',
@@ -4496,7 +4637,7 @@ class _KotPageState extends State<KotPage> {
           child: Stack(
             children: [
               Positioned.fill(
-                child: item.imageUrl == null
+                child: (item.imageUrl == null || item.imageUrl!.trim().isEmpty)
                     ? Container(
                         color: const Color(0xFFE5E7EB),
                         alignment: Alignment.center,
@@ -4851,17 +4992,6 @@ class _KotCardImageState extends State<_KotCardImage> {
   int _index = 0;
   bool _advanceQueued = false;
 
-  Map<String, String>? _headersForCandidate(String candidate) {
-    final parsed = Uri.tryParse(candidate);
-    final host = parsed?.host.trim() ?? '';
-    if (host.isEmpty || !isKnownApiHost(host)) {
-      return null;
-    }
-
-    final token = widget.bearerToken.trim();
-    if (token.isEmpty) return null;
-    return <String, String>{'Authorization': 'Bearer $token'};
-  }
 
   @override
   void initState() {
@@ -5011,7 +5141,6 @@ class _KotCardImageState extends State<_KotCardImage> {
     return Image.network(
       candidate,
       fit: BoxFit.cover,
-      headers: _headersForCandidate(candidate),
       loadingBuilder: (context, child, progress) {
         if (progress == null) return child;
         return _loadingPlaceholder();

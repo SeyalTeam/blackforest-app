@@ -19,7 +19,6 @@ class AuthSessionManager {
   static const String defaultSessionExpiredMessage =
       'Session expired. Please login again.';
 
-  static const Duration _heartbeatInterval = Duration(seconds: 45);
   static const Duration _meTimeout = Duration(seconds: 8);
   static const Duration _locationTimeout = Duration(seconds: 6);
   static const Set<String> _strictGeoRoles = <String>{
@@ -41,10 +40,9 @@ class AuthSessionManager {
 
   void startHeartbeat() {
     _heartbeatTimer?.cancel();
+    _heartbeatTimer = null;
+    // Verify once on demand without setting up a continuous polling loop
     unawaited(verifySession(force: true));
-    _heartbeatTimer = Timer.periodic(_heartbeatInterval, (_) {
-      verifySession(force: true);
-    });
   }
 
   void stopHeartbeat() {

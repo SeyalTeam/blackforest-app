@@ -117,7 +117,7 @@ class _EmployeePageState extends State<EmployeePage> {
           prefs.getString('userRole') ??
           prefs.getString('role');
       final cachedKitchenName = await _storage.read(key: 'userKitchenName');
-      final cachedBranchName = await _storage.read(key: 'userBranchName');
+      final cachedBranchName = (await _storage.read(key: 'userBranchName')) ?? prefs.getString('branchName');
       final cachedEmpId = await _storage.read(key: 'employeeId');
       final cachedCompaniesStr = await _storage.read(key: 'managerCompanyNames');
       final cachedHasPhotoStr = await _storage.read(key: 'activeSessionHasPhoto');
@@ -374,7 +374,7 @@ class _EmployeePageState extends State<EmployeePage> {
             if (role != null) _employeeRole = role;
             if (code != null) _employeeId = code;
             if (phone != null) _employeePhone = phone;
-            if (bName != null) _branchName = bName;
+            if (bName != null && (_branchName == null || _branchName!.isEmpty)) _branchName = bName;
             if (kName != null && kName.isNotEmpty) _kitchenName = kName;
             if (resolvedUrl != null) _employeePhotoUrl = resolvedUrl;
             if (companyNames.isNotEmpty) _managerCompanyNames = companyNames;
@@ -390,7 +390,10 @@ class _EmployeePageState extends State<EmployeePage> {
     final token = await _storage.read(key: 'token');
     final userId = await _storage.read(key: 'userId');
 
-    if (token == null || userId == null) return;
+    if (token == null || userId == null) {
+      if (mounted) setState(() => _isFetchingInitialAttendance = false);
+      return;
+    }
 
     final now = DateTime.now();
     final localMidnight = DateTime(now.year, now.month, now.day);
@@ -407,12 +410,18 @@ class _EmployeePageState extends State<EmployeePage> {
         headers: token.isNotEmpty ? {'Authorization': 'Bearer $token'} : {},
       );
 
-      if (response.statusCode != 200) return;
+      if (response.statusCode != 200) {
+        if (mounted) setState(() => _isFetchingInitialAttendance = false);
+        return;
+      }
 
       final data = jsonDecode(response.body);
       final docs =
           (data is Map<String, dynamic> ? data['docs'] : null) as List?;
-      if (docs == null) return;
+      if (docs == null) {
+        if (mounted) setState(() => _isFetchingInitialAttendance = false);
+        return;
+      }
 
       final allActivities = <Map<String, dynamic>>[];
       var totalWork = Duration.zero;

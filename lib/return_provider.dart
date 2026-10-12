@@ -1,0 +1,399 @@
+import 'dart:convert';
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http_parser/http_parser.dart';
+import 'package:image/image.dart' as img_lib;
+import 'package:path_provider/path_provider.dart';
+import 'package:blackforest_app/api_config.dart';
+
+class ReturnItem {
+  final String id;
+  final String name;
+  final double price;
+  final double quantity; // Changed to double
+  final double subtotal;
+
+  ReturnItem({
+    required this.id,
+    required this.name,
+    required this.price,
+    required this.quantity,
+  }) : subtotal = price * quantity;
+}
+
+class ReturnProvider extends ChangeNotifier {
+  List<ReturnItem> _items = [];
+  String? _branchId;
+  Map<String, String> _productPhotos = {}; // productId: mediaId
+  Map<String, File?> _tempPhotos = {}; // Temp file
+  Map<String, String> _photoUrls = {}; // URL cache
+  bool _isSubmitting = false;
+  bool get isSubmitting => _isSubmitting;
+
+  List<ReturnItem> get returnItems => List.unmodifiable(_items);
+  double get total => _items.fold(0.0, (sum, item) => sum + item.subtotal);
+
+  void addOrUpdateItem(String id, String name, double quantity, double price) {
+    // Changed quantity to double
+    if (quantity <= 0) {
+      removeItem(id);
+      return;
+    }
+    final index = _items.indexWhere((item) => item.id == id);
+    if (index != -1) {
+      _items[index] = ReturnItem(
+        id: id,
+        name: name,
+        price: price,
+        quantity: quantity,
+      );
+    } else {
+      _items.add(
+        ReturnItem(id: id, name: name, price: price, quantity: quantity),
+      );
+    }
+    notifyListeners();
+  }
+
+  void updateQuantity(String id, double newQuantity) {
+    // New method
+    final index = _items.indexWhere((i) => i.id == id);
+    if (index != -1 && newQuantity > 0) {
+      _items[index] = ReturnItem(
+        id: id,
+        name: _items[index].name,
+        price: _items[index].price,
+        quantity: newQuantity,
+      );
+      notifyListeners();
+    } else if (newQuantity <= 0) {
+      removeItem(id);
+    }
+  }
+
+  void removeItem(String id) {
+    _items.removeWhere((item) => item.id == id);
+    removePhoto(id);
+    notifyListeners();
+  }
+
+  void clearReturns() {
+    _items.clear();
+    clearPhotos();
+    notifyListeners();
+  }
+
+  void setBranchId(String? branchId) {
+    _branchId = branchId;
+  }
+
+  bool hasPhoto(String productId) {
+    return _productPhotos.containsKey(productId) ||
+        _tempPhotos.containsKey(productId);
+  }
+
+  String? getPhotoId(String productId) {
+    return _productPhotos[productId];
+  }
+
+  String? getPhotoUrl(String productId) {
+    return _photoUrls[productId];
+  }
+
+  File? getTempPhoto(String productId) {
+    return _tempPhotos[productId];
+  }
+
+  void setPhoto(String productId, String mediaId, File tempFile, String? url) {
+    _productPhotos[productId] = mediaId;
+    _tempPhotos[productId] = tempFile;
+    if (url != null) _photoUrls[productId] = url;
+    notifyListeners();
+  }
+
+  Future<void> removePhoto(String productId) async {
+    _productPhotos.remove(productId);
+    _photoUrls.remove(productId);
+    final file = _tempPhotos.remove(productId);
+    if (file != null && await file.exists()) {
+      await file.delete();
+    }
+    final prefs = await SharedPreferences.getInstance();
+    prefs.remove('pending_photo_$productId');
+    notifyListeners();
+  }
+
+  Future<void> clearPhotos() async {
+    for (var file in _tempPhotos.values) {
+      if (file != null && await file.exists()) await file.delete();
+    }
+    _productPhotos.clear();
+    _tempPhotos.clear();
+    _photoUrls.clear();
+    final prefs = await SharedPreferences.getInstance();
+    for (var key in prefs.getKeys()) {
+      if (key.startsWith('pending_photo_')) prefs.remove(key);
+    }
+    notifyListeners();
+  }
+
+  Future<String?> _fetchMediaUrl(String mediaId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      if (token == null) return null;
+      final response = await http.get(
+        Uri.parse('${ApiConfig.baseUrl}/media/$mediaId?depth=0'),
+        headers: ApiConfig.getHeaders(token),
+      );
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['url'];
+      }
+    } catch (e) {
+      print('Fetch URL error: $e');
+    }
+    return null;
+  }
+
+  Future<File> _prepareImageForUpload(File originalFile, String prefix) async {
+    try {
+      if (!await originalFile.exists()) return originalFile;
+      final length = await originalFile.length();
+      if (length < 1500 * 1024) return originalFile;
+
+      final bytes = await originalFile.readAsBytes();
+      final image = img_lib.decodeImage(bytes);
+      if (image == null) return originalFile;
+
+      img_lib.Image resized = image;
+      if (image.width > 1280 || image.height > 1280) {
+        if (image.width > image.height) {
+          resized = img_lib.copyResize(image, width: 1280);
+        } else {
+          resized = img_lib.copyResize(image, height: 1280);
+        }
+      }
+      final compressedBytes = img_lib.encodeJpg(resized, quality: 70);
+      final tempDir = await getTemporaryDirectory();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final tempFile = File('${tempDir.path}/opt_${prefix}_$timestamp.jpg');
+      await tempFile.writeAsBytes(compressedBytes);
+      return tempFile;
+    } catch (_) {
+      return originalFile;
+    }
+  }
+
+  Future<String?> _uploadPhoto(File file, String altText) async {
+    try {
+      final uploadFile = await _prepareImageForUpload(file, 'returnorder');
+      if (!await uploadFile.exists()) return null;
+      if (await uploadFile.length() == 0) return null;
+
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      if (token == null) return null;
+
+      final filename =
+          'returnorder_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final urlsToTry = [
+        '${ApiConfig.baseUrl}/media?prefix=returnorder',
+        '${ApiConfig.baseUrl}/media/?prefix=returnorder',
+      ];
+
+      for (final urlStr in urlsToTry) {
+        final request = http.MultipartRequest('POST', Uri.parse(urlStr));
+        request.followRedirects = false;
+        request.headers['Authorization'] = 'Bearer $token';
+        request.fields['_payload'] = jsonEncode({
+          'alt': altText,
+          'prefix': 'returnorder',
+        });
+        request.fields['alt'] = altText;
+        request.fields['prefix'] = 'returnorder';
+
+        final multipartFile = await http.MultipartFile.fromPath(
+          'file',
+          uploadFile.path,
+          filename: filename,
+          contentType: MediaType('image', 'jpeg'),
+        );
+        request.files.add(multipartFile);
+
+        final response = await request.send();
+        final body = await response.stream.bytesToString();
+
+        if (response.statusCode == 201 || response.statusCode == 200) {
+          final data = jsonDecode(body);
+          final doc = data['doc'] ?? data;
+          return doc['id']?.toString();
+        }
+
+        if (response.statusCode >= 300 && response.statusCode < 400) {
+          final location = response.headers['location'];
+          if (location != null) {
+            final resolvedUri = Uri.parse(urlStr).resolve(location);
+            final redirRequest = http.MultipartRequest('POST', resolvedUri);
+            redirRequest.headers['Authorization'] = 'Bearer $token';
+            redirRequest.fields['_payload'] = jsonEncode({
+              'alt': altText,
+              'prefix': 'returnorder',
+            });
+            redirRequest.fields['alt'] = altText;
+            redirRequest.fields['prefix'] = 'returnorder';
+            redirRequest.files.add(
+              await http.MultipartFile.fromPath(
+                'file',
+                uploadFile.path,
+                filename: filename,
+                contentType: MediaType('image', 'jpeg'),
+              ),
+            );
+            final redirResponse = await redirRequest.send();
+            final redirBody = await redirResponse.stream.bytesToString();
+            if (redirResponse.statusCode == 201 ||
+                redirResponse.statusCode == 200) {
+              final data = jsonDecode(redirBody);
+              final doc = data['doc'] ?? data;
+              return doc['id']?.toString();
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Upload exception: $e');
+    }
+    return null;
+  }
+
+  Future<void> loadPendingPhotos([List<dynamic>? products]) async {
+    final prefs = await SharedPreferences.getInstance();
+    for (var key in prefs.getKeys()) {
+      if (key.startsWith('pending_photo_')) {
+        final productId = key.replaceFirst('pending_photo_', '');
+        final path = prefs.getString(key);
+        if (path != null) {
+          final file = File(path);
+          if (await file.exists()) {
+            String altText = 'Proof for product $productId';
+            if (products != null) {
+              final product = products.firstWhere(
+                (p) => p['id'] == productId,
+                orElse: () => null,
+              );
+              if (product != null) {
+                altText = product['name'] ?? altText;
+              }
+            }
+            final mediaId = await _uploadPhoto(file, altText);
+            if (mediaId != null) {
+              final url = await _fetchMediaUrl(mediaId);
+              setPhoto(productId, mediaId, file, url);
+              prefs.remove(key);
+            } else {
+              // Still set for local preview if upload fails
+              setPhoto(productId, '', file, null);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  Future<void> submitReturn(BuildContext context, String? branchId) async {
+    if (_isSubmitting) return;
+
+    if (_items.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No items selected for return')),
+      );
+      return;
+    }
+    // Validate photos for ALL items (like working code)
+    for (var item in _items) {
+      if (!hasPhoto(item.id)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Photo proof required for all items')),
+        );
+        return;
+      }
+    }
+
+    _isSubmitting = true;
+    notifyListeners();
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      if (token == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No token found. Please login again.')),
+        );
+        return;
+      }
+      final cashierId =
+          prefs.getString('user_id') ?? prefs.getString('employee_id');
+      final cashierName =
+          prefs.getString('employee_name') ??
+          prefs.getString('user_name') ??
+          prefs.getString('username');
+
+      final returnData = {
+        'items': _items
+            .map(
+              (item) => {
+                'product': item.id,
+                'name': item.name,
+                'quantity': item.quantity, // double is fine
+                'unitPrice': item.price,
+                'subtotal': item.subtotal,
+                'proofPhoto': getPhotoId(item.id) ?? '',
+              },
+            )
+            .toList(),
+        'totalAmount': total,
+        'branch': branchId,
+        'cashierId': cashierId,
+        'cashierName': cashierName,
+        'status': 'returned',
+        'notes': '',
+      };
+      final response = await http.post(
+        Uri.parse('${ApiConfig.baseUrl}/return-orders'),
+        headers: ApiConfig.getHeaders(token),
+        body: jsonEncode(returnData),
+      );
+      if (response.statusCode == 201) {
+        clearReturns();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Return order submitted successfully')),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Failed to submit return order: ${response.statusCode}',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Network error: Check your internet')),
+      );
+    } finally {
+      _isSubmitting = false;
+      notifyListeners();
+    }
+  }
+
+  // Clear all data on logout
+  void clearData() {
+    clearReturns(); // Clears items and photos
+    _branchId = null;
+    notifyListeners();
+  }
+}

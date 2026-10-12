@@ -5,6 +5,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
+import 'package:geolocator/geolocator.dart';
 import 'api_config.dart';
 import 'geofence_util.dart';
 
@@ -21,21 +22,21 @@ class AttendanceManager {
   static bool _isExecuting = false;
   static DateTime? _lastActionTime;
   static int _consecutiveOutsideTicks = 0;
+  static bool _hasActiveSessionCached = false;
+  static DateTime? _lastServerFetchTime;
+  static StreamSubscription<Position>? _positionStreamSubscription;
 
-  /// Starts the app-wide foreground geofence watcher that runs every 15-20 seconds
-  /// regardless of which page the user is viewing.
+  /// Starts the app-wide movement-stream watcher for instant geofence exit detection.
   void startForegroundWatcher() {
     _foregroundTimer?.cancel();
     _foregroundTimer = null;
 
-    debugPrint('AttendanceManager: Starting foreground attendance watcher...');
+    debugPrint('AttendanceManager: Starting movement-stream attendance watcher...');
     // Initial immediate check
     checkNow();
 
-    // Check periodically in the foreground
-    _foregroundTimer = Timer.periodic(const Duration(seconds: 20), (_) async {
-      await checkAndProcessAttendance(isBackground: false);
-    });
+    // Start movement stream (triggers immediately when user moves 10 meters)
+    startPositionStream(isBackground: false);
   }
 
   /// Stops the foreground attendance watcher (e.g. on user logout).
@@ -43,7 +44,40 @@ class AttendanceManager {
     debugPrint('AttendanceManager: Stopping foreground attendance watcher.');
     _foregroundTimer?.cancel();
     _foregroundTimer = null;
+    _positionStreamSubscription?.cancel();
+    _positionStreamSubscription = null;
     _consecutiveOutsideTicks = 0;
+  }
+
+  /// Starts native movement stream with 10-meter distance filter for instant exit detection
+  static void startPositionStream({bool isBackground = false}) {
+    _positionStreamSubscription?.cancel();
+    _positionStreamSubscription = null;
+
+    try {
+      const locationSettings = LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10, // Notifies immediately when user moves 10 meters
+      );
+
+      _positionStreamSubscription = Geolocator.getPositionStream(
+        locationSettings: locationSettings,
+      ).listen(
+        (Position position) {
+          unawaited(
+            checkAndProcessAttendance(
+              isBackground: isBackground,
+              position: position,
+            ),
+          );
+        },
+        onError: (e) {
+          debugPrint('AttendanceManager positionStream error: $e');
+        },
+      );
+    } catch (e) {
+      debugPrint('AttendanceManager startPositionStream error: $e');
+    }
   }
 
   /// Immediately triggers a check and auto-punch-in / auto-punch-out evaluation.
@@ -54,6 +88,7 @@ class AttendanceManager {
   /// Core logic executed by both the foreground manager and the background service.
   static Future<void> checkAndProcessAttendance({
     bool isBackground = false,
+    Position? position,
   }) async {
     const storage = FlutterSecureStorage();
     if (_isExecuting) {
@@ -79,10 +114,12 @@ class AttendanceManager {
       }
 
       // 1. Check GPS position & Geofence
-      final geo = await GeofenceUtil.checkLocationAndGeofence();
-      final position = geo.position;
+      final geo = await GeofenceUtil.checkLocationAndGeofence(
+        existingPosition: position,
+      );
+      final currentPos = geo.position;
 
-      if (position == null) {
+      if (currentPos == null) {
         debugPrint(
           'AttendanceManager: Could not get GPS fix. Skipping attendance check.',
         );
@@ -90,9 +127,21 @@ class AttendanceManager {
       }
 
       final isInside = geo.isInside;
+      final now = DateTime.now();
+
+      // If user is safely inside branch and already has an active session, skip server query!
+      if (isInside) {
+        _consecutiveOutsideTicks = 0;
+        final lastSync = _lastServerFetchTime;
+        if (_hasActiveSessionCached &&
+            lastSync != null &&
+            now.difference(lastSync).inMinutes < 15) {
+          // Still safely inside with active shift - no server query needed!
+          return;
+        }
+      }
 
       // 2. Fetch today's attendance document for this user
-      final now = DateTime.now();
       final localMidnight = DateTime(now.year, now.month, now.day);
       final queryDate = localMidnight
           .subtract(const Duration(days: 1))
@@ -175,7 +224,6 @@ class AttendanceManager {
       }
 
       // 4. Resolve today's document and current session state
-      Map<String, dynamic>? todayDoc;
       String? docId;
       List<dynamic> rawActivities = [];
 
@@ -184,7 +232,6 @@ class AttendanceManager {
         final docDateStr = firstDoc['dateString']?.toString() ?? '';
         if (docDateStr == queryDateStr ||
             (firstDoc['date']?.toString().startsWith(queryDateStr) == true)) {
-          todayDoc = firstDoc;
           docId = firstDoc['id']?.toString();
           rawActivities = List<dynamic>.from(
             (firstDoc['activities'] as List?) ?? [],
@@ -223,10 +270,11 @@ class AttendanceManager {
           if (latestPunchOutType != null) break;
         }
 
-        if (latestPunchOutType == null) {
-          latestPunchOutType = await storage.read(key: 'lastPunchOutType');
-        }
+        latestPunchOutType ??= await storage.read(key: 'lastPunchOutType');
       }
+
+      _lastServerFetchTime = now;
+      _hasActiveSessionCached = activeSession != null;
 
       debugPrint(
         'AttendanceManager tick: [bg=$isBackground] isInside=$isInside, hasActive=${activeSession != null}, hasPhoto=$activePhotoFound, lastPunchOut=$latestPunchOutType',
@@ -238,7 +286,8 @@ class AttendanceManager {
         if (!isInside && !isApiError) {
           _consecutiveOutsideTicks++;
 
-          int requiredTicks = isBackground ? 1 : 2;
+          // Immediate exit detection: trigger on 1 confirmed outside reading
+          const int requiredTicks = 1;
           if (_consecutiveOutsideTicks >= requiredTicks) {
             // Punch out
             final punchInStr = activeSession['punchIn']?.toString() ?? '';
@@ -267,6 +316,7 @@ class AttendanceManager {
               debugPrint('AttendanceManager: Auto punch-out SUCCESS!');
               await storage.write(key: 'lastPunchOutType', value: 'auto');
               _consecutiveOutsideTicks = 0;
+              _hasActiveSessionCached = false;
 
               await _showLocalNotification(
                 id: 991,
@@ -318,91 +368,46 @@ class AttendanceManager {
             'status': 'active',
             'capturedImage': null,
             'punchInType': 'auto',
-            'latitude': position.latitude,
-            'longitude': position.longitude,
+            'latitude': currentPos.latitude,
+            'longitude': currentPos.longitude,
           };
 
-          if (docId != null) {
-            final updatedActivities = List<dynamic>.from(rawActivities)
-              ..add(newActivity);
-            final patchUrl =
-                '${ApiConfig.baseUrl}/attendance/$docId';
-            final patchRes = await http.patch(
-              Uri.parse(patchUrl),
-              headers: {
-                'Authorization': 'Bearer $token',
-                'Content-Type': 'application/json',
-              },
-              body: jsonEncode({'activities': updatedActivities}),
+          final updatedActivities = List<dynamic>.from(rawActivities)
+            ..add(newActivity);
+          final patchUrl = '${ApiConfig.baseUrl}/attendance/$docId';
+          final patchRes = await http.patch(
+            Uri.parse(patchUrl),
+            headers: {
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'activities': updatedActivities}),
+          );
+
+          if (patchRes.statusCode == 200) {
+            debugPrint('AttendanceManager: Auto punch-in SUCCESS (patched)!');
+            _hasActiveSessionCached = true;
+            await storage.delete(key: 'lastPunchOutType');
+
+            await _showLocalNotification(
+              id: 992,
+              title: '⚡ Auto Punched In',
+              body:
+                  'You arrived at the branch! Session started. Tap here to add your selfie.',
+              payload: 'auto_punch_in',
             );
 
-            if (patchRes.statusCode == 200) {
-              debugPrint('AttendanceManager: Auto punch-in SUCCESS (patched)!');
-              await storage.delete(key: 'lastPunchOutType');
-
-              await _showLocalNotification(
-                id: 992,
-                title: '⚡ Auto Punched In',
-                body:
-                    'You arrived at the branch! Session started. Tap here to add your selfie.',
-                payload: 'auto_punch_in',
-              );
-
-              if (!isBackground) {
-                instance._updateController.add({
-                  'type': 'auto_punch_in',
-                  'docId': docId,
-                  'timestamp': now.toIso8601String(),
-                });
-              }
-            } else {
-              debugPrint(
-                'AttendanceManager: Auto punch-in PATCH failed (${patchRes.statusCode}): ${patchRes.body}',
-              );
+            if (!isBackground) {
+              instance._updateController.add({
+                'type': 'auto_punch_in',
+                'docId': docId,
+                'timestamp': now.toIso8601String(),
+              });
             }
           } else {
-            // Create new today document
-            final postUrl = '${ApiConfig.baseUrl}/attendance';
-            final postRes = await http.post(
-              Uri.parse(postUrl),
-              headers: {
-                'Authorization': 'Bearer $token',
-                'Content-Type': 'application/json',
-              },
-              body: jsonEncode({
-                'user': userId,
-                'date': localMidnight.toUtc().toIso8601String(),
-                'dateString': queryDateStr,
-                'activities': [newActivity],
-                if (geo.branchId != null) 'loginBranch': geo.branchId,
-              }),
+            debugPrint(
+              'AttendanceManager: Auto punch-in PATCH failed (${patchRes.statusCode}): ${patchRes.body}',
             );
-
-            if (postRes.statusCode == 200 || postRes.statusCode == 201) {
-              debugPrint(
-                'AttendanceManager: Auto punch-in SUCCESS (posted new doc)!',
-              );
-              await storage.delete(key: 'lastPunchOutType');
-
-              await _showLocalNotification(
-                id: 992,
-                title: '⚡ Auto Punched In',
-                body:
-                    'You arrived at the branch! Session started. Tap here to add your selfie.',
-                payload: 'auto_punch_in',
-              );
-
-              if (!isBackground) {
-                instance._updateController.add({
-                  'type': 'auto_punch_in',
-                  'timestamp': now.toIso8601String(),
-                });
-              }
-            } else {
-              debugPrint(
-                'AttendanceManager: Auto punch-in POST failed (${postRes.statusCode}): ${postRes.body}',
-              );
-            }
           }
         }
       }

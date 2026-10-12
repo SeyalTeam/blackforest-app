@@ -66,11 +66,12 @@ class InstockProvider extends ChangeNotifier {
   }
 
   Future<void> syncBranchId() async {
-    final prefs = await SharedPreferences.getInstance();
-    final localBranchId = prefs.getString('branchId');
-    if (localBranchId != null && localBranchId.isNotEmpty && _branchId != localBranchId) {
-      _branchId = localBranchId;
-      notifyListeners();
+    // We do NOT override _branchId blindly with GPS branch anymore.
+    // If _branchId is null (e.g. at startup before loadUserData finishes), we can try to fetch it again safely.
+    if (_branchId == null) {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString("token");
+      if (token != null) await _loadUserData(token);
     }
   }
 
@@ -126,19 +127,23 @@ class InstockProvider extends ChangeNotifier {
             : user["company"];
       }
 
-      if (localBranchId != null && localBranchId.isNotEmpty) {
-        _branchId = localBranchId;
-        // Still fetch company ID from user profile as fallback
-        final comp = user["branch"] is Map ? user["branch"]["company"] : null;
-        if (comp != null) {
-          _companyId = comp is Map ? comp["id"] : comp;
-        }
-      } else if (user["branch"] != null) {
-        _branchId = user["branch"] is Map
-            ? user["branch"]["id"]
-            : user["branch"];
+      // 1. Always prioritize the strict server-assigned branch to prevent "Unauthorized branch" errors from backend hook
+      if (user["branch"] != null) {
+        _branchId = user["branch"] is Map ? user["branch"]["id"] : user["branch"];
         final comp = user["branch"] is Map ? user["branch"]["company"] : null;
         _companyId = comp is Map ? comp["id"] : comp;
+      }
+      // 2. Fallback to GPS branch if server has no branch assigned (floating waiters)
+      else if (localBranchId != null && localBranchId.isNotEmpty) {
+        _branchId = localBranchId;
+        try {
+          final bRes = await http.get(Uri.parse("${ApiConfig.baseUrl}/branches/$localBranchId?depth=1"), headers: ApiConfig.getHeaders(token));
+          if (bRes.statusCode == 200) {
+            final bData = jsonDecode(bRes.body);
+            final comp = bData["company"];
+            _companyId = comp is Map ? comp["id"] : comp;
+          }
+        } catch (_) {}
       } else if (_userRole == "waiter" ||
           _userRole == "kitchen" ||
           _userRole == "chef" ||
@@ -624,6 +629,10 @@ class InstockProvider extends ChangeNotifier {
       messenger.showSnackBar(const SnackBar(content: Text("No items updated")));
       return;
     }
+    if (_branchId == null) {
+      messenger.showSnackBar(const SnackBar(content: Text("Error: Branch ID is missing. Please restart the app.")));
+      return;
+    }
 
     _isSubmitting = true;
     notifyListeners();
@@ -660,8 +669,9 @@ class InstockProvider extends ChangeNotifier {
             .map(
               (item) => {
                 "product": item['product'],
-                "instock":
-                    item['inStock'], // Changed from 'quantity' to 'instock'
+                "instock": item['inStock'],
+                "quantity": item['inStock'],
+                "requiredQty": 0
               },
             )
             .toList(),
@@ -686,7 +696,7 @@ class InstockProvider extends ChangeNotifier {
         await _loadCategories();
       } else {
         messenger.showSnackBar(
-          SnackBar(content: Text("Failed: ${res.statusCode}")),
+          SnackBar(content: Text("Failed: ${res.statusCode} - ${res.body}")),
         );
       }
     } catch (e) {

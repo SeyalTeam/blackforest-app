@@ -9,8 +9,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_server_prefs.dart';
 import 'common_scaffold.dart';
+import 'global_kot_realtime_service.dart';
 
-const Duration _chatPollInterval = Duration(seconds: 15);
 const Color _whatsAppGreen = Color(0xFF25D366);
 const Color _whatsAppDarkGreen = Color(0xFF075E54);
 const Color _whatsAppOutgoingBubble = Color(0xFFD9FDD3);
@@ -75,7 +75,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   List<_ChatMessage> _optimisticMessages = const [];
   Map<String, _MessageReceiptSummary> _outgoingReceiptsByMessageId = const {};
 
-  Timer? _pollTimer;
+  StreamSubscription? _chatSubscription;
   bool _isBootstrapping = true;
   bool _isRefreshing = false;
   bool _bootstrapInFlight = false;
@@ -88,16 +88,24 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     ChatPage.setUnreadChatCount(0);
+    SharedPreferences.getInstance().then((p) => p.setBool('is_chat_page_active', true));
     WidgetsBinding.instance.addObserver(this);
     _messageController.addListener(_handleDraftChanged);
-    _startPolling();
+    _chatSubscription = GlobalKotRealtimeService.instance.onChatMessage.listen((msg) {
+      if (!mounted) return;
+      final msgThreadId = msg['threadId']?.toString();
+      if (_thread == null || msgThreadId == null || msgThreadId == _thread?.id) {
+        unawaited(_refreshConversation(showLoader: false, forceScrollToBottom: true));
+      }
+    });
     _bootstrapConversation();
   }
 
   @override
   void dispose() {
+    SharedPreferences.getInstance().then((p) => p.setBool('is_chat_page_active', false));
     WidgetsBinding.instance.removeObserver(this);
-    _pollTimer?.cancel();
+    _chatSubscription?.cancel();
     _messageController.removeListener(_handleDraftChanged);
     _messageController.dispose();
     _scrollController.dispose();
@@ -124,13 +132,6 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     if (!mounted) return;
     setState(() {
       _draftText = nextDraft;
-    });
-  }
-
-  void _startPolling() {
-    _pollTimer?.cancel();
-    _pollTimer = Timer.periodic(_chatPollInterval, (_) {
-      unawaited(_refreshConversation(showLoader: false));
     });
   }
 

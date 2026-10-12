@@ -33,12 +33,6 @@ class PrintTaskHandler extends TaskHandler {
 
   @override
   Future<void> onRepeatEvent(DateTime timestamp) async {
-    try {
-      await KotAutoPrintService.syncChatNotifications();
-    } catch (e) {
-      debugPrint('🛎️ Error syncing chat notifications in background: $e');
-    }
-
     final alerts = await KotAutoPrintService.syncPendingWebsiteKots(
       isBackground: true,
     );
@@ -125,7 +119,7 @@ class PrintTaskHandler extends TaskHandler {
 }
 
 class KotAutoPrintService {
-  static const String _apiBase = 'https://blackforest.vseyal.com/api';
+  static const String _apiBase = 'https://blackforest1.vseyal.com/api';
   static const Duration _configCacheTtl = Duration(minutes: 2);
   static const int _maxRememberedItems = 1200;
   static const String _autoCompletedReceiptPrefKey =
@@ -612,7 +606,7 @@ class KotAutoPrintService {
 
     final url = Uri.parse(
       '$_apiBase/billings'
-      '?where[status][in]=pending,ordered'
+      '?where[status][in][0]=pending&where[status][in][1]=ordered'
       '&where[createdBy][equals]=$userId'
       '&where[branch][equals]=$branchId'
       '&where[createdAt][greater_than_equal]=$todayStart'
@@ -712,7 +706,7 @@ class KotAutoPrintService {
 
     final url = Uri.parse(
       '$_apiBase/billings'
-      '?where[status][in]=pending,ordered,confirmed,prepared,delivered'
+      '?where[status][in][0]=pending&where[status][in][1]=ordered&where[status][in][2]=confirmed&where[status][in][3]=prepared&where[status][in][4]=delivered'
       '&where[branch][equals]=$branchId'
       '&where[updatedAt][greater_than_equal]=$todayStart'
       '&limit=150'
@@ -1680,7 +1674,7 @@ class KotAutoPrintService {
       }
 
       // QR Code Logic (Same as cart_page.dart)
-      String billingUrl = 'https://blackforest.vseyal.com/billings';
+      String billingUrl = 'https://blackforest1.vseyal.com/billings';
       String? billingId = bill['id'] ?? bill['doc']?['id'] ?? bill['_id'];
       if (billingId != null) {
         billingUrl = '$billingUrl/$billingId';

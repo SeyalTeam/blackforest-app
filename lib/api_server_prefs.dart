@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
-const String apiHostPrimary = 'blackforest.vseyal.com';
-const String apiHostFallback = 'blackforest.vseyal.com';
+const String apiHostPrimary = 'blackforest1.vseyal.com';
+const String apiHostFallback = 'blackforest1.vseyal.com';
 
 const String _api1EnabledKey = 'api_server_api1_enabled';
 

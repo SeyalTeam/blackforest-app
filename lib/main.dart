@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:blackforest_app/instock_provider.dart';
+import 'package:blackforest_app/return_provider.dart';
 import 'package:blackforest_app/categories_page.dart';
 import 'package:blackforest_app/login_page.dart';
 import 'package:blackforest_app/home_page.dart';
@@ -19,6 +20,7 @@ import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:screen_protector/screen_protector.dart';
 import 'package:blackforest_app/kot_auto_print_service.dart';
 import 'package:blackforest_app/chat_page.dart';
+import 'package:blackforest_app/global_kot_realtime_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -62,7 +64,7 @@ void main() async {
 
   runApp(
     MultiProvider(
-      providers: [ChangeNotifierProvider(create: (context) => CartProvider()), ChangeNotifierProvider(create: (context) => InstockProvider())],
+      providers: [ChangeNotifierProvider(create: (context) => CartProvider()), ChangeNotifierProvider(create: (context) => InstockProvider()), ChangeNotifierProvider(create: (context) => ReturnProvider())],
       child: const MyApp(),
     ),
   );
@@ -83,6 +85,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    GlobalKotRealtimeService.instance.connect();
     AuthSessionManager.instance.attachNavigatorKey(_navigatorKey);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -190,7 +193,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     final showTableNavigation = HomeNavigationService.readCachedTableVisibility(
       prefs,
       branchId: branchId,
-      fallback: true,
+      fallback: false,
     );
 
     unawaited(

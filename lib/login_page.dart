@@ -338,29 +338,27 @@ class _LoginPageState extends State<LoginPage> {
         };
 
         var res = await http.post(
-          Uri.parse('${ApiConfig.baseUrl}/users/login-phone'),
+          Uri.parse('${ApiConfig.baseUrl}/users/login'),
           headers: headers,
           body: jsonEncode({
-            'phoneNumber': rawInput,
+            'email': emailToUse,
             'password': _passwordController.text,
             'privateIp': _privateIp,
           }),
         );
 
-        // Fallback: If phone login fails, try standard username/email login
-        if (res.statusCode != 200) {
+        // Fallback: If @bf.com failed and input had no @, try sending rawInput directly
+        if (res.statusCode != 200 && !rawInput.contains('@')) {
           final fallbackRes = await http.post(
             Uri.parse('${ApiConfig.baseUrl}/users/login'),
             headers: headers,
             body: jsonEncode({
-              'email': emailToUse,
+              'email': rawInput,
               'password': _passwordController.text,
               'privateIp': _privateIp,
             }),
           );
-          
-          // If fallback succeeds, or if we want to show its error message, we assign it back
-          if (fallbackRes.statusCode == 200 || !rawInput.contains('@')) {
+          if (fallbackRes.statusCode == 200) {
             res = fallbackRes;
           }
         }
@@ -748,7 +746,7 @@ class _LoginPageState extends State<LoginPage> {
                   const SizedBox(height: 6),
                   Center(
                     child: Text(
-                      'Sign in with your phone number and password',
+                      'Sign in with your username and password',
                       style: TextStyle(fontSize: 13, color: Colors.grey[600]),
                     ),
                   ),
@@ -772,14 +770,13 @@ class _LoginPageState extends State<LoginPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        // Phone Number Field
+                        // Username Field
                         TextFormField(
                           controller: _branchController,
-                          keyboardType: TextInputType.phone,
                           decoration: InputDecoration(
-                            labelText: 'Phone Number',
-                            hintText: 'Enter phone number',
-                            prefixIcon: const Icon(Icons.phone_outlined),
+                            labelText: 'Username',
+                            hintText: 'Enter username or email',
+                            prefixIcon: const Icon(Icons.person_outline_rounded),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
@@ -788,7 +785,7 @@ class _LoginPageState extends State<LoginPage> {
                           ),
                           validator: (value) {
                             if (value == null || value.trim().isEmpty) {
-                              return 'Please enter phone number';
+                              return 'Please enter username';
                             }
                             return null;
                           },

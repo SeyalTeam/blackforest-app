@@ -5,6 +5,10 @@ import 'package:blackforest_app/app_http.dart' as http;
 import 'package:blackforest_app/raw_material_dealer_list_page.dart';
 import 'package:blackforest_app/category_popularity_service.dart';
 import 'package:blackforest_app/categories_page.dart';
+import 'package:blackforest_app/instock_categories_page.dart';
+import 'package:blackforest_app/return_categories_page.dart';
+
+
 import 'package:blackforest_app/cart_page.dart';
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:blackforest_app/common_scaffold.dart';
@@ -271,7 +275,7 @@ class _HomeSearchOverlayState extends State<_HomeSearchOverlay> {
     }
 
     final response = await http.get(
-      Uri.parse('https://blackforest.vseyal.com/api/categories?$filterQuery'),
+      Uri.parse('https://blackforest1.vseyal.com/api/categories?$filterQuery'),
       headers: {
         'Authorization': 'Bearer $token',
         'Content-Type': 'application/json',
@@ -319,7 +323,7 @@ class _HomeSearchOverlayState extends State<_HomeSearchOverlay> {
   }) async {
     final response = await http.get(
       Uri.parse(
-        'https://blackforest.vseyal.com/api/products?where[name][like]=$query&limit=12&depth=2&sort=name',
+        'https://blackforest1.vseyal.com/api/products?where[name][like]=$query&limit=12&depth=2&sort=name',
       ),
       headers: {
         'Authorization': 'Bearer $token',
@@ -509,7 +513,7 @@ class _HomeSearchOverlayState extends State<_HomeSearchOverlay> {
       return resolveApiAssetUrl(value);
     }
     if (value.startsWith('//')) return resolveApiAssetUrl('https:$value');
-    if (value.startsWith('blackforest.vseyal.com')) {
+    if (value.startsWith('blackforest1.vseyal.com')) {
       return resolveApiAssetUrl('https://$value');
     }
     if (value.startsWith('/')) return resolveApiAssetUrl(value);
@@ -1113,7 +1117,7 @@ class _HomePageState extends State<HomePage> {
   }) async {
     try {
       final response = await http.get(
-        Uri.parse('https://blackforest.vseyal.com/api/branches/$branchId'),
+        Uri.parse('https://blackforest1.vseyal.com/api/branches/$branchId'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode != 200) return null;
@@ -1794,7 +1798,7 @@ class _HomePageState extends State<HomePage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest.vseyal.com/api/globals/widget-settings?depth=1',
+          'https://blackforest1.vseyal.com/api/globals/widget-settings?depth=1',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -1915,7 +1919,7 @@ class _HomePageState extends State<HomePage> {
   }) async {
     final rulesResponse = await http.get(
       Uri.parse(
-        'https://blackforest.vseyal.com/api/globals/widget-settings?depth=1',
+        'https://blackforest1.vseyal.com/api/globals/widget-settings?depth=1',
       ),
       headers: {
         'Authorization': 'Bearer $token',
@@ -1964,7 +1968,7 @@ class _HomePageState extends State<HomePage> {
     final idsParam = favoriteProductIds.join(',');
     final optionsResponse = await http.get(
       Uri.parse(
-        'https://blackforest.vseyal.com/api/widgets/product-options?ids=$idsParam',
+        'https://blackforest1.vseyal.com/api/widgets/product-options?ids=$idsParam',
       ),
       headers: {
         'Authorization': 'Bearer $token',
@@ -2171,7 +2175,7 @@ class _HomePageState extends State<HomePage> {
       final idsParam = Uri.encodeQueryComponent(ids.join(','));
       final response = await http.get(
         Uri.parse(
-          'https://blackforest.vseyal.com/api/categories?where[id][in]=$idsParam&depth=1&limit=${ids.length}',
+          'https://blackforest1.vseyal.com/api/categories?where[id][in]=$idsParam&depth=1&limit=${ids.length}',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -2290,7 +2294,7 @@ class _HomePageState extends State<HomePage> {
       final idsParam = Uri.encodeQueryComponent(productIds.join(','));
       final response = await http.get(
         Uri.parse(
-          'https://blackforest.vseyal.com/api/products?where[id][in]=$idsParam&depth=2&limit=100',
+          'https://blackforest1.vseyal.com/api/products?where[id][in]=$idsParam&depth=2&limit=100',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -2618,11 +2622,11 @@ class _HomePageState extends State<HomePage> {
     if (value.startsWith('//')) {
       return 'https:$value';
     }
-    if (value.startsWith('blackforest.vseyal.com')) {
+    if (value.startsWith('blackforest1.vseyal.com')) {
       return 'https://$value';
     }
     if (value.startsWith('/')) {
-      return 'https://blackforest.vseyal.com$value';
+      return 'https://blackforest1.vseyal.com$value';
     }
     final lower = value.toLowerCase();
     final maybeFilePath =
@@ -2638,7 +2642,7 @@ class _HomePageState extends State<HomePage> {
         value.startsWith('files/') ||
         value.startsWith('api/') ||
         maybeFilePath) {
-      return 'https://blackforest.vseyal.com/$value';
+      return 'https://blackforest1.vseyal.com/$value';
     }
     return null;
   }
@@ -3079,6 +3083,10 @@ class _HomePageState extends State<HomePage> {
                       _buildTopSection(context),
                       const SizedBox(height: 20),
                       _buildRawMaterialBillingSection(),
+                      const SizedBox(height: 20),
+                      _buildInstockEntrySection(),
+                      const SizedBox(height: 20),
+                      _buildReturnOrderSection(),
                       const SizedBox(height: 30),
                     ],
                   ),
@@ -3308,6 +3316,156 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 6),
         ],
+      ),
+    );
+  }
+
+
+
+  Widget _buildReturnOrderSection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: GestureDetector(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const ReturnCategoriesPage(),
+            ),
+          );
+        },
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFFE53935), Color(0xFFD32F2F)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFE53935).withValues(alpha: 0.25),
+                blurRadius: 12,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.assignment_return_outlined,
+                  color: Colors.white,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 16),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Return Order',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Process damaged or returned items',
+                      style: TextStyle(fontSize: 13, color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 16),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInstockEntrySection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: GestureDetector(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const InstockCategoriesPage(),
+            ),
+          );
+        },
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF1565C0), Color(0xFF1976D2)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF1565C0).withValues(alpha: 0.25),
+                blurRadius: 12,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.inventory_2_outlined,
+                  color: Colors.white,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 16),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Instock Entry',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Update current product stock',
+                      style: TextStyle(fontSize: 13, color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 16),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -3,6 +3,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'api_config.dart';
 import 'api_service.dart';
+import 'dart:convert';
 
 class GeofenceResult {
   final bool isInside;
@@ -101,11 +102,23 @@ class GeofenceUtil {
 
     try {
       Map<String, dynamic> data = {};
+      final prefs = await SharedPreferences.getInstance();
       try {
-        data = await ApiService.instance.fetchBranchGeoSettings();
-      } catch (_) {
-        final prefs = await SharedPreferences.getInstance();
-        data = await ApiConfig.fetchBranchGeoSettings(prefs.getString('token') ?? '');
+        try {
+          data = await ApiService.instance.fetchBranchGeoSettings();
+        } catch (_) {
+          data = await ApiConfig.fetchBranchGeoSettings(prefs.getString('token') ?? '');
+        }
+        if (data.isNotEmpty) {
+          await prefs.setString('cached_geo_settings', jsonEncode(data));
+        }
+      } catch (e) {
+        final cached = prefs.getString('cached_geo_settings');
+        if (cached != null) {
+          data = jsonDecode(cached);
+        } else {
+          rethrow;
+        }
       }
 
       // Helper map to resolve branch names accurately from branch IDs

@@ -3,7 +3,7 @@ import 'dart:ui';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'attendance_manager.dart';
 
 Future<void> initializeService() async {
@@ -57,12 +57,25 @@ void onStart(ServiceInstance service) async {
   DartPluginRegistrant.ensureInitialized();
   WidgetsFlutterBinding.ensureInitialized();
 
-  final prefs = await SharedPreferences.getInstance();
+  const storage = FlutterSecureStorage();
 
-  // Periodic background check every 40 seconds
-  Timer.periodic(const Duration(seconds: 40), (timer) async {
+  // 1. Immediately start native movement-based position stream (instant geofence detection)
+  AttendanceManager.startPositionStream(isBackground: true);
+
+  // 2. Initial check on startup if user is logged in
+  try {
+    final token = await storage.read(key: 'token');
+    if (token != null && token.isNotEmpty) {
+      await AttendanceManager.checkAndProcessAttendance(isBackground: true);
+    }
+  } catch (e) {
+    debugPrint('Background attendance initial check error: $e');
+  }
+
+  // 3. Fallback heartbeat timer: 5 minutes (relieves battery & server load)
+  Timer.periodic(const Duration(minutes: 5), (timer) async {
     try {
-      final token = prefs.getString('token');
+      final token = await storage.read(key: 'token');
       if (token == null || token.isEmpty) return; // User not logged in
 
       await AttendanceManager.checkAndProcessAttendance(isBackground: true);
