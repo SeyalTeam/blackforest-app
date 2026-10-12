@@ -24,6 +24,7 @@ import 'package:blackforest_app/categories_page.dart'; // Import CategoriesPage
 import 'package:blackforest_app/cart_page.dart'; // Import CartPage
 import 'package:blackforest_app/cart_provider.dart'; // Import CartProvider
 import 'package:blackforest_app/chat_page.dart';
+import 'package:blackforest_app/attendance_manager.dart';
 import 'package:blackforest_app/employee.dart'; // Import EmployeePage
 import 'package:blackforest_app/home_navigation_service.dart';
 import 'package:blackforest_app/table.dart'; // Import TablePage
@@ -130,6 +131,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   @override
   void initState() {
     super.initState();
+    AttendanceManager.isPunchedInNotifier.addListener(_onAttendanceStateChanged);
     _loadUsername();
     _loadNavigationVisibility();
     _resetTimer(); // Changed from _startTimer() to _resetTimer() as per original code
@@ -138,6 +140,14 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     _initChatUnreadCheck();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      if (!AttendanceManager.isPunchedIn && widget.pageType != PageType.employee) {
+        SharedPreferences.getInstance().then((prefs) {
+          final isPunched = AttendanceManager.isPunchedInFromPrefs(prefs);
+          if (!isPunched && mounted) {
+            _handleAttendanceBlockedNavigation();
+          }
+        });
+      }
       final cartProvider = Provider.of<CartProvider>(context, listen: false);
       if (widget.pageType == PageType.billing) {
         cartProvider.setCartType(CartType.billing);
@@ -157,8 +167,49 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     });
   }
 
+  void _onAttendanceStateChanged() {
+    if (!mounted) return;
+    if (!AttendanceManager.isPunchedIn && widget.pageType != PageType.employee) {
+      _handleAttendanceBlockedNavigation();
+    } else {
+      setState(() {});
+    }
+  }
+
+  void _handleAttendanceBlockedNavigation() {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: const Row(
+          children: [
+            Icon(Icons.lock_outline, color: Colors.white, size: 20),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Please punch in attendance first to access other sections.',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+            ),
+          ],
+        ),
+        backgroundColor: const Color(0xFF1A202C),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 4),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+    if (widget.pageType != PageType.employee) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        _createRoute(const EmployeePage()),
+        (route) => false,
+      );
+    }
+  }
+
   @override
   void dispose() {
+    AttendanceManager.isPunchedInNotifier.removeListener(_onAttendanceStateChanged);
     _inactivityTimer?.cancel();
     _kitchenSyncTimer?.cancel();
     _sessionCheckTimer?.cancel();
@@ -257,17 +308,6 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   void _startKitchenSync() {
     // Initial sync
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        Provider.of<CartProvider>(
-          context,
-          listen: false,
-        ).syncKitchenNotifications();
-        unawaited(_syncWebsiteOrderSignals());
-      }
-    });
-
-    // Periodic sync every 45 seconds
-    _kitchenSyncTimer = Timer.periodic(const Duration(seconds: 45), (timer) {
       if (mounted) {
         Provider.of<CartProvider>(
           context,
@@ -1482,6 +1522,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
         icon: const Icon(Icons.call_outlined, color: Colors.black87, size: 22),
         onPressed: () {
           _resetTimer();
+          if (!AttendanceManager.isPunchedIn) {
+            _handleAttendanceBlockedNavigation();
+            return;
+          }
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -1500,6 +1544,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                 icon: const Icon(Icons.notifications_none_outlined),
                 onPressed: () {
                   _resetTimer();
+                  if (!AttendanceManager.isPunchedIn) {
+                    _handleAttendanceBlockedNavigation();
+                    return;
+                  }
                   Navigator.push(
                     context,
                     MaterialPageRoute(
@@ -1546,6 +1594,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                   ),
                   onPressed: () {
                     _resetTimer();
+                    if (!AttendanceManager.isPunchedIn) {
+                      _handleAttendanceBlockedNavigation();
+                      return;
+                    }
                     Navigator.push(
                       context,
                       MaterialPageRoute(builder: (context) => const InstockCartPage()),
@@ -1590,6 +1642,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                   ),
                   onPressed: () {
                     _resetTimer();
+                    if (!AttendanceManager.isPunchedIn) {
+                      _handleAttendanceBlockedNavigation();
+                      return;
+                    }
                     Navigator.push(
                       context,
                       MaterialPageRoute(builder: (context) => const ReturnCartPage()),
@@ -1635,6 +1691,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                   ),
                   onPressed: () {
                     _resetTimer();
+                    if (!AttendanceManager.isPunchedIn) {
+                      _handleAttendanceBlockedNavigation();
+                      return;
+                    }
                     Navigator.push(
                       context,
                       MaterialPageRoute(builder: (context) => const CartPage()),
@@ -1851,6 +1911,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                   onTap: () {
                     _resetTimer();
                     Navigator.pop(context);
+                    if (!AttendanceManager.isPunchedIn) {
+                      _handleAttendanceBlockedNavigation();
+                      return;
+                    }
                     if (widget.pageType == PageType.home) {
                       return;
                     }
@@ -1870,6 +1934,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                 onTap: () {
                   _resetTimer();
                   Navigator.pop(context);
+                  if (!AttendanceManager.isPunchedIn) {
+                    _handleAttendanceBlockedNavigation();
+                    return;
+                  }
                   Navigator.push(
                     context,
                     MaterialPageRoute(builder: (context) => const InstockCategoriesPage()),
@@ -1885,6 +1953,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                 onTap: () {
                   _resetTimer();
                   Navigator.pop(context);
+                  if (!AttendanceManager.isPunchedIn) {
+                    _handleAttendanceBlockedNavigation();
+                    return;
+                  }
                   Navigator.push(
                     context,
                     MaterialPageRoute(builder: (context) => const ReturnCategoriesPage()),
@@ -1900,6 +1972,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                 onTap: () {
                   _resetTimer();
                   Navigator.pop(context);
+                  if (!AttendanceManager.isPunchedIn) {
+                    _handleAttendanceBlockedNavigation();
+                    return;
+                  }
                   if (_isNavItemSelected(PageType.billing)) {
                     return;
                   }
@@ -1923,6 +1999,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                   onTap: () {
                     _resetTimer();
                     Navigator.pop(context);
+                    if (!AttendanceManager.isPunchedIn) {
+                      _handleAttendanceBlockedNavigation();
+                      return;
+                    }
                     if (widget.pageType == PageType.table) {
                       return;
                     }
@@ -2013,74 +2093,85 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   }
 
   Widget _buildBottomNavigationBar() {
-    return Container(
-      decoration: const BoxDecoration(
-        boxShadow: [
-          BoxShadow(
-            color: Color(0x14000000),
-            blurRadius: 16,
-            offset: Offset(0, -4),
-          ),
-        ],
-      ),
-      child: SafeArea(
-        top: false,
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+    return ValueListenableBuilder<bool>(
+      valueListenable: AttendanceManager.isPunchedInNotifier,
+      builder: (context, isPunchedIn, _) {
+        return Container(
           decoration: const BoxDecoration(
-            color: Colors.white,
-            border: Border(top: BorderSide(color: Color(0xFFEAEAEA))),
-          ),
-          child: Row(
-            children: [
-              if (_showHomeNavigation)
-                _buildNavItem(
-                  icon: Icons.home_rounded,
-                  label: 'Home',
-                  page: const HomePage(),
-                  type: PageType.home,
-                ),
-              _buildNavItem(
-                icon: Icons.receipt_long_rounded,
-                label: 'Billing',
-                page: const CategoriesPage(),
-                type: PageType.billing,
-              ),
-              _buildNavItem(
-                icon: Icons.qr_code_scanner_rounded,
-                label: 'Scan',
-                onTap: _scanBarcode,
-              ),
-              if (_showTableNavigation)
-                _buildNavItem(
-                  icon: Icons.table_restaurant_rounded,
-                  label: 'Table',
-                  page: const TablePage(),
-                  type: PageType.table,
-                ),
-              _buildNavItem(
-                icon: Icons.bolt_rounded,
-                label: 'KOT',
-                page: const KotPage(),
-                type: PageType.kot,
-              ),
-              ValueListenableBuilder<int>(
-                valueListenable: CommonScaffold.unreadChatNotifier,
-                builder: (context, unreadCount, _) {
-                  return _buildNavItem(
-                    icon: Icons.forum_rounded,
-                    label: 'Chat',
-                    page: const ChatPage(),
-                    type: PageType.chat,
-                    activeColor: _chatNavColor,
-                    badgeCount: unreadCount,
-                  );
-                },
+            boxShadow: [
+              BoxShadow(
+                color: Color(0x14000000),
+                blurRadius: 16,
+                offset: Offset(0, -4),
               ),
             ],
           ),
-        ),
-      ),
+          child: SafeArea(
+            top: false,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                border: Border(top: BorderSide(color: Color(0xFFEAEAEA))),
+              ),
+              child: Row(
+                children: [
+                  if (_showHomeNavigation)
+                    _buildNavItem(
+                      icon: Icons.home_rounded,
+                      label: 'Home',
+                      page: const HomePage(),
+                      type: PageType.home,
+                      isPunchedIn: isPunchedIn,
+                    ),
+                  _buildNavItem(
+                    icon: Icons.receipt_long_rounded,
+                    label: 'Billing',
+                    page: const CategoriesPage(),
+                    type: PageType.billing,
+                    isPunchedIn: isPunchedIn,
+                  ),
+                  _buildNavItem(
+                    icon: Icons.qr_code_scanner_rounded,
+                    label: 'Scan',
+                    onTap: _scanBarcode,
+                    isPunchedIn: isPunchedIn,
+                  ),
+                  if (_showTableNavigation)
+                    _buildNavItem(
+                      icon: Icons.table_restaurant_rounded,
+                      label: 'Table',
+                      page: const TablePage(),
+                      type: PageType.table,
+                      isPunchedIn: isPunchedIn,
+                    ),
+                  _buildNavItem(
+                    icon: Icons.bolt_rounded,
+                    label: 'KOT',
+                    page: const KotPage(),
+                    type: PageType.kot,
+                    isPunchedIn: isPunchedIn,
+                  ),
+                  ValueListenableBuilder<int>(
+                    valueListenable: CommonScaffold.unreadChatNotifier,
+                    builder: (context, unreadCount, _) {
+                      return _buildNavItem(
+                        icon: Icons.forum_rounded,
+                        label: 'Chat',
+                        page: const ChatPage(),
+                        type: PageType.chat,
+                        activeColor: _chatNavColor,
+                        badgeCount: unreadCount,
+                        isPunchedIn: isPunchedIn,
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -2093,11 +2184,14 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     Color? activeColor,
     Color? inactiveColor,
     int badgeCount = 0,
+    bool isPunchedIn = true,
   }) {
     final bool isSelected = type != null && _isNavItemSelected(type);
     final Color foregroundColor = isSelected
         ? (activeColor ?? _navActiveColor)
-        : (inactiveColor ?? _navInactiveColor);
+        : (isPunchedIn
+            ? (inactiveColor ?? _navInactiveColor)
+            : const Color(0xFFBDBDBD));
 
     return Expanded(
       child: Material(
@@ -2106,6 +2200,10 @@ class _CommonScaffoldState extends State<CommonScaffold> {
           borderRadius: BorderRadius.circular(24),
           onTap: () {
             _resetTimer();
+            if (!isPunchedIn) {
+              _handleAttendanceBlockedNavigation();
+              return;
+            }
             if (onTap != null) {
               onTap();
               return;
@@ -2120,19 +2218,21 @@ class _CommonScaffoldState extends State<CommonScaffold> {
           child: Container(
             margin: const EdgeInsets.symmetric(horizontal: 3),
             padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    TweenAnimationBuilder<Color?>(
-                      duration: const Duration(milliseconds: 180),
-                      tween: ColorTween(end: foregroundColor),
-                      builder: (context, color, child) {
-                        return Icon(icon, color: color, size: 29);
-                      },
-                    ),
+            child: Opacity(
+              opacity: isPunchedIn || isSelected ? 1.0 : 0.6,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      TweenAnimationBuilder<Color?>(
+                        duration: const Duration(milliseconds: 180),
+                        tween: ColorTween(end: foregroundColor),
+                        builder: (context, color, child) {
+                          return Icon(icon, color: color, size: 29);
+                        },
+                      ),
                     if (badgeCount > 0)
                       Positioned(
                         right: -6,
@@ -2194,7 +2294,8 @@ class _CommonScaffoldState extends State<CommonScaffold> {
           ),
         ),
       ),
-    );
+    ),
+  );
   }
 }
 

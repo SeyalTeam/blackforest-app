@@ -95,10 +95,23 @@ class _EmployeePageState extends State<EmployeePage> {
           }
         });
     AttendanceManager.instance.checkNow();
+    AttendanceManager.isPunchedInNotifier.addListener(_onAttendanceStateChanged);
+  }
+
+  void _onAttendanceStateChanged() {
+    if (!mounted) return;
+    final isPunched = AttendanceManager.isPunchedIn;
+    if (_hasActiveSession != isPunched) {
+      setState(() {
+        _hasActiveSession = isPunched;
+      });
+      _fetchAttendance();
+    }
   }
 
   @override
   void dispose() {
+    AttendanceManager.isPunchedInNotifier.removeListener(_onAttendanceStateChanged);
     _timer?.cancel();
     _geofenceTimer?.cancel();
     _notificationSubscription?.cancel();
@@ -188,6 +201,14 @@ class _EmployeePageState extends State<EmployeePage> {
           if (hasCachedActive) {
             _workDuration = initialWorkDuration;
             _hasActiveSession = true;
+            unawaited(
+              AttendanceManager.setPunchedInState(
+                true,
+                punchInTime: cachedPunchIn,
+              ),
+            );
+          } else {
+            unawaited(AttendanceManager.setPunchedInState(false));
           }
         });
       }
@@ -428,6 +449,7 @@ class _EmployeePageState extends State<EmployeePage> {
       var totalBreak = Duration.zero;
       var activeSessionFound = false;
       var activePhotoFound = true;
+      DateTime? activeSessionPunchIn;
       String? latestPunchOutType;
       DateTime? latestPunchOutTime;
 
@@ -635,6 +657,7 @@ class _EmployeePageState extends State<EmployeePage> {
                   capturedImg != null &&
                   capturedImg.toString().trim().isNotEmpty;
               final activeStart = punchIn;
+              activeSessionPunchIn = punchIn;
               final pastWork =
                   totalWork - DateTime.now().difference(activeStart);
               _storage.write(key: 'activePunchIn', value: activeStart.toIso8601String());
@@ -681,6 +704,10 @@ class _EmployeePageState extends State<EmployeePage> {
       }
       await _storage.write(key: 'totalBreakSeconds', value: totalBreak.inSeconds.toString());
       await _storage.write(key: 'activeSessionHasPhoto', value: activePhotoFound.toString());
+      await AttendanceManager.setPunchedInState(
+        activeSessionFound,
+        punchInTime: activeSessionPunchIn?.toIso8601String(),
+      );
 
       if (!mounted) return;
       setState(() {
@@ -992,7 +1019,15 @@ class _EmployeePageState extends State<EmployeePage> {
         );
         if (response.statusCode == 200) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Successfully punched in!')),
+            const SnackBar(
+              content: Text(
+                'Successfully punched in! All sections are now unlocked.',
+              ),
+            ),
+          );
+          await AttendanceManager.setPunchedInState(
+            true,
+            punchInTime: now.toIso8601String(),
           );
           await _fetchEmployeeProfile();
           await _fetchAttendance();
@@ -1022,7 +1057,15 @@ class _EmployeePageState extends State<EmployeePage> {
         );
         if (response.statusCode == 200 || response.statusCode == 201) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Successfully punched in!')),
+            const SnackBar(
+              content: Text(
+                'Successfully punched in! All sections are now unlocked.',
+              ),
+            ),
+          );
+          await AttendanceManager.setPunchedInState(
+            true,
+            punchInTime: now.toIso8601String(),
           );
           await _fetchEmployeeProfile();
           await _fetchAttendance();
@@ -1053,12 +1096,8 @@ class _EmployeePageState extends State<EmployeePage> {
       return;
     }
 
-    // Check IMMEDIATELY on start / refresh
+    // Check IMMEDIATELY on start / refresh. Continuous tracking handled by AttendanceManager stream.
     _checkGeofence();
-
-    _geofenceTimer = Timer.periodic(const Duration(seconds: 15), (_) async {
-      await _checkGeofence();
-    });
   }
 
   Future<void> _checkGeofence() async {
@@ -1565,6 +1604,7 @@ class _EmployeePageState extends State<EmployeePage> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Successfully punched out!')),
         );
+        await AttendanceManager.setPunchedInState(false);
         await _fetchEmployeeProfile();
         await _fetchAttendance();
         _autoPunchInFired = false;

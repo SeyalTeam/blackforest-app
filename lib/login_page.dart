@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'api_config.dart';
 import 'api_service.dart';
+import 'attendance_manager.dart';
 import 'cart_provider.dart';
 import 'categories_page.dart';
 import 'employee.dart';
@@ -165,6 +166,20 @@ class _LoginPageState extends State<LoginPage> {
 
         if (res.statusCode == 200) {
           if (!mounted) return;
+          final isPunchedIn = await AttendanceManager.instance
+              .checkAttendanceStatus(prefs: prefs);
+          if (!isPunchedIn) {
+            if (!mounted) return;
+            Navigator.of(context).pushReplacement(
+              MaterialPageRoute(
+                builder: (_) => const IdleTimeoutWrapper(
+                  child: EmployeePage(),
+                ),
+              ),
+            );
+            return;
+          }
+
           final navigationVisibility = await Future.wait<bool>([
             HomeNavigationService.loadVisibilityForCurrentBranch(
               prefs: prefs,
@@ -578,6 +593,8 @@ class _LoginPageState extends State<LoginPage> {
           if (token.isNotEmpty && branchId.isNotEmpty) {
             unawaited(KotAutoPrintService.startService());
           }
+
+          unawaited(AttendanceManager.instance.checkAttendanceStatus(prefs: prefs));
 
           if (!mounted) return;
           // Open Employee / Profile page directly after login

@@ -9,6 +9,7 @@ import 'package:blackforest_app/notification_service.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:blackforest_app/chat_page.dart';
 import 'package:blackforest_app/auth_session_manager.dart';
+import 'package:blackforest_app/kot_auto_print_service.dart';
 
 class GlobalKotRealtimeService {
   static final GlobalKotRealtimeService _instance = GlobalKotRealtimeService._internal();
@@ -38,6 +39,8 @@ class GlobalKotRealtimeService {
 
   final _chatMessageController = StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get onChatMessage => _chatMessageController.stream;
+
+  bool get isConnected => _wsSocket != null && _wsSocket!.readyState == io.WebSocket.open;
 
   bool _markEventAsSeen(String eventId) {
     if (eventId.isEmpty) return false;
@@ -210,7 +213,8 @@ class GlobalKotRealtimeService {
     
     if (eventType != 'billing_item_status_changed' &&
         eventType != 'billing_item_preparing_time_changed' &&
-        eventType != 'billing_status_changed') {
+        eventType != 'billing_status_changed' &&
+        eventType != 'waiter_call_received') {
       return;
     }
     
@@ -225,6 +229,16 @@ class GlobalKotRealtimeService {
     
     final eventId = message['eventId']?.toString() ?? '';
     if (!_markEventAsSeen(eventId)) return;
+
+    // Handle instant Waiter Call Alert
+    if (eventType == 'waiter_call_received') {
+      try {
+        _audioPlayer.play(AssetSource('sounds/alert.wav'));
+      } catch (_) {}
+      unawaited(KotAutoPrintService.syncWaiterCallAlertsOnly());
+      _updateController.add(null);
+      return;
+    }
     
     // Play alert and show notification
     final statusAfter = (message['statusAfter']?.toString() ?? '').toLowerCase();
@@ -252,6 +266,9 @@ class GlobalKotRealtimeService {
       } catch (nErr) {
         debugPrint('Failed to display order notification: $nErr');
       }
+
+      // Event-driven auto-printing: print instantly upon WebSocket event arrival
+      unawaited(KotAutoPrintService.syncPendingWebsiteKots());
     }
     
     _updateController.add(null);

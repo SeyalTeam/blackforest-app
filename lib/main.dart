@@ -21,6 +21,8 @@ import 'package:screen_protector/screen_protector.dart';
 import 'package:blackforest_app/kot_auto_print_service.dart';
 import 'package:blackforest_app/chat_page.dart';
 import 'package:blackforest_app/global_kot_realtime_service.dart';
+import 'package:blackforest_app/employee.dart';
+import 'package:blackforest_app/attendance_manager.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -55,7 +57,7 @@ void main() async {
       playSound: false,
     ),
     foregroundTaskOptions: ForegroundTaskOptions(
-      eventAction: ForegroundTaskEventAction.repeat(5000),
+      eventAction: ForegroundTaskEventAction.nothing(),
       autoRunOnBoot: true,
       allowWakeLock: true,
       allowWifiLock: true,
@@ -145,6 +147,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // The navigatorKey's currentContext is usually the root of the app
     final context = _navigatorKey.currentContext;
     if (context != null) {
+      if (!AttendanceManager.isPunchedIn) {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const EmployeePage()),
+          (route) => false,
+        );
+        return;
+      }
       if (payload.startsWith('chat:')) {
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (context) => const ChatPage()),
@@ -179,6 +188,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         await clearSessionPreservingFavorites(prefs);
         return const LoginPage();
       }
+    }
+
+    // Attendance Gate: Open profile page if not punched in
+    final isPunchedIn = await AttendanceManager.instance.checkAttendanceStatus(
+      prefs: prefs,
+    );
+    if (!isPunchedIn) {
+      return const IdleTimeoutWrapper(child: EmployeePage());
     }
 
     final branchId = (prefs.getString('branchId') ?? '').trim();
