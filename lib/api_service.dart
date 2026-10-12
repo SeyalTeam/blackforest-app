@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'dart:io';
-import 'package:http/http.dart' as http;
+import 'package:blackforest_app/app_http.dart' as http;
 import 'package:http_parser/http_parser.dart' as http_parser;
 import 'package:intl/intl.dart';
 import 'package:flutter/foundation.dart';

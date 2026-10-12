@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:blackforest_app/api_server_prefs.dart';
 import 'package:blackforest_app/auth_session_manager.dart';
 import 'package:blackforest_app/app_version.dart';
+import 'package:blackforest_app/api_config.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as raw_http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -242,6 +243,14 @@ Future<Map<String, String>?> _prepareHeaders(
     if (version.isNotEmpty && !_hasHeaderKey(resolved, 'X-App-Version')) {
       resolved ??= <String, String>{};
       resolved['X-App-Version'] = version;
+      changed = true;
+    }
+
+    // Attach Blackforest App Gatekeeper Secret Headers
+    if (!_hasHeaderKey(resolved, 'x-app-secret')) {
+      resolved ??= <String, String>{};
+      resolved['x-app-secret'] = ApiConfig.appKey;
+      resolved['x-app-key'] = ApiConfig.appKey;
       changed = true;
     }
   }
