@@ -107,7 +107,8 @@ class InstockProvider extends ChangeNotifier {
   Future<void> _loadUserData(String token) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final localBranchId = prefs.getString('branchId');
+      final localBranchId =
+          prefs.getString('branchId') ?? prefs.getString('branch') ?? prefs.getString('userBranchId');
 
       final res = await http.get(
         Uri.parse("${ApiConfig.baseUrl}/users/me?depth=2"),
@@ -127,14 +128,8 @@ class InstockProvider extends ChangeNotifier {
             : user["company"];
       }
 
-      // 1. Always prioritize the strict server-assigned branch to prevent "Unauthorized branch" errors from backend hook
-      if (user["branch"] != null) {
-        _branchId = user["branch"] is Map ? user["branch"]["id"] : user["branch"];
-        final comp = user["branch"] is Map ? user["branch"]["company"] : null;
-        _companyId = comp is Map ? comp["id"] : comp;
-      }
-      // 2. Fallback to GPS branch if server has no branch assigned (floating waiters)
-      else if (localBranchId != null && localBranchId.isNotEmpty) {
+      // Prioritize dynamic active login/attendance branch (like billing)
+      if (localBranchId != null && localBranchId.isNotEmpty) {
         _branchId = localBranchId;
         try {
           final bRes = await http.get(Uri.parse("${ApiConfig.baseUrl}/branches/$localBranchId?depth=1"), headers: ApiConfig.getHeaders(token));
@@ -144,6 +139,10 @@ class InstockProvider extends ChangeNotifier {
             _companyId = comp is Map ? comp["id"] : comp;
           }
         } catch (_) {}
+      } else if (user["branch"] != null) {
+        _branchId = user["branch"] is Map ? user["branch"]["id"] : user["branch"];
+        final comp = user["branch"] is Map ? user["branch"]["company"] : null;
+        _companyId = comp is Map ? comp["id"] : comp;
       } else if (_userRole == "waiter" ||
           _userRole == "kitchen" ||
           _userRole == "chef" ||
@@ -629,7 +628,11 @@ class InstockProvider extends ChangeNotifier {
       messenger.showSnackBar(const SnackBar(content: Text("No items updated")));
       return;
     }
-    if (_branchId == null) {
+    if (_branchId == null || _branchId!.isEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      _branchId = prefs.getString('branchId') ?? prefs.getString('branch') ?? prefs.getString('userBranchId');
+    }
+    if (_branchId == null || _branchId!.isEmpty) {
       messenger.showSnackBar(const SnackBar(content: Text("Error: Branch ID is missing. Please restart the app.")));
       return;
     }

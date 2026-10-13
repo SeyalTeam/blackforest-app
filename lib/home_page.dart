@@ -7,6 +7,8 @@ import 'package:blackforest_app/category_popularity_service.dart';
 import 'package:blackforest_app/categories_page.dart';
 import 'package:blackforest_app/instock_categories_page.dart';
 import 'package:blackforest_app/return_categories_page.dart';
+import 'package:blackforest_app/dealer_billing.dart';
+import 'package:blackforest_app/stock_order_page.dart';
 
 
 import 'package:blackforest_app/cart_page.dart';
@@ -275,7 +277,7 @@ class _HomeSearchOverlayState extends State<_HomeSearchOverlay> {
     }
 
     final response = await http.get(
-      Uri.parse('https://blackforest1.vseyal.com/api/categories?$filterQuery'),
+      Uri.parse('https://admin.theblackforestcakes.com/api/categories?$filterQuery'),
       headers: {
         'Authorization': 'Bearer $token',
         'Content-Type': 'application/json',
@@ -323,7 +325,7 @@ class _HomeSearchOverlayState extends State<_HomeSearchOverlay> {
   }) async {
     final response = await http.get(
       Uri.parse(
-        'https://blackforest1.vseyal.com/api/products?where[name][like]=$query&limit=12&depth=2&sort=name',
+        'https://admin.theblackforestcakes.com/api/products?where[name][like]=$query&limit=12&depth=2&sort=name',
       ),
       headers: {
         'Authorization': 'Bearer $token',
@@ -513,7 +515,7 @@ class _HomeSearchOverlayState extends State<_HomeSearchOverlay> {
       return resolveApiAssetUrl(value);
     }
     if (value.startsWith('//')) return resolveApiAssetUrl('https:$value');
-    if (value.startsWith('blackforest1.vseyal.com')) {
+    if (value.startsWith('admin.theblackforestcakes.com')) {
       return resolveApiAssetUrl('https://$value');
     }
     if (value.startsWith('/')) return resolveApiAssetUrl(value);
@@ -1117,7 +1119,7 @@ class _HomePageState extends State<HomePage> {
   }) async {
     try {
       final response = await http.get(
-        Uri.parse('https://blackforest1.vseyal.com/api/branches/$branchId'),
+        Uri.parse('https://admin.theblackforestcakes.com/api/branches/$branchId'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode != 200) return null;
@@ -1798,7 +1800,7 @@ class _HomePageState extends State<HomePage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest1.vseyal.com/api/globals/widget-settings?depth=1',
+          'https://admin.theblackforestcakes.com/api/globals/widget-settings?depth=1',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -1919,7 +1921,7 @@ class _HomePageState extends State<HomePage> {
   }) async {
     final rulesResponse = await http.get(
       Uri.parse(
-        'https://blackforest1.vseyal.com/api/globals/widget-settings?depth=1',
+        'https://admin.theblackforestcakes.com/api/globals/widget-settings?depth=1',
       ),
       headers: {
         'Authorization': 'Bearer $token',
@@ -1968,7 +1970,7 @@ class _HomePageState extends State<HomePage> {
     final idsParam = favoriteProductIds.join(',');
     final optionsResponse = await http.get(
       Uri.parse(
-        'https://blackforest1.vseyal.com/api/widgets/product-options?ids=$idsParam',
+        'https://admin.theblackforestcakes.com/api/widgets/product-options?ids=$idsParam',
       ),
       headers: {
         'Authorization': 'Bearer $token',
@@ -2175,7 +2177,7 @@ class _HomePageState extends State<HomePage> {
       final idsParam = Uri.encodeQueryComponent(ids.join(','));
       final response = await http.get(
         Uri.parse(
-          'https://blackforest1.vseyal.com/api/categories?where[id][in]=$idsParam&depth=1&limit=${ids.length}',
+          'https://admin.theblackforestcakes.com/api/categories?where[id][in]=$idsParam&depth=1&limit=${ids.length}',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -2294,7 +2296,7 @@ class _HomePageState extends State<HomePage> {
       final idsParam = Uri.encodeQueryComponent(productIds.join(','));
       final response = await http.get(
         Uri.parse(
-          'https://blackforest1.vseyal.com/api/products?where[id][in]=$idsParam&depth=2&limit=100',
+          'https://admin.theblackforestcakes.com/api/products?where[id][in]=$idsParam&depth=2&limit=100',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -2622,11 +2624,11 @@ class _HomePageState extends State<HomePage> {
     if (value.startsWith('//')) {
       return 'https:$value';
     }
-    if (value.startsWith('blackforest1.vseyal.com')) {
+    if (value.startsWith('admin.theblackforestcakes.com')) {
       return 'https://$value';
     }
     if (value.startsWith('/')) {
-      return 'https://blackforest1.vseyal.com$value';
+      return 'https://admin.theblackforestcakes.com$value';
     }
     final lower = value.toLowerCase();
     final maybeFilePath =
@@ -2642,7 +2644,7 @@ class _HomePageState extends State<HomePage> {
         value.startsWith('files/') ||
         value.startsWith('api/') ||
         maybeFilePath) {
-      return 'https://blackforest1.vseyal.com/$value';
+      return 'https://admin.theblackforestcakes.com/$value';
     }
     return null;
   }
@@ -3082,6 +3084,10 @@ class _HomePageState extends State<HomePage> {
                     children: [
                       _buildTopSection(context),
                       const SizedBox(height: 20),
+                      _buildStockOrderSection(),
+                      const SizedBox(height: 20),
+                      _buildDealerBillingSection(),
+                      const SizedBox(height: 20),
                       _buildRawMaterialBillingSection(),
                       const SizedBox(height: 20),
                       _buildInstockEntrySection(),
@@ -3463,6 +3469,162 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
               const Icon(Icons.arrow_forward_ios, color: Colors.white, size: 16),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStockOrderSection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: GestureDetector(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const StockOrderPage(),
+            ),
+          );
+        },
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF0F766E), Color(0xFF0D9488)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF0F766E).withValues(alpha: 0.25),
+                blurRadius: 12,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.inventory_2_rounded,
+                  color: Colors.white,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 16),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Stock Order',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Request stock & kitchen inventory for branch',
+                      style: TextStyle(fontSize: 13, color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.arrow_forward_ios,
+                color: Colors.white70,
+                size: 18,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDealerBillingSection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: GestureDetector(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const DealerBillingPage(),
+            ),
+          );
+        },
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFFC2410C), Color(0xFFEA580C)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFC2410C).withValues(alpha: 0.25),
+                blurRadius: 12,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.business_rounded,
+                  color: Colors.white,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 16),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Dealer Bills',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Submit dealer invoices, copy & product photos',
+                      style: TextStyle(fontSize: 13, color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.arrow_forward_ios,
+                color: Colors.white70,
+                size: 18,
+              ),
             ],
           ),
         ),

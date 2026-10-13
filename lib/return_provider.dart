@@ -341,6 +341,12 @@ class ReturnProvider extends ChangeNotifier {
           prefs.getString('user_name') ??
           prefs.getString('username');
 
+      final activeBranch = branchId ??
+          _branchId ??
+          prefs.getString('branchId') ??
+          prefs.getString('branch') ??
+          prefs.getString('userBranchId');
+
       final returnData = {
         'items': _items
             .map(
@@ -355,7 +361,7 @@ class ReturnProvider extends ChangeNotifier {
             )
             .toList(),
         'totalAmount': total,
-        'branch': branchId,
+        'branch': activeBranch,
         'cashierId': cashierId,
         'cashierName': cashierName,
         'status': 'returned',

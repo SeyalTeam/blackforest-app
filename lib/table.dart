@@ -283,7 +283,7 @@ class _TablePageState extends State<TablePage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://blackforest1.vseyal.com/api/tables?where[branch][equals]=$_branchId&limit=1&depth=1',
+          'https://admin.theblackforestcakes.com/api/tables?where[branch][equals]=$_branchId&limit=1&depth=1',
         ),
         headers: {'Authorization': 'Bearer $_token'},
       );
@@ -335,7 +335,7 @@ class _TablePageState extends State<TablePage> {
       final todayStart = localDayStart.toUtc().toIso8601String();
 
       final url = Uri.parse(
-        'https://blackforest1.vseyal.com/api/billings?where[status][in][0]=pending&where[status][in][1]=ordered&where[status][in][2]=confirmed&where[status][in][3]=prepared&where[status][in][4]=delivered&where[branch][equals]=$_branchId&where[createdAt][greater_than_equal]=$todayStart&limit=40&depth=1',
+        'https://admin.theblackforestcakes.com/api/billings?where[status][in][0]=pending&where[status][in][1]=ordered&where[status][in][2]=confirmed&where[status][in][3]=prepared&where[status][in][4]=delivered&where[branch][equals]=$_branchId&where[createdAt][greater_than_equal]=$todayStart&limit=40&depth=1',
       );
 
       final response = await http.get(

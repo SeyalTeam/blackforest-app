@@ -273,8 +273,9 @@ bool _shouldHandleUnauthorized(Uri url, Map<String, String>? headers) {
     return false;
   }
   if (_isLoginEndpoint(url)) return false;
-  if (_hasBearerToken(headers)) return true;
-  return _isAppApi(url);
+  // Only trigger session expiration/logout IF the request actually had a Bearer token!
+  // Pre-login config requests (like checking branches) should never force a re-login loop.
+  return _hasBearerToken(headers);
 }
 
 typedef _RequestExecutor = Future<raw_http.Response> Function(Uri url);

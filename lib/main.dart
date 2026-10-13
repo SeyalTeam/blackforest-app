@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:blackforest_app/instock_provider.dart';
 import 'package:blackforest_app/return_provider.dart';
+import 'package:blackforest_app/stock_provider.dart';
 import 'package:blackforest_app/categories_page.dart';
 import 'package:blackforest_app/login_page.dart';
 import 'package:blackforest_app/home_page.dart';
@@ -66,7 +67,12 @@ void main() async {
 
   runApp(
     MultiProvider(
-      providers: [ChangeNotifierProvider(create: (context) => CartProvider()), ChangeNotifierProvider(create: (context) => InstockProvider()), ChangeNotifierProvider(create: (context) => ReturnProvider())],
+      providers: [
+        ChangeNotifierProvider(create: (context) => CartProvider()),
+        ChangeNotifierProvider(create: (context) => InstockProvider()),
+        ChangeNotifierProvider(create: (context) => ReturnProvider()),
+        ChangeNotifierProvider(create: (context) => StockProvider()),
+      ],
       child: const MyApp(),
     ),
   );

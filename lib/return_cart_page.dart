@@ -100,7 +100,9 @@ class _ReturnCartPageState extends State<ReturnCartPage> {
                             onPressed:
                                 (items.isNotEmpty && !provider.isSubmitting)
                                 ? () async {
-                                      await provider.submitReturn(context, null);
+                                      final prefs = await SharedPreferences.getInstance();
+                                      final activeBranch = prefs.getString('branchId') ?? prefs.getString('branch') ?? prefs.getString('userBranchId');
+                                      await provider.submitReturn(context, activeBranch);
                                       if (provider.returnItems.isEmpty && mounted) {
                                           Navigator.pop(context);
                                       }

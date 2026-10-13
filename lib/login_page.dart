@@ -223,6 +223,7 @@ class _LoginPageState extends State<LoginPage> {
     try {
       final res = await http.get(
         Uri.parse('${ApiConfig.baseUrl}/branches?limit=1000'),
+        headers: {http.skipUnauthorizedLogoutHeaderName: 'true'},
       );
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
@@ -629,16 +630,47 @@ class _LoginPageState extends State<LoginPage> {
           } catch (_) {}
 
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(errorMessage),
-                backgroundColor: const Color(0xFF1A202C),
-                behavior: SnackBarBehavior.floating,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+            if (res.statusCode == 403) {
+              String dialogMessage = errorMessage
+                  .replaceAll(RegExp(r'\.?\s*Please provide a valid App Key\.?', caseSensitive: false), '')
+                  .trim();
+              if (dialogMessage.isEmpty) {
+                dialogMessage = 'Login is restricted to authorized Blackforest applications.';
+              }
+              showDialog(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  title: const Row(
+                    children: [
+                      Icon(Icons.lock_outline_rounded, color: Colors.red),
+                      SizedBox(width: 8),
+                      Text('Access Denied', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    ],
+                  ),
+                  content: Text(dialogMessage),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('OK', style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ],
                 ),
-              ),
-            );
+              );
+            } else {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(errorMessage),
+                  backgroundColor: const Color(0xFF1A202C),
+                  behavior: SnackBarBehavior.floating,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              );
+            }
           }
         }
       } catch (e) {

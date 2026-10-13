@@ -556,7 +556,7 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
 
       for (final field in fieldsToTry) {
         for (final phoneValue in phoneValues) {
-          final uri = Uri.parse('https://blackforest1.vseyal.com/api/billings')
+          final uri = Uri.parse('https://admin.theblackforestcakes.com/api/billings')
               .replace(
                 queryParameters: {
                   'sort': '-createdAt',
@@ -625,7 +625,7 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
       };
       final uri =
           Uri.parse(
-            'https://blackforest1.vseyal.com/api/billing/customer-lookup',
+            'https://admin.theblackforestcakes.com/api/billing/customer-lookup',
           ).replace(
             queryParameters: {
               'phoneNumber': normalizedPhone,
@@ -1208,7 +1208,7 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
 
     for (final phone in phoneValues) {
       for (var page = 1; page <= 12; page++) {
-        final uri = Uri.parse('https://blackforest1.vseyal.com/api/reviews')
+        final uri = Uri.parse('https://admin.theblackforestcakes.com/api/reviews')
             .replace(
               queryParameters: {
                 'sort': '-createdAt',
@@ -1732,9 +1732,9 @@ class _CustomerHistoryDialogState extends State<CustomerHistoryDialog> {
         return text;
       }
       if (text.startsWith('//')) return 'https:$text';
-      if (text.startsWith('/')) return 'https://blackforest1.vseyal.com$text';
+      if (text.startsWith('/')) return 'https://admin.theblackforestcakes.com$text';
       if (text.contains(' ')) return null;
-      return 'https://blackforest1.vseyal.com/$text';
+      return 'https://admin.theblackforestcakes.com/$text';
     }
     if (value is List) {
       for (final entry in value) {
