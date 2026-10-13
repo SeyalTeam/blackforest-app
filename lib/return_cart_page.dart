@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:blackforest_app/return_provider.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -103,8 +104,9 @@ class _ReturnCartPageState extends State<ReturnCartPage> {
                                       final prefs = await SharedPreferences.getInstance();
                                       final activeBranch = prefs.getString('branchId') ?? prefs.getString('branch') ?? prefs.getString('userBranchId');
                                       await provider.submitReturn(context, activeBranch);
-                                      if (provider.returnItems.isEmpty && mounted) {
-                                          Navigator.pop(context);
+                                      if (!mounted) return;
+                                      if (provider.returnItems.isEmpty) {
+                                        Navigator.pop(context);
                                       }
                                   }
                                 : null,
