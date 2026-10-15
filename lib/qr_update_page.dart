@@ -20,6 +20,8 @@ class _QrUpdatePageState extends State<QrUpdatePage> {
   List<dynamic> _filteredCategories = [];
   bool _isLoading = true;
   String _errorMessage = '';
+  String? _companyId;
+  String? _companyName;
   final TextEditingController _searchController = TextEditingController();
 
   @override
@@ -34,6 +36,91 @@ class _QrUpdatePageState extends State<QrUpdatePage> {
     super.dispose();
   }
 
+  Future<String?> _resolveCompanyId(SharedPreferences prefs, String? token) async {
+    // 1. Check cached in prefs
+    String? cached = prefs.getString('company_id')?.trim();
+    if (cached == null || cached.isEmpty) {
+      cached = prefs.getString('companyId')?.trim();
+    }
+    if (cached != null && cached.isNotEmpty) {
+      _companyName = prefs.getString('company_name') ?? prefs.getString('companyName');
+      return cached;
+    }
+
+    // 2. Resolve via active branch
+    final branchId = prefs.getString('branchId') ?? prefs.getString('branch') ?? prefs.getString('userBranchId');
+    if (branchId != null && branchId.isNotEmpty && token != null) {
+      try {
+        final bRes = await http.get(
+          Uri.parse("${ApiConfig.baseUrl}/branches/$branchId?depth=1"),
+          headers: ApiConfig.getHeaders(token),
+        );
+        if (bRes.statusCode == 200) {
+          final bData = jsonDecode(bRes.body);
+          final comp = bData["company"];
+          final compId = comp is Map ? (comp["id"] ?? comp["_id"])?.toString() : comp?.toString();
+          if (comp is Map && comp["name"] != null) {
+            _companyName = comp["name"]?.toString();
+            await prefs.setString('company_name', _companyName!);
+          }
+          if (compId != null && compId.isNotEmpty) {
+            await prefs.setString('company_id', compId);
+            return compId;
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 3. Fallback to /users/me
+    if (token != null) {
+      try {
+        final uRes = await http.get(
+          Uri.parse("${ApiConfig.baseUrl}/users/me?depth=2"),
+          headers: ApiConfig.getHeaders(token),
+        );
+        if (uRes.statusCode == 200) {
+          final uData = jsonDecode(uRes.body);
+          final user = uData["user"] ?? uData;
+          dynamic comp = user["company"];
+          if (comp == null && user["branch"] != null && user["branch"] is Map) {
+            comp = user["branch"]["company"];
+          }
+          if (comp == null && user["lastLoginBranch"] != null && user["lastLoginBranch"] is Map) {
+            comp = user["lastLoginBranch"]["company"];
+          }
+          final compId = comp is Map ? (comp["id"] ?? comp["_id"])?.toString() : comp?.toString();
+          if (comp is Map && comp["name"] != null) {
+            _companyName = comp["name"]?.toString();
+            await prefs.setString('company_name', _companyName!);
+          }
+          if (compId != null && compId.isNotEmpty) {
+            await prefs.setString('company_id', compId);
+            return compId;
+          }
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  bool _matchesCompany(dynamic item, String compId) {
+    if (item is! Map) return false;
+    final comp = item['company'];
+    if (comp == null) return false;
+    if (comp is List) {
+      return comp.any((c) {
+        final cId = c is Map ? (c['id'] ?? c['_id'])?.toString() : c?.toString();
+        return cId == compId;
+      });
+    } else if (comp is Map) {
+      final cId = (comp['id'] ?? comp['_id'])?.toString();
+      return cId == compId;
+    } else if (comp is String) {
+      return comp == compId;
+    }
+    return false;
+  }
+
   Future<void> _fetchBillingCategories() async {
     setState(() {
       _isLoading = true;
@@ -44,21 +131,43 @@ class _QrUpdatePageState extends State<QrUpdatePage> {
       final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token');
 
-      // 1. Try fetching billing categories first
+      // Resolve active company
+      _companyId = await _resolveCompanyId(prefs, token);
+
+      String companyQuery = '';
+      if (_companyId != null && _companyId!.isNotEmpty) {
+        companyQuery = '&where[company][in]=$_companyId';
+      }
+
+      // 1. Try fetching billing categories with company filter
       http.Response response = await http.get(
         Uri.parse(
-          "${ApiConfig.baseUrl}/categories?where[isBilling][equals]=true&limit=200&depth=1",
+          "${ApiConfig.baseUrl}/categories?where[isBilling][equals]=true$companyQuery&limit=200&depth=1",
         ),
         headers: ApiConfig.getHeaders(token),
       );
 
-      // 2. Fallback to all categories if empty
       List<dynamic> docs = [];
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         docs = data["docs"] ?? [];
       }
 
+      // 2. If empty and company filter was used, try without isBilling filter but keep company filter
+      if (docs.isEmpty && _companyId != null && _companyId!.isNotEmpty) {
+        response = await http.get(
+          Uri.parse(
+            "${ApiConfig.baseUrl}/categories?where[company][in]=$_companyId&limit=200&depth=1",
+          ),
+          headers: ApiConfig.getHeaders(token),
+        );
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          docs = data["docs"] ?? [];
+        }
+      }
+
+      // 3. Fallback: if server query with company filter returned empty, fetch all categories and filter client-side
       if (docs.isEmpty) {
         response = await http.get(
           Uri.parse(
@@ -68,8 +177,16 @@ class _QrUpdatePageState extends State<QrUpdatePage> {
         );
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
-          docs = data["docs"] ?? [];
+          final allDocs = data["docs"] ?? [];
+          if (_companyId != null && _companyId!.isNotEmpty) {
+            docs = allDocs.where((cat) => _matchesCompany(cat, _companyId!)).toList();
+          } else {
+            docs = allDocs;
+          }
         }
+      } else if (_companyId != null && _companyId!.isNotEmpty) {
+        // Enforce client-side company filtering
+        docs = docs.where((cat) => _matchesCompany(cat, _companyId!)).toList();
       }
 
       if (mounted) {
@@ -131,35 +248,61 @@ class _QrUpdatePageState extends State<QrUpdatePage> {
         onRefresh: _fetchBillingCategories,
         child: Column(
           children: [
-            // Search Bar
+            // Search Bar + Optional Company Indicator
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: TextField(
-                controller: _searchController,
-                onChanged: _filterCategories,
-                decoration: InputDecoration(
-                  hintText: "Search categories...",
-                  prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                  suffixIcon: _searchController.text.isNotEmpty
-                      ? IconButton(
-                          icon: const Icon(Icons.clear, color: Colors.grey),
-                          onPressed: () {
-                            _searchController.clear();
-                            _filterCategories('');
-                          },
-                        )
-                      : null,
-                  filled: true,
-                  fillColor: Colors.grey.shade100,
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: _searchController,
+                    onChanged: _filterCategories,
+                    decoration: InputDecoration(
+                      hintText: "Search categories...",
+                      prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                      suffixIcon: _searchController.text.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, color: Colors.grey),
+                              onPressed: () {
+                                _searchController.clear();
+                                _filterCategories('');
+                              },
+                            )
+                          : null,
+                      filled: true,
+                      fillColor: Colors.grey.shade100,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 12,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
                   ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide.none,
-                  ),
-                ),
+                  if (_companyName != null && _companyName!.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.apartment_rounded,
+                          size: 14,
+                          color: Color(0xFF7C3AED),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          _companyName!,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ],
               ),
             ),
 
@@ -195,7 +338,7 @@ class _QrUpdatePageState extends State<QrUpdatePage> {
                               child: Text(
                                 _searchController.text.isNotEmpty
                                     ? "No categories match your search"
-                                    : "No categories found",
+                                    : "No categories found for this company",
                                 style: const TextStyle(
                                   color: Colors.grey,
                                   fontSize: 16,
@@ -236,6 +379,7 @@ class _QrUpdatePageState extends State<QrUpdatePage> {
                                             builder: (_) => QrProductsPage(
                                               categoryId: category["id"],
                                               categoryName: name,
+                                              companyId: _companyId,
                                             ),
                                           ),
                                         );

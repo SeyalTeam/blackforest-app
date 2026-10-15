@@ -11,11 +11,13 @@ import 'package:blackforest_app/api_server_prefs.dart';
 class QrProductsPage extends StatefulWidget {
   final dynamic categoryId;
   final String categoryName;
+  final String? companyId;
 
   const QrProductsPage({
     super.key,
     required this.categoryId,
     required this.categoryName,
+    this.companyId,
   });
 
   @override
@@ -29,6 +31,7 @@ class _QrProductsPageState extends State<QrProductsPage>
   bool _isLoading = true;
   String _errorMessage = '';
   String? _token;
+  String? _companyId;
   dynamic _selectedProduct;
   final TextEditingController _searchController = TextEditingController();
 
@@ -52,9 +55,84 @@ class _QrProductsPageState extends State<QrProductsPage>
     super.dispose();
   }
 
+  Future<String?> _resolveCompanyId(SharedPreferences prefs, String? token) async {
+    if (widget.companyId != null && widget.companyId!.isNotEmpty) {
+      return widget.companyId;
+    }
+    String? cached = prefs.getString('company_id')?.trim();
+    if (cached == null || cached.isEmpty) {
+      cached = prefs.getString('companyId')?.trim();
+    }
+    if (cached != null && cached.isNotEmpty) return cached;
+
+    final branchId = prefs.getString('branchId') ?? prefs.getString('branch') ?? prefs.getString('userBranchId');
+    if (branchId != null && branchId.isNotEmpty && token != null) {
+      try {
+        final bRes = await http.get(
+          Uri.parse("${ApiConfig.baseUrl}/branches/$branchId?depth=1"),
+          headers: ApiConfig.getHeaders(token),
+        );
+        if (bRes.statusCode == 200) {
+          final bData = jsonDecode(bRes.body);
+          final comp = bData["company"];
+          final compId = comp is Map ? (comp["id"] ?? comp["_id"])?.toString() : comp?.toString();
+          if (compId != null && compId.isNotEmpty) {
+            await prefs.setString('company_id', compId);
+            return compId;
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (token != null) {
+      try {
+        final uRes = await http.get(
+          Uri.parse("${ApiConfig.baseUrl}/users/me?depth=2"),
+          headers: ApiConfig.getHeaders(token),
+        );
+        if (uRes.statusCode == 200) {
+          final uData = jsonDecode(uRes.body);
+          final user = uData["user"] ?? uData;
+          dynamic comp = user["company"];
+          if (comp == null && user["branch"] != null && user["branch"] is Map) {
+            comp = user["branch"]["company"];
+          }
+          if (comp == null && user["lastLoginBranch"] != null && user["lastLoginBranch"] is Map) {
+            comp = user["lastLoginBranch"]["company"];
+          }
+          final compId = comp is Map ? (comp["id"] ?? comp["_id"])?.toString() : comp?.toString();
+          if (compId != null && compId.isNotEmpty) {
+            await prefs.setString('company_id', compId);
+            return compId;
+          }
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  bool _matchesCompany(dynamic item, String compId) {
+    if (item is! Map) return false;
+    final comp = item['company'];
+    if (comp == null) return false;
+    if (comp is List) {
+      return comp.any((c) {
+        final cId = c is Map ? (c['id'] ?? c['_id'])?.toString() : c?.toString();
+        return cId == compId;
+      });
+    } else if (comp is Map) {
+      final cId = (comp['id'] ?? comp['_id'])?.toString();
+      return cId == compId;
+    } else if (comp is String) {
+      return comp == compId;
+    }
+    return false;
+  }
+
   Future<void> _loadTokenAndFetch() async {
     final prefs = await SharedPreferences.getInstance();
     _token = prefs.getString("token");
+    _companyId = await _resolveCompanyId(prefs, _token);
     await _fetchProducts();
   }
 
@@ -62,16 +140,44 @@ class _QrProductsPageState extends State<QrProductsPage>
     setState(() => _isLoading = true);
 
     try {
-      final resp = await http.get(
+      String companyQuery = '';
+      if (_companyId != null && _companyId!.isNotEmpty) {
+        companyQuery = '&where[company][in]=$_companyId';
+      }
+
+      var resp = await http.get(
         Uri.parse(
-          "${ApiConfig.baseUrl}/products?where[category][equals]=${widget.categoryId}&limit=500&depth=1",
+          "${ApiConfig.baseUrl}/products?where[category][equals]=${widget.categoryId}$companyQuery&limit=500&depth=1",
         ),
         headers: ApiConfig.getHeaders(_token),
       );
 
+      List<dynamic> docs = [];
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
-        _products = data["docs"] ?? [];
+        docs = data["docs"] ?? [];
+      }
+
+      // If company query returned 0 items but companyId is set, fallback to category query and filter client-side
+      if (docs.isEmpty && _companyId != null && _companyId!.isNotEmpty) {
+        final fallbackResp = await http.get(
+          Uri.parse(
+            "${ApiConfig.baseUrl}/products?where[category][equals]=${widget.categoryId}&limit=500&depth=1",
+          ),
+          headers: ApiConfig.getHeaders(_token),
+        );
+        if (fallbackResp.statusCode == 200) {
+          final data = jsonDecode(fallbackResp.body);
+          final allDocs = data["docs"] ?? [];
+          docs = allDocs.where((p) => _matchesCompany(p, _companyId!)).toList();
+        }
+      } else if (docs.isNotEmpty && _companyId != null && _companyId!.isNotEmpty) {
+        // Enforce client-side check
+        docs = docs.where((p) => _matchesCompany(p, _companyId!)).toList();
+      }
+
+      if (resp.statusCode == 200 || docs.isNotEmpty) {
+        _products = docs;
 
         for (var p in _products) {
           p["upcController"] = TextEditingController(
@@ -322,7 +428,7 @@ class _QrProductsPageState extends State<QrProductsPage>
                               child: Text(
                                 _searchController.text.isNotEmpty
                                     ? "No products match your search"
-                                    : "No products in this category",
+                                    : "No products found for this company in this category",
                                 style: const TextStyle(
                                   color: Colors.grey,
                                   fontSize: 16,

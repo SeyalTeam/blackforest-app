@@ -18,7 +18,9 @@ class StockOrderPage extends StatefulWidget {
 
 class _StockOrderPageState extends State<StockOrderPage> {
   bool _showAsGrid = true;
+  bool _searchShowAsGrid = false;
   final FocusNode _searchFocusNode = FocusNode();
+  final TextEditingController _categorySearchCtrl = TextEditingController();
   List<dynamic> _externalSearchResults = [];
   bool _isSearchingExternal = false;
   Timer? _debounceTimer;
@@ -27,10 +29,14 @@ class _StockOrderPageState extends State<StockOrderPage> {
   void dispose() {
     _debounceTimer?.cancel();
     _searchFocusNode.dispose();
+    _categorySearchCtrl.dispose();
     super.dispose();
   }
 
   void _onSearchChanged(String val, StockProvider sp) {
+    if (val.trim().isEmpty) {
+      _searchShowAsGrid = false;
+    }
     setState(() {});
     _debounceTimer?.cancel();
     final query = val.trim();
@@ -134,86 +140,231 @@ class _StockOrderPageState extends State<StockOrderPage> {
       return const Center(child: Text("No categories found"));
     }
 
+    final query = _categorySearchCtrl.text.trim();
+    final isSearching = query.isNotEmpty;
+    final filteredCategories = isSearching
+        ? sp.categories.where((c) {
+            final name = (c["name"] ?? "").toString().toLowerCase();
+            return name.contains(query.toLowerCase());
+          }).toList()
+        : sp.categories;
+
     return Column(
       children: [
-        Expanded(
-          child: GridView.builder(
-            padding: const EdgeInsets.all(12),
-            itemCount: sp.categories.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              childAspectRatio: 0.75,
-            ),
-            itemBuilder: (_, i) {
-              final c = sp.categories[i];
-              String? img = c["image"]?["url"] ?? c["imageUrl"];
-              if (img != null && img.startsWith("/")) {
-                img = "${ApiConfig.domain}$img";
-              }
-              img ??= "https://via.placeholder.com/200?text=No+Image";
-
-              return GestureDetector(
-                onTap: () async {
-                  await sp.selectCategory(c);
-                },
-                child: Container(
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(10),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.grey.withValues(alpha: 0.15),
-                        blurRadius: 4,
+        // SUPERADMIN BRANCH SELECTION
+        if (sp.userRole == 'superadmin' && sp.availableBranches.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF0F0),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: Colors.pink.shade300),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  isExpanded: true,
+                  hint: const Text("Select Branch"),
+                  value: sp.overrideBranchId,
+                  items: sp.availableBranches.map<DropdownMenuItem<String>>((b) {
+                    return DropdownMenuItem<String>(
+                      value: b['id'] ?? b['_id'],
+                      child: Text(
+                        b['name'] ?? 'Unknown Branch',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
-                    ],
-                  ),
-                  child: Column(
-                    children: [
-                      Expanded(
-                        child: ClipRRect(
-                          borderRadius: const BorderRadius.vertical(
-                            top: Radius.circular(10),
-                          ),
-                          child: CachedNetworkImage(
-                            imageUrl: img,
-                            width: double.infinity,
-                            fit: BoxFit.cover,
-                            placeholder: (_, __) => const Center(
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
-                            errorWidget: (_, __, ___) => const Center(
-                              child: Icon(Icons.image_not_supported, color: Colors.grey),
-                            ),
-                          ),
-                        ),
-                      ),
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(8),
-                        alignment: Alignment.center,
-                        decoration: const BoxDecoration(
-                          color: Colors.black,
-                          borderRadius: BorderRadius.vertical(
-                            bottom: Radius.circular(10),
-                          ),
-                        ),
-                        child: Text(
-                          c["name"] ?? "",
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                    );
+                  }).toList(),
+                  onChanged: (val) {
+                    sp.setOverrideBranch(val);
+                  },
                 ),
-              );
-            },
+              ),
+            ),
           ),
+
+        // SEARCH BAR (CATEGORY LIVE SEARCH)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withValues(alpha: 0.18),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: TextField(
+              controller: _categorySearchCtrl,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: "Search categories...",
+                hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+                prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                suffixIcon: isSearching
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, color: Colors.grey),
+                        onPressed: () {
+                          _categorySearchCtrl.clear();
+                          setState(() {});
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+          ),
+        ),
+
+        // CATEGORY COUNT HEADER
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: Row(
+            children: [
+              Text(
+                isSearching
+                    ? "MATCHING CATEGORIES (${filteredCategories.length})"
+                    : "${sp.categories.length} CATEGORIES",
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey.shade600,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // CATEGORY GRID OR EMPTY STATE
+        Expanded(
+          child: filteredCategories.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        isSearching
+                            ? Icons.search_off_rounded
+                            : Icons.category_outlined,
+                        size: 54,
+                        color: Colors.grey.shade400,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        isSearching
+                            ? 'No categories found for "$query"'
+                            : 'No categories found',
+                        style: TextStyle(
+                          fontSize: 15,
+                          color: Colors.grey.shade600,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final width = constraints.maxWidth;
+                    final crossAxisCount = (width > 600) ? 5 : 3;
+                    return GridView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: filteredCategories.length,
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: crossAxisCount,
+                        crossAxisSpacing: 12,
+                        mainAxisSpacing: 12,
+                        childAspectRatio: 0.75,
+                      ),
+                      itemBuilder: (_, i) {
+                        final c = filteredCategories[i];
+                        String? img = c["image"]?["url"] ?? c["imageUrl"];
+                        if (img != null && img.startsWith("/")) {
+                          img = "${ApiConfig.domain}$img";
+                        }
+                        img ??= "https://via.placeholder.com/200?text=No+Image";
+
+                        return GestureDetector(
+                          onTap: () async {
+                            await sp.selectCategory(c);
+                          },
+                          child: Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(10),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.grey.withValues(alpha: 0.15),
+                                  blurRadius: 4,
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              children: [
+                                Expanded(
+                                  child: ClipRRect(
+                                    borderRadius: const BorderRadius.vertical(
+                                      top: Radius.circular(10),
+                                    ),
+                                    child: CachedNetworkImage(
+                                      imageUrl: img,
+                                      width: double.infinity,
+                                      fit: BoxFit.cover,
+                                      placeholder: (_, __) => const Center(
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
+                                      errorWidget: (_, __, ___) => const Center(
+                                        child: Icon(
+                                          Icons.image_not_supported,
+                                          color: Colors.grey,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(8),
+                                  alignment: Alignment.center,
+                                  decoration: const BoxDecoration(
+                                    color: Colors.black,
+                                    borderRadius: BorderRadius.vertical(
+                                      bottom: Radius.circular(10),
+                                    ),
+                                  ),
+                                  child: Text(
+                                    c["name"] ?? "",
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
         ),
       ],
     );
@@ -291,6 +442,7 @@ class _StockOrderPageState extends State<StockOrderPage> {
                           setState(() {
                             _externalSearchResults = [];
                             _isSearchingExternal = false;
+                            _searchShowAsGrid = false;
                           });
                         },
                       )
@@ -329,7 +481,13 @@ class _StockOrderPageState extends State<StockOrderPage> {
               // Single view toggle button (shows only one at a time: Grid by default, taps to toggle)
               InkWell(
                 onTap: () {
-                  setState(() => _showAsGrid = !_showAsGrid);
+                  setState(() {
+                    if (isSearching) {
+                      _searchShowAsGrid = !_searchShowAsGrid;
+                    } else {
+                      _showAsGrid = !_showAsGrid;
+                    }
+                  });
                 },
                 borderRadius: BorderRadius.circular(8),
                 child: Container(
@@ -352,7 +510,7 @@ class _StockOrderPageState extends State<StockOrderPage> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        _showAsGrid
+                        (isSearching ? _searchShowAsGrid : _showAsGrid)
                             ? Icons.grid_view_rounded
                             : Icons.view_list_rounded,
                         size: 16,
@@ -360,7 +518,9 @@ class _StockOrderPageState extends State<StockOrderPage> {
                       ),
                       const SizedBox(width: 4),
                       Text(
-                        _showAsGrid ? "Grid" : "List",
+                        (isSearching ? _searchShowAsGrid : _showAsGrid)
+                            ? "Grid"
+                            : "List",
                         style: const TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
@@ -377,7 +537,7 @@ class _StockOrderPageState extends State<StockOrderPage> {
 
         // BODY: Either Google-style List View or Grid View
         Expanded(
-          child: !_showAsGrid
+          child: !(isSearching ? _searchShowAsGrid : _showAsGrid)
               ? _buildGoogleSearchList(context, sp)
               : _buildProductGrid(context, sp),
         ),
