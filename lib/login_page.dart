@@ -16,6 +16,7 @@ import 'employee.dart';
 import 'home_navigation_service.dart';
 import 'home_page.dart';
 import 'kot_auto_print_service.dart';
+import 'global_kot_realtime_service.dart';
 import 'session_prefs.dart';
 import 'package:geolocator/geolocator.dart';
 import 'geofence_util.dart';
@@ -165,6 +166,7 @@ class _LoginPageState extends State<LoginPage> {
             .timeout(const Duration(seconds: 8));
 
         if (res.statusCode == 200) {
+          unawaited(GlobalKotRealtimeService.instance.connect());
           if (!mounted) return;
           final isPunchedIn = await AttendanceManager.instance
               .checkAttendanceStatus(prefs: prefs);
@@ -606,6 +608,7 @@ class _LoginPageState extends State<LoginPage> {
           }
 
           unawaited(AttendanceManager.instance.checkAttendanceStatus(prefs: prefs));
+          unawaited(GlobalKotRealtimeService.instance.connect());
 
           if (!mounted) return;
           // Open Employee / Profile page directly after login

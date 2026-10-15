@@ -4,6 +4,7 @@ import 'dart:io' as io;
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:blackforest_app/api_server_prefs.dart';
 import 'package:blackforest_app/notification_service.dart';
 import 'package:blackforest_app/common_scaffold.dart';
@@ -59,10 +60,16 @@ class GlobalKotRealtimeService {
   
   Future<void> _loadSession() async {
     final prefs = await SharedPreferences.getInstance();
-    _wsToken = (prefs.getString('token') ?? '').trim();
-    _wsBranchId = (prefs.getString('branchId') ?? '').trim();
+    _wsToken = (prefs.getString('token') ?? prefs.getString('auth_token') ?? '').trim();
+    if (_wsToken.isEmpty) {
+      try {
+        const storage = FlutterSecureStorage();
+        _wsToken = (await storage.read(key: 'token') ?? '').trim();
+      } catch (_) {}
+    }
+    _wsBranchId = (prefs.getString('branchId') ?? prefs.getString('branch') ?? prefs.getString('userBranchId') ?? '').trim();
     _wsKitchenId = (prefs.getString('kitchenId') ?? '').trim();
-    _currentUserId = (prefs.getString('user_id') ?? '').trim();
+    _currentUserId = (prefs.getString('user_id') ?? prefs.getString('userId') ?? prefs.getString('employee_id') ?? '').trim();
   }
 
   Future<void> connect() async {
@@ -71,7 +78,8 @@ class GlobalKotRealtimeService {
     
     _wsReconnectTimer?.cancel();
     await _loadSession();
-    if (_wsToken.isEmpty || _wsBranchId.isEmpty) {
+    if (_wsToken.isEmpty) {
+      debugPrint('GlobalKotRealtimeService: no token found, scheduling reconnect');
       _scheduleReconnect();
       return;
     }
@@ -79,14 +87,36 @@ class GlobalKotRealtimeService {
     _wsConnecting = true;
     try {
       await ensureApiHostRoutingReady();
-      final host = apiHostActive.trim().isNotEmpty ? apiHostActive.trim() : apiHostPrimary;
-      final wsUri = Uri(scheme: 'wss', host: host, path: '/ws/v1');
+      final primaryHost = apiHostActive.trim().isNotEmpty ? apiHostActive.trim() : apiHostPrimary;
+      final candidateHosts = <String>[
+        primaryHost,
+        if (primaryHost != 'admin.theblackforestcakes.com') 'admin.theblackforestcakes.com',
+        if (primaryHost != 'blackforest.vseyal.com') 'blackforest.vseyal.com',
+      ];
+
+      io.WebSocket? connectedSocket;
+      for (final host in candidateHosts) {
+        try {
+          final wsUri = Uri(scheme: 'wss', host: host, path: '/ws/v1');
+          debugPrint('GlobalKotRealtimeService: connecting to $wsUri');
+          final s = await io.WebSocket.connect(
+            wsUri.toString(),
+            headers: <String, dynamic>{'Authorization': 'Bearer $_wsToken'},
+          ).timeout(const Duration(seconds: 6));
+          connectedSocket = s;
+          debugPrint('GlobalKotRealtimeService: connected successfully to $host');
+          break;
+        } catch (e) {
+          debugPrint('GlobalKotRealtimeService: failed connecting to $host: $e');
+        }
+      }
+
+      if (connectedSocket == null) {
+        throw Exception('All candidate WebSocket hosts failed');
+      }
+
       final generation = ++_wsConnectionGeneration;
-      
-      final socket = await io.WebSocket.connect(
-        wsUri.toString(),
-        headers: <String, dynamic>{'Authorization': 'Bearer $_wsToken'},
-      );
+      final socket = connectedSocket;
       
       if (generation != _wsConnectionGeneration) {
         await socket.close();

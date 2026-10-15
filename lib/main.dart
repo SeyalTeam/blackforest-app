@@ -143,6 +143,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       AuthSessionManager.instance.verifySession(force: true);
       AuthSessionManager.instance.startHeartbeat();
+      GlobalKotRealtimeService.instance.connect();
     } else if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive ||
         state == AppLifecycleState.detached) {

@@ -83,9 +83,15 @@ class WaiterLiveCallService extends ChangeNotifier {
 
   Future<void> _handleCallSignal(Map<String, dynamic> message) async {
     final prefs = await SharedPreferences.getInstance();
-    final role = (prefs.getString('role') ?? '').trim().toLowerCase();
-    // Only handle calls if the currently logged-in user is a waiter
-    if (role != 'waiter') return;
+    final role = (prefs.getString('role') ?? prefs.getString('userRole') ?? '').trim().toLowerCase();
+    final myUserId = (prefs.getString('user_id') ?? prefs.getString('userId') ?? prefs.getString('employee_id') ?? '').trim();
+    debugPrint('WaiterLiveCallService: signal received: $message (myRole: $role, myUserId: $myUserId)');
+
+    final targetUserId = (message['targetUserId'] ?? message['recipientUserId'])?.toString().trim();
+    if (targetUserId != null && targetUserId.isNotEmpty && myUserId.isNotEmpty && targetUserId != myUserId) {
+      debugPrint('WaiterLiveCallService: targetUserId ($targetUserId) != myUserId ($myUserId), ignoring');
+      return;
+    }
 
     final signalType = message['signalType']?.toString();
     final callId = message['callId']?.toString();
@@ -168,25 +174,37 @@ class WaiterLiveCallService extends ChangeNotifier {
   }
 
   void _showIncomingCallDialog() {
-    final context = _navigatorKey?.currentContext;
-    if (context == null) return;
+    void show() {
+      final context = _navigatorKey?.currentContext;
+      if (context == null) {
+        debugPrint('WaiterLiveCallService: context is null, retrying incoming dialog in 200ms...');
+        Future.delayed(const Duration(milliseconds: 200), () {
+          if (_callState == WaiterCallState.ringing) {
+            _showIncomingCallDialog();
+          }
+        });
+        return;
+      }
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      routeSettings: const RouteSettings(name: 'incoming_call_dialog'),
-      builder: (dialogCtx) => WaiterIncomingCallDialog(
-        callerName: _callerName,
-        onAccept: () {
-          Navigator.of(dialogCtx).pop();
-          acceptCall();
-        },
-        onDecline: () {
-          Navigator.of(dialogCtx).pop();
-          declineCall();
-        },
-      ),
-    );
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        routeSettings: const RouteSettings(name: 'incoming_call_dialog'),
+        builder: (dialogCtx) => WaiterIncomingCallDialog(
+          callerName: _callerName,
+          onAccept: () {
+            Navigator.of(dialogCtx).pop();
+            acceptCall();
+          },
+          onDecline: () {
+            Navigator.of(dialogCtx).pop();
+            declineCall();
+          },
+        ),
+      );
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => show());
   }
 
   Future<void> acceptCall() async {
