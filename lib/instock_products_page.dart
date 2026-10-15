@@ -530,52 +530,97 @@ class _InstockProductsPageState extends State<InstockProductsPage> {
 
     // Current InStock Value
     double currentStock = sp.inStockQuery[id] ?? 0.0;
+    final rawUnit =
+        product['defaultPriceDetails']?['unit']?.toString().trim();
+    final unit = (rawUnit != null && rawUnit.isNotEmpty)
+        ? rawUnit
+        : (isWeightBased ? 'kg' : 'pcs');
 
-    if (isWeightBased) {
-      final unit = product['defaultPriceDetails']?['unit'] ?? 'kg';
-      final TextEditingController weightController = TextEditingController(
-        text: currentStock > 0 ? currentStock.toStringAsFixed(2) : '',
-      );
-      final enteredWeight = await showDialog<double>(
-        context: context,
-        barrierDismissible: true,
-        builder: (context) {
-          return AlertDialog(
-            title: Text('Enter Instock Weight ($unit)'),
-            content: TextField(
-              controller: weightController,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
+    String initialText = '';
+    if (currentStock > 0) {
+      if (currentStock == currentStock.floorToDouble()) {
+        initialText = currentStock.toInt().toString();
+      } else {
+        initialText = currentStock.toString();
+      }
+    }
+
+    final TextEditingController stockController =
+        TextEditingController(text: initialText);
+    stockController.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: initialText.length,
+    );
+
+    final enteredStock = await showDialog<double>(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) {
+        return AlertDialog(
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                product['name'] ?? 'Product',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
               ),
-              decoration: InputDecoration(
-                hintText: 'e.g. 0.5',
-                labelText: 'Weight in $unit',
-                border: const OutlineInputBorder(),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  final value =
-                      double.tryParse(weightController.text.trim()) ?? 0.0;
-                  Navigator.pop(context, value);
-                },
-                child: const Text('OK'),
+              const SizedBox(height: 4),
+              Text(
+                isWeightBased
+                    ? 'Enter Instock Weight ($unit)'
+                    : 'Enter Instock Quantity ($unit)',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.normal,
+                  color: Colors.grey.shade700,
+                ),
               ),
             ],
-          );
-        },
-      );
+          ),
+          content: TextField(
+            controller: stockController,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(
+              decimal: true,
+            ),
+            decoration: InputDecoration(
+              hintText: isWeightBased ? 'e.g. 0.5' : 'e.g. 100',
+              labelText: isWeightBased
+                  ? 'Weight in $unit'
+                  : 'Quantity in $unit',
+              border: const OutlineInputBorder(),
+            ),
+            onSubmitted: (val) {
+              final value = double.tryParse(val.trim()) ?? 0.0;
+              Navigator.pop(context, value);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final value =
+                    double.tryParse(stockController.text.trim()) ?? 0.0;
+                Navigator.pop(context, value);
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
 
-      if (enteredWeight == null) return;
-      sp.updateInStock(id, enteredWeight);
-    } else {
-      sp.updateInStock(id, currentStock + 1.0);
-    }
+    if (enteredStock == null || enteredStock < 0) return;
+    sp.updateInStock(id, enteredStock);
   }
 
   @override

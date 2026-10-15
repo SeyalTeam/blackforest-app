@@ -146,8 +146,11 @@ class _StockCartPageState extends State<StockCartPage> {
                         final lineTotal = (req / baseQty) * price;
 
                         final ctrl = sp.qtyCtrl[pid];
-                        if (ctrl != null && ctrl.text != req.toString()) {
-                          ctrl.text = req.toString();
+                        if (ctrl != null &&
+                            (double.tryParse(ctrl.text) ?? 0.0) != req) {
+                          ctrl.text = (req % 1 == 0)
+                              ? req.toInt().toString()
+                              : req.toString();
                         }
 
                         return Dismissible(

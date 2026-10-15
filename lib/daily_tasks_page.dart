@@ -167,12 +167,15 @@ class _DailyTasksPageState extends State<DailyTasksPage> {
     }
 
     return Container(
-      width: 48,
-      height: 48,
+      width: 24,
+      height: 24,
       alignment: Alignment.center,
-      child: Text(
-        emoji,
-        style: const TextStyle(fontSize: 34),
+      child: FittedBox(
+        fit: BoxFit.contain,
+        child: Text(
+          emoji,
+          style: const TextStyle(fontSize: 18),
+        ),
       ),
     );
   }
@@ -1047,7 +1050,7 @@ class _DailyTasksPageState extends State<DailyTasksPage> {
                         children: [
                           // Task Icon (Replaces number 1 and tick circle)
                           _buildTaskIconWidget(task),
-                          const SizedBox(width: 12),
+                          const SizedBox(width: 10),
 
                           // Title, Description & Action Buttons
                           Expanded(

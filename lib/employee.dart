@@ -468,12 +468,8 @@ class _EmployeePageState extends State<EmployeePage> {
           _rawActivities = (firstDoc['activities'] as List?) ?? [];
           _dayType = firstDoc['dayType']?.toString();
           _workStatus = firstDoc['workStatus']?.toString() ?? 'not_started';
-          _workStartTime = firstDoc['workStartTime'] != null
-              ? DateTime.tryParse(firstDoc['workStartTime'].toString())
-              : null;
-          _workCompletedTime = firstDoc['workCompletedTime'] != null
-              ? DateTime.tryParse(firstDoc['workCompletedTime'].toString())
-              : null;
+          _workStartTime = _parseWorkTime(firstDoc['workStartTime']);
+          _workCompletedTime = _parseWorkTime(firstDoc['workCompletedTime']);
           
           final loginBranchData = firstDoc['loginBranch'];
           if (loginBranchData is Map<String, dynamic>) {
@@ -1210,6 +1206,7 @@ class _EmployeePageState extends State<EmployeePage> {
           }
           await _fetchEmployeeProfile();
           await _fetchAttendance();
+          await _fetchDailyTasks();
           _lastPunchOutType = null;
         } else {
           if (mounted) {
@@ -1271,6 +1268,7 @@ class _EmployeePageState extends State<EmployeePage> {
           }
           await _fetchEmployeeProfile();
           await _fetchAttendance();
+          await _fetchDailyTasks();
           _lastPunchOutType = null;
         } else {
           if (mounted) {
@@ -2746,6 +2744,18 @@ class _EmployeePageState extends State<EmployeePage> {
     );
   }
 
+  DateTime? _parseWorkTime(dynamic raw) {
+    if (raw == null) return null;
+    final str = raw.toString().trim();
+    if (str.isEmpty) return null;
+    try {
+      final parsed = DateTime.tryParse(str);
+      return parsed?.toLocal();
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _fetchDailyTasks() async {
     try {
       if (mounted) setState(() => _loadingTasks = true);
@@ -2760,10 +2770,10 @@ class _EmployeePageState extends State<EmployeePage> {
               _workStatus = res['workStatus'].toString();
             }
             if (res['workStartTime'] != null) {
-              _workStartTime = DateTime.tryParse(res['workStartTime'].toString());
+              _workStartTime = _parseWorkTime(res['workStartTime']);
             }
             if (res['workCompletedTime'] != null) {
-              _workCompletedTime = DateTime.tryParse(res['workCompletedTime'].toString());
+              _workCompletedTime = _parseWorkTime(res['workCompletedTime']);
             }
           });
         }
@@ -2849,6 +2859,7 @@ class _EmployeePageState extends State<EmployeePage> {
         setState(() {
           _workStatus = 'in_progress';
           _workStartTime = now;
+          _workCompletedTime = null;
         });
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -2937,7 +2948,7 @@ class _EmployeePageState extends State<EmployeePage> {
 
     if (_workStatus == 'in_progress') {
       final startTimeStr = _workStartTime != null
-          ? DateFormat('hh:mm a').format(_workStartTime!)
+          ? DateFormat('hh:mm a').format(_workStartTime!.toLocal())
           : 'Just now';
       return Padding(
         padding: const EdgeInsets.only(top: 14),
@@ -3026,10 +3037,10 @@ class _EmployeePageState extends State<EmployeePage> {
 
     if (_workStatus == 'completed') {
       final startStr = _workStartTime != null
-          ? DateFormat('hh:mm a').format(_workStartTime!)
+          ? DateFormat('hh:mm a').format(_workStartTime!.toLocal())
           : null;
       final completedStr = _workCompletedTime != null
-          ? DateFormat('hh:mm a').format(_workCompletedTime!)
+          ? DateFormat('hh:mm a').format(_workCompletedTime!.toLocal())
           : null;
       return Padding(
         padding: const EdgeInsets.only(top: 14),
@@ -3129,6 +3140,9 @@ class _EmployeePageState extends State<EmployeePage> {
   }
 
   bool _isTaskAnswered(Map<String, dynamic> task) {
+    final status = task['status']?.toString().toLowerCase().trim();
+    if (status != null && status.isNotEmpty) return true;
+    if (task['completed'] == true) return true;
     return _isTaskYes(task) || _isTaskNo(task) || _isTaskNoComplaint(task);
   }
 
@@ -3230,12 +3244,15 @@ class _EmployeePageState extends State<EmployeePage> {
     }
 
     return Container(
-      width: 44,
-      height: 44,
+      width: 24,
+      height: 24,
       alignment: Alignment.center,
-      child: Text(
-        emoji,
-        style: const TextStyle(fontSize: 32),
+      child: FittedBox(
+        fit: BoxFit.contain,
+        child: Text(
+          emoji,
+          style: const TextStyle(fontSize: 18),
+        ),
       ),
     );
   }
@@ -3274,6 +3291,9 @@ class _EmployeePageState extends State<EmployeePage> {
             _dailyTasks[index]['completed'] = currentStatus == 'yes';
           });
         }
+      } else {
+        // Brief delay so user sees tap confirmation before removal
+        await Future.delayed(const Duration(milliseconds: 300));
       }
     } catch (e) {
       debugPrint('Error updating task: $e');
@@ -3293,8 +3313,22 @@ class _EmployeePageState extends State<EmployeePage> {
   }
 
   Widget _buildRoutineTasksSection() {
-    final routineTasks = _dailyTasks.where((t) => _isRoutineTask(t)).toList();
-    if (routineTasks.isEmpty) return const SizedBox.shrink();
+    // Only show routine tasks after employee has punched in
+    if (!_hasActiveSession) return const SizedBox.shrink();
+
+    final allRoutineTasks = _dailyTasks.where((t) => _isRoutineTask(t)).toList();
+    if (allRoutineTasks.isEmpty) return const SizedBox.shrink();
+
+    // Show only pending/unanswered routine tasks (or currently toggling ones)
+    final pendingRoutineTasks = allRoutineTasks.where((t) {
+      final taskId = t['id']?.toString() ?? '';
+      if (_togglingTaskIds.contains(taskId)) return true;
+      return !_isTaskAnswered(t);
+    }).toList();
+
+    if (pendingRoutineTasks.isEmpty) return const SizedBox.shrink();
+
+    final answeredCount = allRoutineTasks.where((t) => _isTaskAnswered(t)).length;
 
     return Padding(
       padding: const EdgeInsets.only(top: 20),
@@ -3319,7 +3353,7 @@ class _EmployeePageState extends State<EmployeePage> {
                   borderRadius: BorderRadius.circular(10),
                 ),
                 child: Text(
-                  '${routineTasks.where((t) => _isTaskAnswered(t)).length}/${routineTasks.length}',
+                  '$answeredCount/${allRoutineTasks.length}',
                   style: const TextStyle(
                     color: Color(0xFF2E7D32),
                     fontSize: 12,
@@ -3333,10 +3367,10 @@ class _EmployeePageState extends State<EmployeePage> {
           ListView.separated(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            itemCount: routineTasks.length,
+            itemCount: pendingRoutineTasks.length,
             separatorBuilder: (_, __) => const SizedBox(height: 12),
             itemBuilder: (context, index) {
-              final task = routineTasks[index];
+              final task = pendingRoutineTasks[index];
               final taskId = task['id']?.toString() ?? '';
               final isYes = _isTaskYes(task);
               final isNo = _isTaskNo(task);
@@ -3381,7 +3415,7 @@ class _EmployeePageState extends State<EmployeePage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     _buildTaskIconWidget(task),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 10),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,

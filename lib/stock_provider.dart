@@ -471,6 +471,44 @@ class StockProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void registerProduct(dynamic p) {
+    if (p == null) return;
+    final id = p["id"] ?? p["_id"];
+    if (id == null) return;
+    final String sId = id.toString();
+
+    dynamic priceDetails = p['defaultPriceDetails'] ?? {};
+    final currentBranch = _overrideBranchId ?? _branchId;
+
+    if (currentBranch != null && p['branchOverrides'] != null) {
+      for (var override in p['branchOverrides']) {
+        var b = override['branch'];
+        String bId = b is Map ? b['id'] ?? b['_id'] : b?.toString() ?? '';
+        if (bId == currentBranch) {
+          priceDetails = override;
+          break;
+        }
+      }
+    }
+
+    _productNames[sId] = p["name"] ?? "Unknown";
+    _prices[sId] = (priceDetails['price'] as num?)?.toDouble() ?? 0.0;
+    _units[sId] =
+        "${priceDetails['quantity'] ?? ''}${priceDetails['unit'] ?? ''}";
+    _baseQuantities[sId] =
+        (priceDetails['quantity'] as num?)?.toDouble() ?? 1.0;
+    if (_baseQuantities[sId] == 0) _baseQuantities[sId] = 1.0;
+
+    _requiredQty.putIfAbsent(sId, () => null);
+    _inStock.putIfAbsent(sId, () => null);
+    _selected.putIfAbsent(sId, () => false);
+
+    _requiredCtrl.putIfAbsent(sId, () => TextEditingController());
+    _stockCtrl.putIfAbsent(sId, () => TextEditingController());
+
+    notifyListeners();
+  }
+
   // ========== SUBMIT STOCK ORDER ==========
   Future<Map<String, dynamic>?> submitStockOrder(BuildContext context) async {
     if (_isSubmitting) return null;

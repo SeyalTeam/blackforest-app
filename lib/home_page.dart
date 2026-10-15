@@ -2,13 +2,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:blackforest_app/app_http.dart' as http;
-import 'package:blackforest_app/raw_material_dealer_list_page.dart';
 import 'package:blackforest_app/category_popularity_service.dart';
 import 'package:blackforest_app/categories_page.dart';
 import 'package:blackforest_app/instock_categories_page.dart';
 import 'package:blackforest_app/return_categories_page.dart';
 import 'package:blackforest_app/dealer_billing.dart';
 import 'package:blackforest_app/stock_order_page.dart';
+import 'package:blackforest_app/qr_update_page.dart';
 
 
 import 'package:blackforest_app/cart_page.dart';
@@ -3088,11 +3088,11 @@ class _HomePageState extends State<HomePage> {
                       const SizedBox(height: 20),
                       _buildDealerBillingSection(),
                       const SizedBox(height: 20),
-                      _buildRawMaterialBillingSection(),
-                      const SizedBox(height: 20),
                       _buildInstockEntrySection(),
                       const SizedBox(height: 20),
                       _buildReturnOrderSection(),
+                      const SizedBox(height: 20),
+                      _buildProductQrUpdateSection(),
                       const SizedBox(height: 30),
                     ],
                   ),
@@ -3402,6 +3402,84 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  Widget _buildProductQrUpdateSection() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: GestureDetector(
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => const QrUpdatePage(),
+            ),
+          );
+        },
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF7C3AED), Color(0xFF6D28D9)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF7C3AED).withValues(alpha: 0.25),
+                blurRadius: 12,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.qr_code_scanner_rounded,
+                  color: Colors.white,
+                  size: 28,
+                ),
+              ),
+              const SizedBox(width: 16),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Product QR Update',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                    SizedBox(height: 4),
+                    Text(
+                      'Scan barcode or QR code to update product UPC',
+                      style: TextStyle(fontSize: 13, color: Colors.white70),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.arrow_forward_ios,
+                color: Colors.white70,
+                size: 18,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildInstockEntrySection() {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -3605,7 +3683,7 @@ class _HomePageState extends State<HomePage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Dealer Bills',
+                      'Other Products Entry',
                       style: TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.w800,
@@ -3615,84 +3693,6 @@ class _HomePageState extends State<HomePage> {
                     SizedBox(height: 4),
                     Text(
                       'Submit dealer invoices, copy & product photos',
-                      style: TextStyle(fontSize: 13, color: Colors.white70),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(
-                Icons.arrow_forward_ios,
-                color: Colors.white70,
-                size: 18,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRawMaterialBillingSection() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: GestureDetector(
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => const RawMaterialDealerListPage(),
-            ),
-          );
-        },
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF2E7D32), Color(0xFF43A047)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(20),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xFF2E7D32).withValues(alpha: 0.25),
-                blurRadius: 12,
-                offset: const Offset(0, 6),
-              ),
-            ],
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: const Icon(
-                  Icons.receipt_long,
-                  color: Colors.white,
-                  size: 28,
-                ),
-              ),
-              const SizedBox(width: 16),
-              const Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Raw Material Billing',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
-                        color: Colors.white,
-                      ),
-                    ),
-                    SizedBox(height: 4),
-                    Text(
-                      'Upload & manage dealer bills',
                       style: TextStyle(fontSize: 13, color: Colors.white70),
                     ),
                   ],
