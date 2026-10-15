@@ -1,0 +1,424 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:audioplayers/audioplayers.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'global_kot_realtime_service.dart';
+import 'notification_service.dart';
+import 'waiter_incoming_call_dialog.dart';
+import 'waiter_live_call_screen.dart';
+
+enum WaiterCallState {
+  idle,
+  ringing,
+  connecting,
+  connected,
+  ended,
+}
+
+class WaiterLiveCallService extends ChangeNotifier {
+  static final WaiterLiveCallService instance = WaiterLiveCallService._internal();
+  WaiterLiveCallService._internal();
+
+  GlobalKey<NavigatorState>? _navigatorKey;
+  StreamSubscription? _signalSub;
+  final AudioPlayer _ringtonePlayer = AudioPlayer();
+
+  RTCPeerConnection? _peerConnection;
+  MediaStream? _localStream;
+  MediaStream? _remoteStream;
+
+  WaiterCallState _callState = WaiterCallState.idle;
+  WaiterCallState get callState => _callState;
+
+  String? _currentCallId;
+  String? get currentCallId => _currentCallId;
+
+  String? _callerUserId;
+  String? get callerUserId => _callerUserId;
+
+  String _callerName = 'Admin';
+  String get callerName => _callerName;
+
+  dynamic _pendingOfferSdp;
+
+  bool _isMuted = false;
+  bool get isMuted => _isMuted;
+
+  bool _isSpeakerOn = false;
+  bool get isSpeakerOn => _isSpeakerOn;
+
+  Timer? _durationTimer;
+  int _durationSeconds = 0;
+  int get durationSeconds => _durationSeconds;
+
+  String get formattedDuration {
+    final minutes = (_durationSeconds ~/ 60).toString().padLeft(2, '0');
+    final seconds = (_durationSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
+  final Map<String, dynamic> _iceConfig = {
+    'iceServers': [
+      {'urls': 'stun:stun.l.google.com:19302'},
+      {'urls': 'stun:stun1.l.google.com:19302'},
+    ],
+    'sdpSemantics': 'unified-plan',
+  };
+
+  void init(GlobalKey<NavigatorState> navigatorKey) {
+    _navigatorKey = navigatorKey;
+    _signalSub?.cancel();
+    _signalSub = GlobalKotRealtimeService.instance.onCallSignal.listen(
+      _handleCallSignal,
+      onError: (err) {
+        debugPrint('WaiterLiveCallService: signal stream error: $err');
+      },
+    );
+  }
+
+  Future<void> _handleCallSignal(Map<String, dynamic> message) async {
+    final prefs = await SharedPreferences.getInstance();
+    final role = (prefs.getString('role') ?? '').trim().toLowerCase();
+    // Only handle calls if the currently logged-in user is a waiter
+    if (role != 'waiter') return;
+
+    final signalType = message['signalType']?.toString();
+    final callId = message['callId']?.toString();
+    final senderId = message['senderId']?.toString();
+    final senderName = message['senderName']?.toString() ?? 'Admin';
+
+    if (signalType == 'offer') {
+      if (_callState != WaiterCallState.idle) {
+        // Already on a call, respond busy
+        if (senderId != null) {
+          GlobalKotRealtimeService.instance.sendJsonMessage({
+            'action': 'call_signal',
+            'callId': callId,
+            'signalType': 'busy',
+            'targetUserId': senderId,
+          });
+        }
+        return;
+      }
+
+      _currentCallId = callId;
+      _callerUserId = senderId;
+      _callerName = senderName;
+      _pendingOfferSdp = message['sdp'];
+      _callState = WaiterCallState.ringing;
+      _durationSeconds = 0;
+      _isMuted = false;
+      _isSpeakerOn = false;
+      notifyListeners();
+
+      // Notify admin that waiter's device is ringing
+      if (senderId != null) {
+        GlobalKotRealtimeService.instance.sendJsonMessage({
+          'action': 'call_signal',
+          'callId': callId,
+          'signalType': 'ringing',
+          'targetUserId': senderId,
+        });
+      }
+
+      // Play looping ringtone
+      await _startRingtone();
+
+      // Send local notification in case app is in background
+      try {
+        await NotificationService().showNotification(
+          id: 9991,
+          title: 'Incoming Call from $senderName',
+          body: 'Admin is calling you live. Tap to answer.',
+          payload: 'call_incoming',
+        );
+      } catch (_) {}
+
+      // Show Incoming Call Dialog on screen
+      _showIncomingCallDialog();
+    } else if (signalType == 'ice_candidate') {
+      if (_currentCallId == callId) {
+        await _handleRemoteIceCandidate(message['candidate']);
+      }
+    } else if (signalType == 'end' || signalType == 'reject') {
+      if (_currentCallId == callId || _callState != WaiterCallState.idle) {
+        await _terminateCallLocally();
+      }
+    }
+  }
+
+  Future<void> _startRingtone() async {
+    try {
+      await _ringtonePlayer.setReleaseMode(ReleaseMode.loop);
+      await _ringtonePlayer.play(AssetSource('sounds/table.mp3'));
+    } catch (e) {
+      debugPrint('WaiterLiveCallService: error playing ringtone: $e');
+    }
+  }
+
+  Future<void> _stopRingtone() async {
+    try {
+      await _ringtonePlayer.stop();
+    } catch (_) {}
+  }
+
+  void _showIncomingCallDialog() {
+    final context = _navigatorKey?.currentContext;
+    if (context == null) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      routeSettings: const RouteSettings(name: 'incoming_call_dialog'),
+      builder: (dialogCtx) => WaiterIncomingCallDialog(
+        callerName: _callerName,
+        onAccept: () {
+          Navigator.of(dialogCtx).pop();
+          acceptCall();
+        },
+        onDecline: () {
+          Navigator.of(dialogCtx).pop();
+          declineCall();
+        },
+      ),
+    );
+  }
+
+  Future<void> acceptCall() async {
+    await _stopRingtone();
+
+    // Request microphone permission
+    final micStatus = await Permission.microphone.request();
+    if (micStatus.isDenied || micStatus.isPermanentlyDenied) {
+      declineCall();
+      return;
+    }
+
+    _callState = WaiterCallState.connecting;
+    notifyListeners();
+
+    try {
+      _peerConnection = await createPeerConnection(_iceConfig);
+
+      final constraints = <String, dynamic>{
+        'audio': {
+          'echoCancellation': true,
+          'noiseSuppression': true,
+          'autoGainControl': true,
+        },
+        'video': false,
+      };
+
+      _localStream = await navigator.mediaDevices.getUserMedia(constraints);
+      for (final track in _localStream!.getAudioTracks()) {
+        await _peerConnection!.addTrack(track, _localStream!);
+      }
+
+      _peerConnection!.onIceCandidate = (candidate) {
+        if (candidate.candidate != null && _callerUserId != null) {
+          GlobalKotRealtimeService.instance.sendJsonMessage({
+            'action': 'call_signal',
+            'callId': _currentCallId,
+            'signalType': 'ice_candidate',
+            'targetUserId': _callerUserId,
+            'candidate': {
+              'candidate': candidate.candidate,
+              'sdpMid': candidate.sdpMid,
+              'sdpMLineIndex': candidate.sdpMLineIndex,
+            },
+          });
+        }
+      };
+
+      _peerConnection!.onTrack = (event) {
+        if (event.streams.isNotEmpty) {
+          _remoteStream = event.streams[0];
+          notifyListeners();
+        }
+      };
+
+      _peerConnection!.onConnectionState = (state) {
+        debugPrint('WaiterLiveCallService: connection state: $state');
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+          _onConnected();
+        } else if (state ==
+                RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+            state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+            state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
+          if (_callState == WaiterCallState.connected) {
+            endCall();
+          }
+        }
+      };
+
+      // Set remote offer
+      if (_pendingOfferSdp != null) {
+        final sdpMap = _pendingOfferSdp is Map
+            ? Map<String, dynamic>.from(_pendingOfferSdp)
+            : jsonDecode(_pendingOfferSdp.toString());
+        final description = RTCSessionDescription(
+          sdpMap['sdp']?.toString() ?? '',
+          sdpMap['type']?.toString() ?? 'offer',
+        );
+        await _peerConnection!.setRemoteDescription(description);
+      }
+
+      // Create answer
+      final answer = await _peerConnection!.createAnswer({
+        'offerToReceiveAudio': 1,
+        'offerToReceiveVideo': 0,
+      });
+      await _peerConnection!.setLocalDescription(answer);
+
+      // Send answer to admin
+      final prefs = await SharedPreferences.getInstance();
+      final myName = prefs.getString('user_name') ?? 'Waiter';
+
+      GlobalKotRealtimeService.instance.sendJsonMessage({
+        'action': 'call_signal',
+        'callId': _currentCallId,
+        'signalType': 'answer',
+        'targetUserId': _callerUserId,
+        'sdp': answer.toMap(),
+        'callerName': myName,
+        'callerRole': 'waiter',
+      });
+
+      _onConnected();
+
+      // Open Waiter Live Call Screen
+      _navigatorKey?.currentState?.push(
+        MaterialPageRoute(
+          settings: const RouteSettings(name: 'waiter_live_call_screen'),
+          builder: (ctx) => WaiterLiveCallScreen(callerName: _callerName),
+        ),
+      );
+    } catch (e) {
+      debugPrint('WaiterLiveCallService: error accepting call: $e');
+      await declineCall();
+    }
+  }
+
+  Future<void> _handleRemoteIceCandidate(dynamic candidateData) async {
+    if (_peerConnection == null || candidateData == null) return;
+    try {
+      final cMap = candidateData is Map
+          ? Map<String, dynamic>.from(candidateData)
+          : jsonDecode(candidateData.toString());
+      final candidate = RTCIceCandidate(
+        cMap['candidate']?.toString(),
+        cMap['sdpMid']?.toString(),
+        cMap['sdpMLineIndex'] as int?,
+      );
+      await _peerConnection!.addCandidate(candidate);
+    } catch (e) {
+      debugPrint('WaiterLiveCallService: error adding ice candidate: $e');
+    }
+  }
+
+  void _onConnected() {
+    if (_callState == WaiterCallState.connected) return;
+    _callState = WaiterCallState.connected;
+    _durationSeconds = 0;
+    _durationTimer?.cancel();
+    _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _durationSeconds++;
+      notifyListeners();
+    });
+    notifyListeners();
+  }
+
+  Future<void> declineCall() async {
+    await _stopRingtone();
+    if (_callerUserId != null && _currentCallId != null) {
+      GlobalKotRealtimeService.instance.sendJsonMessage({
+        'action': 'call_signal',
+        'callId': _currentCallId,
+        'signalType': 'reject',
+        'targetUserId': _callerUserId,
+        'reason': 'declined',
+      });
+    }
+    await _cleanupWebrtc();
+  }
+
+  Future<void> endCall() async {
+    await _stopRingtone();
+    if (_callerUserId != null && _currentCallId != null) {
+      GlobalKotRealtimeService.instance.sendJsonMessage({
+        'action': 'call_signal',
+        'callId': _currentCallId,
+        'signalType': 'end',
+        'targetUserId': _callerUserId,
+      });
+    }
+    await _terminateCallLocally();
+  }
+
+  Future<void> _terminateCallLocally() async {
+    await _stopRingtone();
+    _callState = WaiterCallState.ended;
+    notifyListeners();
+
+    // Close any open call screens or dialogs
+    _navigatorKey?.currentState?.popUntil((route) {
+      return route.settings.name != 'incoming_call_dialog' &&
+          route.settings.name != 'waiter_live_call_screen';
+    });
+
+    await _cleanupWebrtc();
+  }
+
+  Future<void> toggleMute() async {
+    if (_localStream == null) return;
+    _isMuted = !_isMuted;
+    for (final track in _localStream!.getAudioTracks()) {
+      track.enabled = !_isMuted;
+    }
+    notifyListeners();
+  }
+
+  Future<void> toggleSpeaker() async {
+    _isSpeakerOn = !_isSpeakerOn;
+    try {
+      await Helper.setSpeakerphoneOn(_isSpeakerOn);
+    } catch (e) {
+      debugPrint('WaiterLiveCallService: setSpeakerphoneOn error: $e');
+    }
+    notifyListeners();
+  }
+
+  Future<void> _cleanupWebrtc() async {
+    _durationTimer?.cancel();
+    _durationTimer = null;
+
+    try {
+      _localStream?.getTracks().forEach((track) => track.stop());
+      await _localStream?.dispose();
+    } catch (_) {}
+    _localStream = null;
+
+    try {
+      _remoteStream?.getTracks().forEach((track) => track.stop());
+      await _remoteStream?.dispose();
+    } catch (_) {}
+    _remoteStream = null;
+
+    try {
+      await _peerConnection?.close();
+      await _peerConnection?.dispose();
+    } catch (_) {}
+    _peerConnection = null;
+
+    _callState = WaiterCallState.idle;
+    _currentCallId = null;
+    _callerUserId = null;
+    _pendingOfferSdp = null;
+    notifyListeners();
+  }
+}

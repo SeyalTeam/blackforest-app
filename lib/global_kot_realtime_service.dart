@@ -40,6 +40,9 @@ class GlobalKotRealtimeService {
   final _chatMessageController = StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get onChatMessage => _chatMessageController.stream;
 
+  final _callSignalController = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get onCallSignal => _callSignalController.stream;
+
   bool get isConnected => _wsSocket != null && _wsSocket!.readyState == io.WebSocket.open;
 
   bool _markEventAsSeen(String eventId) {
@@ -159,6 +162,16 @@ class GlobalKotRealtimeService {
     socket.add(jsonEncode(payload));
   }
 
+  void sendJsonMessage(Map<String, dynamic> data) {
+    if (_wsSocket != null && _wsSocket!.readyState == io.WebSocket.open) {
+      try {
+        _wsSocket!.add(jsonEncode(data));
+      } catch (e) {
+        debugPrint('GlobalKotRealtimeService: error sending message: $e');
+      }
+    }
+  }
+
   void _handleFrame(dynamic frame, int generation) {
     if (generation != _wsConnectionGeneration) return;
     
@@ -208,6 +221,11 @@ class GlobalKotRealtimeService {
 
     if (eventType == 'chat_message_received') {
       unawaited(_handleChatMessage(message));
+      return;
+    }
+
+    if (eventType == 'call_signal') {
+      _callSignalController.add(message);
       return;
     }
     

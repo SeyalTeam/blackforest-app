@@ -24,6 +24,7 @@ import 'package:blackforest_app/chat_page.dart';
 import 'package:blackforest_app/global_kot_realtime_service.dart';
 import 'package:blackforest_app/employee.dart';
 import 'package:blackforest_app/attendance_manager.dart';
+import 'package:blackforest_app/waiter_live_call_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -95,6 +96,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     GlobalKotRealtimeService.instance.connect();
     AuthSessionManager.instance.attachNavigatorKey(_navigatorKey);
+    WaiterLiveCallService.instance.init(_navigatorKey);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       AuthSessionManager.instance.startHeartbeat();
