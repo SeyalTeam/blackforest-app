@@ -316,6 +316,8 @@ class InstockProvider extends ChangeNotifier {
   final Map<String, Map<String, dynamic>> _productDealers =
       {}; // productId -> dealerData
 
+  void storeProductMetadata(dynamic product) => _storeProductMetadata(product);
+
   void _storeProductMetadata(dynamic product) {
     final id = product["id"]?.toString();
     if (id == null || id.isEmpty) return;

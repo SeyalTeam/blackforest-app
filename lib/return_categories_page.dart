@@ -15,12 +15,20 @@ class ReturnCategoriesPage extends StatefulWidget {
 }
 
 class _ReturnCategoriesPageState extends State<ReturnCategoriesPage> {
+  final TextEditingController _searchCtrl = TextEditingController();
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       Provider.of<InstockProvider>(context, listen: false).syncBranchId();
     });
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
   }
 
   @override
@@ -39,26 +47,130 @@ class _ReturnCategoriesPageState extends State<ReturnCategoriesPage> {
   }
 
   Widget _buildGrid(InstockProvider sp) {
-    final _categories = sp.categories;
-    if (_categories.isEmpty) {
+    if (sp.categories.isEmpty) {
       return const Center(child: Text("No categories found."));
     }
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final crossAxisCount = constraints.maxWidth > 600 ? 5 : 3;
-        return GridView.builder(
-          padding: const EdgeInsets.all(10),
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: crossAxisCount,
-            crossAxisSpacing: 10,
-            mainAxisSpacing: 10,
-            childAspectRatio: 0.85,
+
+    final query = _searchCtrl.text.trim();
+    final isSearching = query.isNotEmpty;
+    final filteredCategories = isSearching
+        ? sp.categories.where((c) {
+            final name = (c["name"] ?? "").toString().toLowerCase();
+            return name.contains(query.toLowerCase());
+          }).toList()
+        : sp.categories;
+
+    return Column(
+      children: [
+        // SEARCH BAR (CATEGORY LIVE SEARCH)
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withValues(alpha: 0.18),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: TextField(
+              controller: _searchCtrl,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: "Search categories...",
+                hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+                prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                suffixIcon: isSearching
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, color: Colors.grey),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          setState(() {});
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
           ),
-          itemCount: _categories.length,
-          itemBuilder: (context, index) {
-            final c = _categories[index];
-            String? imageUrl;
-            final img = c['imageUrl'] ?? c['image'] ?? c['thumbnail'];
+        ),
+
+        // CATEGORY COUNT HEADER
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: Row(
+            children: [
+              Text(
+                isSearching
+                    ? "MATCHING CATEGORIES (${filteredCategories.length})"
+                    : "${sp.categories.length} CATEGORIES",
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey.shade600,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // CATEGORY GRID
+        Expanded(
+          child: filteredCategories.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        isSearching
+                            ? Icons.search_off_rounded
+                            : Icons.category_outlined,
+                        size: 54,
+                        color: Colors.grey.shade400,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        isSearching
+                            ? 'No categories found for "$query"'
+                            : 'No categories found',
+                        style: TextStyle(
+                          fontSize: 15,
+                          color: Colors.grey.shade600,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final crossAxisCount = constraints.maxWidth > 600 ? 5 : 3;
+                    return GridView.builder(
+                      padding: const EdgeInsets.all(10),
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: crossAxisCount,
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 10,
+                        childAspectRatio: 0.85,
+                      ),
+                      itemCount: filteredCategories.length,
+                      itemBuilder: (context, index) {
+                        final c = filteredCategories[index];
+                        String? imageUrl;
+                        final img = c['imageUrl'] ?? c['image'] ?? c['thumbnail'];
             if (img is Map) {
               imageUrl = img['url'];
             } else if (img is String) {
@@ -141,6 +253,9 @@ class _ReturnCategoriesPageState extends State<ReturnCategoriesPage> {
           },
         );
       },
-    );
+    ),
+  ),
+],
+);
   }
 }

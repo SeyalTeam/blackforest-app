@@ -569,6 +569,16 @@ class _LoginPageState extends State<LoginPage> {
                   .timeout(const Duration(seconds: 4));
               if (bRes.statusCode == 200) {
                 final bData = jsonDecode(bRes.body);
+                final comp = bData['company'];
+                final compId = comp is Map
+                    ? (comp['id'] ?? comp['_id'])?.toString()
+                    : comp?.toString();
+                if (compId != null && compId.isNotEmpty) {
+                  await prefs.setString('company_id', compId);
+                  if (comp is Map && comp['name'] != null) {
+                    await prefs.setString('company_name', comp['name'].toString());
+                  }
+                }
                 final bIp = bData['ipAddress']?.toString().trim();
                 final pIp = bData['printerIp']?.toString().trim();
                 if (bIp != null && bIp.isNotEmpty) {

@@ -20,7 +20,6 @@ class _StockOrderPageState extends State<StockOrderPage> {
   bool _showAsGrid = true;
   bool _searchShowAsGrid = false;
   final FocusNode _searchFocusNode = FocusNode();
-  final TextEditingController _categorySearchCtrl = TextEditingController();
   List<dynamic> _externalSearchResults = [];
   bool _isSearchingExternal = false;
   Timer? _debounceTimer;
@@ -29,26 +28,24 @@ class _StockOrderPageState extends State<StockOrderPage> {
   void dispose() {
     _debounceTimer?.cancel();
     _searchFocusNode.dispose();
-    _categorySearchCtrl.dispose();
     super.dispose();
   }
 
   void _onSearchChanged(String val, StockProvider sp) {
     if (val.trim().isEmpty) {
       _searchShowAsGrid = false;
-    }
-    setState(() {});
-    _debounceTimer?.cancel();
-    final query = val.trim();
-    if (query.length < 2) {
-      setState(() {
-        _externalSearchResults = [];
-        _isSearchingExternal = false;
-      });
+      _isSearchingExternal = false;
+      _externalSearchResults = [];
+      _debounceTimer?.cancel();
+      setState(() {});
       return;
     }
-
-    _debounceTimer = Timer(const Duration(milliseconds: 350), () async {
+    setState(() {
+      _isSearchingExternal = true;
+    });
+    _debounceTimer?.cancel();
+    final query = val.trim();
+    _debounceTimer = Timer(const Duration(milliseconds: 300), () async {
       await _searchExternalProducts(query, sp);
     });
   }
@@ -66,7 +63,7 @@ class _StockOrderPageState extends State<StockOrderPage> {
 
       final encoded = Uri.encodeQueryComponent(query);
       final url =
-          "${ApiConfig.baseUrl}/products?where[name][like]=$encoded&limit=15&depth=1";
+          "${ApiConfig.baseUrl}/products?where[name][like]=$encoded&limit=50&depth=1";
       final res = await http.get(
         Uri.parse(url),
         headers: ApiConfig.getHeaders(token),
@@ -135,14 +132,15 @@ class _StockOrderPageState extends State<StockOrderPage> {
   }
 
   // ========================== CATEGORY GRID ===========================
+  // ========================== CATEGORY GRID & GLOBAL PRODUCT SEARCH ===========================
   Widget _buildCategories(BuildContext context, StockProvider sp) {
     if (sp.categories.isEmpty) {
       return const Center(child: Text("No categories found"));
     }
 
-    final query = _categorySearchCtrl.text.trim();
+    final query = sp.searchCtrl.text.trim();
     final isSearching = query.isNotEmpty;
-    final filteredCategories = isSearching
+    final matchingCategories = isSearching
         ? sp.categories.where((c) {
             final name = (c["name"] ?? "").toString().toLowerCase();
             return name.contains(query.toLowerCase());
@@ -184,7 +182,7 @@ class _StockOrderPageState extends State<StockOrderPage> {
             ),
           ),
 
-        // SEARCH BAR (CATEGORY LIVE SEARCH)
+        // SEARCH BAR (SEARCH PRODUCTS & CATEGORIES ACROSS ALL STOCK)
         Padding(
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
           child: Container(
@@ -200,18 +198,24 @@ class _StockOrderPageState extends State<StockOrderPage> {
               ],
             ),
             child: TextField(
-              controller: _categorySearchCtrl,
+              controller: sp.searchCtrl,
+              focusNode: _searchFocusNode,
               textInputAction: TextInputAction.search,
               decoration: InputDecoration(
-                hintText: "Search categories...",
+                hintText: "Search products (e.g. egg, milk)...",
                 hintStyle: TextStyle(color: Colors.grey.shade400, fontSize: 14),
                 prefixIcon: const Icon(Icons.search, color: Colors.grey),
                 suffixIcon: isSearching
                     ? IconButton(
                         icon: const Icon(Icons.clear, color: Colors.grey),
                         onPressed: () {
-                          _categorySearchCtrl.clear();
-                          setState(() {});
+                          sp.searchCtrl.clear();
+                          _debounceTimer?.cancel();
+                          setState(() {
+                            _externalSearchResults = [];
+                            _isSearchingExternal = false;
+                            _searchShowAsGrid = false;
+                          });
                         },
                       )
                     : null,
@@ -224,19 +228,75 @@ class _StockOrderPageState extends State<StockOrderPage> {
                 contentPadding:
                     const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
               ),
-              onChanged: (_) => setState(() {}),
+              onChanged: (val) => _onSearchChanged(val, sp),
             ),
           ),
         ),
 
-        // CATEGORY COUNT HEADER
+        // WHEN SEARCHING: SHOW MATCHING CATEGORY CHIPS (IF ANY)
+        if (isSearching && matchingCategories.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            child: SizedBox(
+              height: 36,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: matchingCategories.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (_, i) {
+                  final cat = matchingCategories[i];
+                  return InkWell(
+                    onTap: () async {
+                      sp.searchCtrl.clear();
+                      await sp.selectCategory(cat);
+                    },
+                    borderRadius: BorderRadius.circular(18),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF0FDF4),
+                        borderRadius: BorderRadius.circular(18),
+                        border: Border.all(
+                          color: const Color(0xFF0F766E).withValues(alpha: 0.3),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(
+                            Icons.category_outlined,
+                            size: 14,
+                            color: Color(0xFF0F766E),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            cat['name'] ?? '',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF0F766E),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+
+        // HEADER ROW: PRODUCTS COUNT + VIEW TOGGLE (WHEN SEARCHING) OR CATEGORIES COUNT (WHEN NOT SEARCHING)
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           child: Row(
             children: [
               Text(
                 isSearching
-                    ? "MATCHING CATEGORIES (${filteredCategories.length})"
+                    ? "MATCHING PRODUCTS (${sp.filteredProducts.length + _externalSearchResults.length})"
                     : "${sp.categories.length} CATEGORIES",
                 style: TextStyle(
                   fontSize: 11,
@@ -245,45 +305,73 @@ class _StockOrderPageState extends State<StockOrderPage> {
                   letterSpacing: 0.8,
                 ),
               ),
+              if (isSearching) ...[
+                const Spacer(),
+                // Single view toggle button (shows only one at a time: Grid by default, taps to toggle)
+                InkWell(
+                  onTap: () {
+                    setState(() {
+                      _searchShowAsGrid = !_searchShowAsGrid;
+                    });
+                  },
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F766E),
+                      borderRadius: BorderRadius.circular(8),
+                      boxShadow: [
+                        BoxShadow(
+                          color: const Color(0xFF0F766E).withValues(alpha: 0.2),
+                          blurRadius: 4,
+                          offset: const Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _searchShowAsGrid
+                              ? Icons.grid_view_rounded
+                              : Icons.view_list_rounded,
+                          size: 16,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          _searchShowAsGrid ? "Grid" : "List",
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
 
-        // CATEGORY GRID OR EMPTY STATE
+        // BODY: IF SEARCHING -> PRODUCTS LISTING! IF NOT SEARCHING -> CATEGORIES GRID!
         Expanded(
-          child: filteredCategories.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        isSearching
-                            ? Icons.search_off_rounded
-                            : Icons.category_outlined,
-                        size: 54,
-                        color: Colors.grey.shade400,
-                      ),
-                      const SizedBox(height: 12),
-                      Text(
-                        isSearching
-                            ? 'No categories found for "$query"'
-                            : 'No categories found',
-                        style: TextStyle(
-                          fontSize: 15,
-                          color: Colors.grey.shade600,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                )
+          child: isSearching
+              ? (!_searchShowAsGrid
+                  ? _buildGoogleSearchList(context, sp)
+                  : _buildProductGrid(context, sp))
               : LayoutBuilder(
                   builder: (context, constraints) {
                     final width = constraints.maxWidth;
                     final crossAxisCount = (width > 600) ? 5 : 3;
                     return GridView.builder(
                       padding: const EdgeInsets.all(12),
-                      itemCount: filteredCategories.length,
+                      itemCount: sp.categories.length,
                       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: crossAxisCount,
                         crossAxisSpacing: 12,
@@ -291,7 +379,7 @@ class _StockOrderPageState extends State<StockOrderPage> {
                         childAspectRatio: 0.75,
                       ),
                       itemBuilder: (_, i) {
-                        final c = filteredCategories[i];
+                        final c = sp.categories[i];
                         String? img = c["image"]?["url"] ?? c["imageUrl"];
                         if (img != null && img.startsWith("/")) {
                           img = "${ApiConfig.domain}$img";
@@ -580,10 +668,11 @@ class _StockOrderPageState extends State<StockOrderPage> {
       );
     }
 
+    final hasLocal = localMatches.isNotEmpty;
     final hasExternal = _externalSearchResults.isNotEmpty;
     final spinnerCount = _isSearchingExternal ? 1 : 0;
     final itemCount = localMatches.length +
-        (hasExternal ? _externalSearchResults.length + 1 : 0) +
+        (hasExternal ? _externalSearchResults.length + (hasLocal ? 1 : 0) : 0) +
         spinnerCount;
 
     return ListView.builder(
@@ -598,7 +687,7 @@ class _StockOrderPageState extends State<StockOrderPage> {
         int offset = localMatches.length;
 
         if (hasExternal) {
-          if (index == offset) {
+          if (hasLocal && index == offset) {
             return Padding(
               padding: const EdgeInsets.fromLTRB(8, 14, 8, 6),
               child: Row(
@@ -620,12 +709,12 @@ class _StockOrderPageState extends State<StockOrderPage> {
             );
           }
 
-          final extIndex = index - offset - 1;
-          if (extIndex < _externalSearchResults.length) {
+          final extIndex = hasLocal ? (index - offset - 1) : (index - offset);
+          if (extIndex >= 0 && extIndex < _externalSearchResults.length) {
             final p = _externalSearchResults[extIndex];
             return _buildSuggestionTile(context, sp, p, isExternal: true);
           }
-          offset += _externalSearchResults.length + 1;
+          offset += _externalSearchResults.length + (hasLocal ? 1 : 0);
         }
 
         if (_isSearchingExternal && index >= offset) {

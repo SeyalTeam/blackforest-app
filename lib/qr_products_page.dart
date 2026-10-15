@@ -111,22 +111,47 @@ class _QrProductsPageState extends State<QrProductsPage>
     return null;
   }
 
-  bool _matchesCompany(dynamic item, String compId) {
-    if (item is! Map) return false;
-    final comp = item['company'];
-    if (comp == null) return false;
-    if (comp is List) {
-      return comp.any((c) {
-        final cId = c is Map ? (c['id'] ?? c['_id'])?.toString() : c?.toString();
+  bool _matchesCompany(dynamic product, String compId) {
+    if (product is! Map) return false;
+
+    // 1. If product has an explicit non-empty company list, check against it.
+    final prodComp = product['company'];
+    if (prodComp != null) {
+      if (prodComp is List && prodComp.isNotEmpty) {
+        return prodComp.any((c) {
+          final cId =
+              c is Map ? (c['id'] ?? c['_id'])?.toString() : c?.toString();
+          return cId == compId;
+        });
+      } else if (prodComp is Map) {
+        final cId = (prodComp['id'] ?? prodComp['_id'])?.toString();
         return cId == compId;
-      });
-    } else if (comp is Map) {
-      final cId = (comp['id'] ?? comp['_id'])?.toString();
-      return cId == compId;
-    } else if (comp is String) {
-      return comp == compId;
+      } else if (prodComp is String && prodComp.isNotEmpty) {
+        return prodComp == compId;
+      }
     }
-    return false;
+
+    // 2. If product has no explicit company, check product's category.company
+    final cat = product['category'];
+    if (cat is Map && cat['company'] != null) {
+      final catComp = cat['company'];
+      if (catComp is List && catComp.isNotEmpty) {
+        return catComp.any((c) {
+          final cId =
+              c is Map ? (c['id'] ?? c['_id'])?.toString() : c?.toString();
+          return cId == compId;
+        });
+      } else if (catComp is Map) {
+        final cId = (catComp['id'] ?? catComp['_id'])?.toString();
+        return cId == compId;
+      } else if (catComp is String && catComp.isNotEmpty) {
+        return catComp == compId;
+      }
+    }
+
+    // 3. Fallback: If neither product nor category explicitly restricts to another company,
+    // default to true because this category was already chosen from the filtered list of this company.
+    return true;
   }
 
   Future<void> _loadTokenAndFetch() async {
@@ -137,46 +162,27 @@ class _QrProductsPageState extends State<QrProductsPage>
   }
 
   Future<void> _fetchProducts() async {
-    setState(() => _isLoading = true);
+    setState(() {
+      _isLoading = true;
+      _errorMessage = '';
+    });
 
     try {
-      String companyQuery = '';
-      if (_companyId != null && _companyId!.isNotEmpty) {
-        companyQuery = '&where[company][in]=$_companyId';
-      }
-
-      var resp = await http.get(
+      final resp = await http.get(
         Uri.parse(
-          "${ApiConfig.baseUrl}/products?where[category][equals]=${widget.categoryId}$companyQuery&limit=500&depth=1",
+          "${ApiConfig.baseUrl}/products?where[category][equals]=${widget.categoryId}&limit=500&depth=1",
         ),
         headers: ApiConfig.getHeaders(_token),
       );
 
-      List<dynamic> docs = [];
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
-        docs = data["docs"] ?? [];
-      }
+        List<dynamic> docs = data["docs"] ?? [];
 
-      // If company query returned 0 items but companyId is set, fallback to category query and filter client-side
-      if (docs.isEmpty && _companyId != null && _companyId!.isNotEmpty) {
-        final fallbackResp = await http.get(
-          Uri.parse(
-            "${ApiConfig.baseUrl}/products?where[category][equals]=${widget.categoryId}&limit=500&depth=1",
-          ),
-          headers: ApiConfig.getHeaders(_token),
-        );
-        if (fallbackResp.statusCode == 200) {
-          final data = jsonDecode(fallbackResp.body);
-          final allDocs = data["docs"] ?? [];
-          docs = allDocs.where((p) => _matchesCompany(p, _companyId!)).toList();
+        if (_companyId != null && _companyId!.isNotEmpty) {
+          docs = docs.where((p) => _matchesCompany(p, _companyId!)).toList();
         }
-      } else if (docs.isNotEmpty && _companyId != null && _companyId!.isNotEmpty) {
-        // Enforce client-side check
-        docs = docs.where((p) => _matchesCompany(p, _companyId!)).toList();
-      }
 
-      if (resp.statusCode == 200 || docs.isNotEmpty) {
         _products = docs;
 
         for (var p in _products) {
