@@ -9,7 +9,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'global_kot_realtime_service.dart';
 import 'notification_service.dart';
-import 'waiter_incoming_call_dialog.dart';
 import 'waiter_live_call_screen.dart';
 
 enum WaiterCallState {
@@ -145,8 +144,8 @@ class WaiterLiveCallService extends ChangeNotifier {
         );
       } catch (_) {}
 
-      // Show Incoming Call Dialog on screen
-      _showIncomingCallDialog();
+      // Open Waiter Live Call Screen directly (Full screen UI matching Admin app)
+      _showIncomingCallScreen();
     } else if (signalType == 'ice_candidate') {
       if (_currentCallId == callId) {
         await _handleRemoteIceCandidate(message['candidate']);
@@ -170,41 +169,43 @@ class WaiterLiveCallService extends ChangeNotifier {
   Future<void> _stopRingtone() async {
     try {
       await _ringtonePlayer.stop();
+      await _ringtonePlayer.release();
     } catch (_) {}
   }
 
-  void _showIncomingCallDialog() {
-    void show() {
+  void _showIncomingCallScreen() {
+    void push() {
       final context = _navigatorKey?.currentContext;
       if (context == null) {
-        debugPrint('WaiterLiveCallService: context is null, retrying incoming dialog in 200ms...');
+        debugPrint('WaiterLiveCallService: context is null, retrying incoming screen in 200ms...');
         Future.delayed(const Duration(milliseconds: 200), () {
           if (_callState == WaiterCallState.ringing) {
-            _showIncomingCallDialog();
+            _showIncomingCallScreen();
           }
         });
         return;
       }
 
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        routeSettings: const RouteSettings(name: 'incoming_call_dialog'),
-        builder: (dialogCtx) => WaiterIncomingCallDialog(
-          callerName: _callerName,
-          onAccept: () {
-            Navigator.of(dialogCtx).pop();
-            acceptCall();
-          },
-          onDecline: () {
-            Navigator.of(dialogCtx).pop();
-            declineCall();
-          },
-        ),
-      );
+      // Check if already on the call screen
+      bool isAlreadyOnScreen = false;
+      Navigator.of(context).popUntil((route) {
+        if (route.settings.name == 'waiter_live_call_screen') {
+          isAlreadyOnScreen = true;
+        }
+        return true;
+      });
+
+      if (!isAlreadyOnScreen) {
+        _navigatorKey?.currentState?.push(
+          MaterialPageRoute(
+            settings: const RouteSettings(name: 'waiter_live_call_screen'),
+            builder: (ctx) => WaiterLiveCallScreen(callerName: _callerName),
+          ),
+        );
+      }
     }
 
-    WidgetsBinding.instance.addPostFrameCallback((_) => show());
+    WidgetsBinding.instance.addPostFrameCallback((_) => push());
   }
 
   Future<void> acceptCall() async {
@@ -218,9 +219,13 @@ class WaiterLiveCallService extends ChangeNotifier {
     }
 
     _callState = WaiterCallState.connecting;
+    _isSpeakerOn = false;
     notifyListeners();
 
     try {
+      // Default audio output to ear speaker (earpiece)
+      await Helper.setSpeakerphoneOn(false);
+
       _peerConnection = await createPeerConnection(_iceConfig);
 
       final constraints = <String, dynamic>{
@@ -256,6 +261,7 @@ class WaiterLiveCallService extends ChangeNotifier {
       _peerConnection!.onTrack = (event) {
         if (event.streams.isNotEmpty) {
           _remoteStream = event.streams[0];
+          _applyAudioRouting();
           notifyListeners();
         }
       };
@@ -308,14 +314,6 @@ class WaiterLiveCallService extends ChangeNotifier {
       });
 
       _onConnected();
-
-      // Open Waiter Live Call Screen
-      _navigatorKey?.currentState?.push(
-        MaterialPageRoute(
-          settings: const RouteSettings(name: 'waiter_live_call_screen'),
-          builder: (ctx) => WaiterLiveCallScreen(callerName: _callerName),
-        ),
-      );
     } catch (e) {
       debugPrint('WaiterLiveCallService: error accepting call: $e');
       await declineCall();
@@ -342,13 +340,34 @@ class WaiterLiveCallService extends ChangeNotifier {
   void _onConnected() {
     if (_callState == WaiterCallState.connected) return;
     _callState = WaiterCallState.connected;
+    _isSpeakerOn = false;
     _durationSeconds = 0;
     _durationTimer?.cancel();
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _durationSeconds++;
       notifyListeners();
     });
+
+    _applyAudioRouting();
     notifyListeners();
+  }
+
+  Future<void> _applyAudioRouting() async {
+    try {
+      await Helper.setSpeakerphoneOn(_isSpeakerOn);
+      Future.delayed(const Duration(milliseconds: 300), () async {
+        try {
+          await Helper.setSpeakerphoneOn(_isSpeakerOn);
+        } catch (_) {}
+      });
+      Future.delayed(const Duration(milliseconds: 800), () async {
+        try {
+          await Helper.setSpeakerphoneOn(_isSpeakerOn);
+        } catch (_) {}
+      });
+    } catch (e) {
+      debugPrint('WaiterLiveCallService: _applyAudioRouting error: $e');
+    }
   }
 
   Future<void> declineCall() async {
@@ -383,10 +402,12 @@ class WaiterLiveCallService extends ChangeNotifier {
     _callState = WaiterCallState.ended;
     notifyListeners();
 
-    // Close any open call screens or dialogs
-    _navigatorKey?.currentState?.popUntil((route) {
-      return route.settings.name != 'incoming_call_dialog' &&
-          route.settings.name != 'waiter_live_call_screen';
+    // Close call screen after 1.8 seconds so user sees call ended
+    Future.delayed(const Duration(milliseconds: 1800), () {
+      _navigatorKey?.currentState?.popUntil((route) {
+        return route.settings.name != 'waiter_live_call_screen' &&
+            route.settings.name != 'incoming_call_dialog';
+      });
     });
 
     await _cleanupWebrtc();
@@ -405,6 +426,7 @@ class WaiterLiveCallService extends ChangeNotifier {
     _isSpeakerOn = !_isSpeakerOn;
     try {
       await Helper.setSpeakerphoneOn(_isSpeakerOn);
+      debugPrint('WaiterLiveCallService: speakerphone toggled to $_isSpeakerOn');
     } catch (e) {
       debugPrint('WaiterLiveCallService: setSpeakerphoneOn error: $e');
     }
@@ -414,6 +436,10 @@ class WaiterLiveCallService extends ChangeNotifier {
   Future<void> _cleanupWebrtc() async {
     _durationTimer?.cancel();
     _durationTimer = null;
+
+    try {
+      await Helper.setSpeakerphoneOn(false);
+    } catch (_) {}
 
     try {
       _localStream?.getTracks().forEach((track) => track.stop());
