@@ -243,7 +243,7 @@ class _QrUpdatePageState extends State<QrUpdatePage> {
   Widget build(BuildContext context) {
     return CommonScaffold(
       title: "Product QR Update",
-      pageType: PageType.billing,
+      pageType: PageType.home,
       body: RefreshIndicator(
         onRefresh: _fetchBillingCategories,
         child: Column(

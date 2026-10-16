@@ -35,6 +35,25 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
   bool _isLoading = true;
   String? _branchId;
   String? _userRole;
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _searchQuery = '';
+  bool _showAsGrid = true;
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<dynamic> get _filteredProducts {
+    final query = _searchQuery.trim().toLowerCase();
+    if (query.isEmpty) return _products;
+    return _products.where((p) {
+      final name = (p['name'] ?? '').toString().toLowerCase();
+      final upc = (p['upc'] ?? '').toString().toLowerCase();
+      return name.contains(query) || upc.contains(query);
+    }).toList();
+  }
 
   @override
   void initState() {
@@ -185,12 +204,13 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
     setState(() => _isLoading = false);
   }
 
-  void _toggleReturnSelection(int index) async {
-    final product = _products[index];
+  Future<void> _promptReturnQuantity(dynamic product) async {
     final provider = Provider.of<ReturnProvider>(context, listen: false);
+    final String id = (product['id'] ?? product['_id'])?.toString() ?? '';
 
     // Step 1: Get product price
-    double price = product['defaultPriceDetails']?['price']?.toDouble() ?? 0.0;
+    double price =
+        (product['defaultPriceDetails']?['price'] as num?)?.toDouble() ?? 0.0;
     if (_branchId != null && product['branchOverrides'] != null) {
       for (var override in product['branchOverrides']) {
         var branch = override['branch'];
@@ -198,7 +218,7 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
             ? (branch[r'$oid'] ?? branch['id'] ?? '')
             : (branch ?? '');
         if (branchOid == _branchId) {
-          price = override['price']?.toDouble() ?? price;
+          price = (override['price'] as num?)?.toDouble() ?? price;
           break;
         }
       }
@@ -216,99 +236,148 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
           product['weightBased'] == true;
       final pricingType = product['pricingType']?.toString().toLowerCase();
 
-      if (unit != null && (unit.contains('kg') || unit.contains('gram')))
+      if (unit != null && (unit.contains('kg') || unit.contains('gram'))) {
         isWeightBased = true;
+      }
       if (isKgFlag) isWeightBased = true;
-      if (pricingType != null && pricingType.contains('kg'))
+      if (pricingType != null && pricingType.contains('kg')) {
         isWeightBased = true;
-      // Removed name check to avoid false positives
+      }
     } catch (e) {
       isWeightBased = false;
     }
 
     // Step 3: Get current quantity if exists
-    double existingQty = 0.0;
-    final existingItem = provider.returnItems.firstWhere(
-      (i) => i.id == product['id'],
-      orElse: () => ReturnItem(id: '', name: '', price: 0, quantity: 0),
-    );
-    if (existingItem.id.isNotEmpty) {
-      existingQty = existingItem.quantity.toDouble();
+    final matching = provider.returnItems.where((i) => i.id == id).toList();
+    final double existingQty =
+        matching.isNotEmpty ? matching.first.quantity : 0.0;
+    final rawUnit = product['defaultPriceDetails']?['unit']?.toString().trim();
+    final unit = (rawUnit != null && rawUnit.isNotEmpty)
+        ? rawUnit
+        : (isWeightBased ? 'kg' : 'pcs');
+
+    String initialText = '';
+    if (existingQty > 0) {
+      if (existingQty == existingQty.floorToDouble()) {
+        initialText = existingQty.toInt().toString();
+      } else {
+        initialText = existingQty.toString();
+      }
     }
 
-    double quantity = 1.0;
-    if (isWeightBased) {
-      // Step 4: Show popup if weight-based
-      final unit = product['defaultPriceDetails']?['unit'] ?? 'kg';
-      final TextEditingController weightController = TextEditingController(
-        text: existingQty > 0 ? existingQty.toStringAsFixed(2) : '',
-      );
-      final enteredWeight = await showDialog<double>(
-        context: context,
-        barrierDismissible: true,
-        builder: (context) {
-          return AlertDialog(
-            title: Text('Enter Weight ($unit)'),
-            content: TextField(
-              controller: weightController,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
+    final TextEditingController qtyController =
+        TextEditingController(text: initialText);
+    qtyController.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: initialText.length,
+    );
+
+    final enteredQty = await showDialog<double>(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) {
+        return AlertDialog(
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                product['name'] ?? 'Product',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
               ),
-              decoration: InputDecoration(
-                hintText: 'e.g. 0.5',
-                labelText: 'Weight in $unit',
-                border: const OutlineInputBorder(),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  final value =
-                      double.tryParse(weightController.text.trim()) ?? 0.0;
-                  Navigator.pop(context, value);
-                },
-                child: const Text('OK'),
+              const SizedBox(height: 4),
+              Text(
+                isWeightBased
+                    ? 'Enter Return Weight ($unit)'
+                    : 'Enter Return Quantity ($unit)',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.normal,
+                  color: Colors.grey.shade700,
+                ),
               ),
             ],
-          );
-        },
-      );
-      if (enteredWeight == null || enteredWeight <= 0) return;
-      quantity = enteredWeight;
-    }
+          ),
+          content: TextField(
+            controller: qtyController,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(
+              decimal: true,
+            ),
+            decoration: InputDecoration(
+              hintText: isWeightBased ? 'e.g. 0.5' : 'e.g. 100',
+              labelText:
+                  isWeightBased ? 'Weight in $unit' : 'Quantity in $unit',
+              border: const OutlineInputBorder(),
+            ),
+            onSubmitted: (val) {
+              final value = double.tryParse(val.trim()) ?? 0.0;
+              Navigator.pop(context, value);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final value =
+                    double.tryParse(qtyController.text.trim()) ?? 0.0;
+                Navigator.pop(context, value);
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
 
-    // Step 5: Update or add
-    if (isWeightBased) {
-      if (existingItem.id.isNotEmpty) {
-        provider.updateQuantity(product['id'], quantity);
+    if (enteredQty == null || enteredQty < 0) return;
+
+    if (enteredQty == 0) {
+      provider.removeItem(id);
+    } else {
+      if (matching.isNotEmpty) {
+        provider.updateQuantity(id, enteredQty);
       } else {
         provider.addOrUpdateItem(
-          product['id'],
-          product['name'],
-          quantity,
+          id,
+          product['name'] ?? 'Product',
+          enteredQty,
           price,
         );
       }
+    }
+
+    // Auto-clear search on quantity confirmation
+    if (_searchCtrl.text.isNotEmpty) {
+      _searchCtrl.clear();
+      setState(() {
+        _searchQuery = '';
+      });
+      FocusScope.of(context).unfocus();
     } else {
-      provider.addOrUpdateItem(
-        product['id'],
-        product['name'],
-        existingQty.toInt() + 1,
-        price,
-      );
+      setState(() {});
+    }
+  }
+
+  void _toggleReturnSelection(int index) {
+    final list = _filteredProducts;
+    if (index >= 0 && index < list.length) {
+      _promptReturnQuantity(list[index]);
     }
   }
 
   void _handleScan(String scanResult) {
-    final provider = Provider.of<ReturnProvider>(context, listen: false);
-    for (int index = 0; index < _products.length; index++) {
-      final product = _products[index];
+    for (var product in _products) {
       if (product['upc'] == scanResult) {
-        _toggleReturnSelection(index);
+        _promptReturnQuantity(product);
         return;
       }
     }
@@ -584,320 +653,721 @@ class _ReturnOrderPageState extends State<ReturnOrderPage> {
   @override
   Widget build(BuildContext context) {
     return CommonScaffold(
-      title: 'Return Order Products in ${widget.categoryName}',
+      title: 'Return Order: ${widget.categoryName}',
       pageType: PageType.returnorder,
       onScanCallback: _handleScan,
       body: Column(
         children: [
-          // Button removed as per request to use Cart Icon in header
+          // SEARCH BAR
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.grey.withValues(alpha: 0.18),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: TextField(
+                controller: _searchCtrl,
+                textInputAction: TextInputAction.search,
+                decoration: InputDecoration(
+                  hintText: "Search in ${widget.categoryName}...",
+                  hintStyle:
+                      TextStyle(color: Colors.grey.shade400, fontSize: 14),
+                  prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                  suffixIcon: _searchCtrl.text.isNotEmpty
+                      ? IconButton(
+                          icon: const Icon(Icons.clear, color: Colors.grey),
+                          onPressed: () {
+                            _searchCtrl.clear();
+                            setState(() {
+                              _searchQuery = '';
+                            });
+                          },
+                        )
+                      : null,
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                ),
+                onChanged: (val) {
+                  setState(() {
+                    _searchQuery = val;
+                  });
+                },
+              ),
+            ),
+          ),
+
+          // HEADER ROW: PRODUCTS COUNT + SINGLE FIXED TOGGLE BUTTON
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Products (${_filteredProducts.length})',
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade700,
+                  ),
+                ),
+                InkWell(
+                  onTap: () {
+                    setState(() {
+                      _showAsGrid = !_showAsGrid;
+                    });
+                  },
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.grey.shade300),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.grey.withValues(alpha: 0.08),
+                          blurRadius: 4,
+                          offset: const Offset(0, 1),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _showAsGrid
+                              ? Icons.view_list_rounded
+                              : Icons.grid_view_rounded,
+                          size: 16,
+                          color: const Color(0xFF0F766E),
+                        ),
+                        const SizedBox(width: 5),
+                        Text(
+                          _showAsGrid ? 'List View' : 'Grid View',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF0F766E),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
           Expanded(
             child: _isLoading
                 ? const Center(
                     child: CircularProgressIndicator(color: Colors.black),
                   )
-                : _products.isEmpty
-                ? const Center(
+                : _filteredProducts.isEmpty
+                ? Center(
                     child: Text(
-                      'No products found',
-                      style: TextStyle(color: Color(0xFF4A4A4A), fontSize: 18),
+                      _searchQuery.isNotEmpty
+                          ? 'No products match "$_searchQuery"'
+                          : 'No products found',
+                      style: const TextStyle(
+                          color: Color(0xFF4A4A4A), fontSize: 18),
                     ),
                   )
-                : LayoutBuilder(
-                    builder: (context, constraints) {
-                      final width = constraints.maxWidth;
-                      final crossAxisCount = (width > 600) ? 5 : 3;
-                      return GridView.builder(
-                        padding: const EdgeInsets.all(10),
-                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: crossAxisCount,
-                          crossAxisSpacing: 10,
-                          mainAxisSpacing: 10,
-                          childAspectRatio: 0.75,
-                        ),
-                        itemCount: _products.length,
-                        itemBuilder: (context, index) {
-                          final product = _products[index];
-                          final id = product['id'];
-                          String? imageUrl;
-                          if (product['images'] != null &&
-                              product['images'].isNotEmpty &&
-                              product['images'][0]['image'] != null &&
-                              product['images'][0]['image']['url'] != null) {
-                            imageUrl = product['images'][0]['image']['url'];
-                            if (imageUrl != null && imageUrl.startsWith('/')) {
-                              imageUrl = '${ApiConfig.domain}$imageUrl';
-                            }
-                          }
-                          imageUrl ??=
-                              'https://via.placeholder.com/150?text=No+Image';
-                          dynamic priceDetails = product['defaultPriceDetails'];
-                          if (_branchId != null &&
-                              product['branchOverrides'] != null) {
-                            for (var override in product['branchOverrides']) {
-                              var branch = override['branch'];
-                              String branchOid = branch is Map
-                                  ? branch[r'$oid'] ?? branch['id'] ?? ''
-                                  : branch ?? '';
-                              if (branchOid == _branchId) {
-                                priceDetails = override;
-                                break;
-                              }
-                            }
-                          }
-                          final price = priceDetails != null
-                              ? '₹${priceDetails['price'] ?? 0}'
-                              : '₹0';
-                          return GestureDetector(
-                            onTap: () => _toggleReturnSelection(index),
-                            child: Consumer<ReturnProvider>(
-                              builder: (context, provider, child) {
-                                final matching = provider.returnItems
-                                    .where((i) => i.id == id)
-                                    .toList();
-                                final isSelected =
-                                    matching.isNotEmpty &&
-                                    matching.first.quantity > 0;
-                                final qty = isSelected
-                                    ? matching.first.quantity
-                                    : 0.0;
-                                String qtyText;
-                                if (qty == qty.floorToDouble()) {
-                                  qtyText = qty.toInt().toString();
-                                } else {
-                                  qtyText = qty.toStringAsFixed(2);
-                                }
-                                final hasPhoto = provider.hasPhoto(id);
-                                return Container(
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(8),
-                                    border: isSelected
-                                        ? Border.all(
-                                            color: Colors.green,
-                                            width: 4,
-                                          )
-                                        : null,
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color: Colors.grey.withOpacity(0.1),
-                                        spreadRadius: 2,
-                                        blurRadius: 4,
-                                        offset: const Offset(0, 2),
-                                      ),
-                                    ],
-                                  ),
-                                  child: Stack(
-                                    children: [
-                                      Column(
-                                        children: [
-                                          Expanded(
-                                            flex: 8,
-                                            child: ClipRRect(
-                                              borderRadius:
-                                                  const BorderRadius.vertical(
-                                                    top: Radius.circular(8),
-                                                  ),
-                                              child: CachedNetworkImage(
-                                                imageUrl: imageUrl!,
-                                                fit: BoxFit.cover,
-                                                width: double.infinity,
-
-                                                placeholder: (context, url) =>
-                                                    const Center(
-                                                      child:
-                                                          CircularProgressIndicator(),
-                                                    ),
-                                                errorWidget:
-                                                    (context, url, error) =>
-                                                        const Center(
-                                                          child: Text(
-                                                            'No Image',
-                                                            style: TextStyle(
-                                                              color:
-                                                                  Colors.grey,
-                                                            ),
-                                                          ),
-                                                        ),
-                                              ),
-                                            ),
-                                          ),
-                                          Expanded(
-                                            flex: 2,
-                                            child: Container(
-                                              width: double.infinity,
-                                              decoration: const BoxDecoration(
-                                                color: Colors.black,
-                                                borderRadius:
-                                                    BorderRadius.vertical(
-                                                      bottom: Radius.circular(
-                                                        8,
-                                                      ),
-                                                    ),
-                                              ),
-                                              alignment: Alignment.center,
-                                              child: Text(
-                                                product['name'] ?? 'Unknown',
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                                textAlign: TextAlign.center,
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      Positioned(
-                                        top: 2,
-                                        left: 2,
-                                        child: GestureDetector(
-                                          onTap: () => _unselectProduct(id),
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 4,
-                                              vertical: 2,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: Colors.black,
-                                              borderRadius:
-                                                  BorderRadius.circular(4),
-                                            ),
-                                            child: Text(
-                                              price,
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 10,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      Positioned(
-                                        top: 2,
-                                        right: 2,
-                                        child: GestureDetector(
-                                          onTap: () => _handleCameraTap(id),
-                                          child: Container(
-                                            padding: const EdgeInsets.all(4),
-                                            decoration: BoxDecoration(
-                                              color: Colors.black,
-                                              borderRadius:
-                                                  BorderRadius.circular(4),
-                                              border: hasPhoto
-                                                  ? Border.all(
-                                                      color: Colors.green,
-                                                      width: 2,
-                                                    )
-                                                  : null,
-                                            ),
-                                            child:
-                                                provider.getTempPhoto(id) !=
-                                                        null &&
-                                                    provider
-                                                        .getTempPhoto(id)!
-                                                        .existsSync()
-                                                ? ClipRRect(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          4,
-                                                        ),
-                                                    child: Image.file(
-                                                      provider.getTempPhoto(
-                                                        id,
-                                                      )!,
-                                                      width: 24,
-                                                      height: 24,
-                                                      fit: BoxFit.cover,
-                                                    ),
-                                                  )
-                                                : provider.getPhotoUrl(id) !=
-                                                      null
-                                                ? ClipRRect(
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          4,
-                                                        ),
-                                                    child: CachedNetworkImage(
-                                                      imageUrl: provider
-                                                          .getPhotoUrl(id)!,
-                                                      width: 24,
-                                                      height: 24,
-                                                      fit: BoxFit.cover,
-
-                                                      placeholder: (context, url) =>
-                                                          const CircularProgressIndicator(
-                                                            strokeWidth: 2,
-                                                          ),
-                                                      errorWidget:
-                                                          (
-                                                            context,
-                                                            url,
-                                                            error,
-                                                          ) => Icon(
-                                                            Icons.camera_alt,
-                                                            color: hasPhoto
-                                                                ? Colors.green
-                                                                : Colors.white,
-                                                            size: 20,
-                                                          ),
-                                                    ),
-                                                  )
-                                                : Icon(
-                                                    Icons.camera_alt,
-                                                    color: hasPhoto
-                                                        ? Colors.green
-                                                        : Colors.white,
-                                                    size: 20,
-                                                  ),
-                                          ),
-                                        ),
-                                      ),
-                                      if (isSelected)
-                                        Positioned.fill(
-                                          child: Align(
-                                            alignment: Alignment.center,
-                                            child: Container(
-                                              decoration: BoxDecoration(
-                                                color: Colors.black.withOpacity(
-                                                  0.7,
-                                                ),
-                                                border: Border.all(
-                                                  color: Colors.grey,
-                                                  width: 1,
-                                                ),
-                                                borderRadius:
-                                                    BorderRadius.circular(4),
-                                              ),
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                    horizontal: 8,
-                                                    vertical: 4,
-                                                  ),
-                                              child: Text(
-                                                qtyText,
-                                                style: const TextStyle(
-                                                  color: Colors.white,
-                                                  fontSize: 16,
-                                                  fontWeight: FontWeight.bold,
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                );
-                              },
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
+                : (_showAsGrid
+                    ? _buildProductGrid(context)
+                    : _buildGoogleSearchList(context)),
           ),
         ],
       ),
+    );
+  }
+
+  // ========================== GOOGLE SEARCH SUGGESTIONS LIST ===========================
+  Widget _buildGoogleSearchList(BuildContext context) {
+    final list = _filteredProducts;
+    if (list.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.search_off_rounded,
+              size: 54,
+              color: Colors.grey.shade400,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'No return products found for "$_searchQuery"',
+              style: TextStyle(
+                fontSize: 15,
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Consumer<ReturnProvider>(
+      builder: (context, returnProvider, _) {
+        return ListView.builder(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          itemCount: list.length,
+          itemBuilder: (context, index) {
+            final p = list[index];
+            return _buildSuggestionTile(context, returnProvider, p);
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildSuggestionTile(
+    BuildContext context,
+    ReturnProvider returnProvider,
+    dynamic p,
+  ) {
+    final id = (p['id'] ?? p['_id'])?.toString() ?? '';
+    final name = p['name']?.toString() ?? 'Unknown';
+
+    final matching =
+        returnProvider.returnItems.where((i) => i.id == id).toList();
+    final isSelected = matching.isNotEmpty && matching.first.quantity > 0;
+    final qtyNum = isSelected ? matching.first.quantity : 0.0;
+    final qtyText = (qtyNum == qtyNum.floorToDouble())
+        ? qtyNum.toInt().toString()
+        : qtyNum.toStringAsFixed(2);
+
+    dynamic priceDetails = p['defaultPriceDetails'];
+    if (_branchId != null && p['branchOverrides'] != null) {
+      for (var override in p['branchOverrides']) {
+        var branch = override['branch'];
+        String branchOid = branch is Map
+            ? (branch[r'$oid'] ?? branch['id'] ?? '')
+            : (branch ?? '');
+        if (branchOid == _branchId) {
+          priceDetails = override;
+          break;
+        }
+      }
+    }
+    final price = (priceDetails?['price'] as num?)?.toDouble() ?? 0.0;
+    final rawUnit = priceDetails?['unit']?.toString() ?? '';
+    final isKgFlag = p['isKg'] == true ||
+        p['sellByWeight'] == true ||
+        p['weightBased'] == true;
+    final unit = rawUnit.isNotEmpty ? rawUnit : (isKgFlag ? 'kg' : 'pcs');
+
+    String? imageUrl;
+    if (p['images'] != null &&
+        p['images'].isNotEmpty &&
+        p['images'][0]['image'] != null &&
+        p['images'][0]['image']['url'] != null) {
+      imageUrl = p['images'][0]['image']['url'];
+      if (imageUrl != null && imageUrl.startsWith('/')) {
+        imageUrl = '${ApiConfig.domain}$imageUrl';
+      }
+    }
+
+    final hasPhoto = returnProvider.hasPhoto(id);
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 3),
+      decoration: BoxDecoration(
+        color: isSelected ? const Color(0xFFF1F8E9) : Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isSelected ? Colors.green.shade400 : Colors.grey.shade200,
+          width: isSelected ? 1.5 : 1,
+        ),
+      ),
+      child: ListTile(
+        dense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        onTap: () => _promptReturnQuantity(p),
+        leading: Stack(
+          alignment: Alignment.center,
+          children: [
+            if (imageUrl != null)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(6),
+                child: CachedNetworkImage(
+                  imageUrl: imageUrl,
+                  width: 40,
+                  height: 40,
+                  fit: BoxFit.cover,
+                  placeholder: (_, __) => Container(
+                    width: 40,
+                    height: 40,
+                    color: Colors.grey.shade100,
+                    child:
+                        const Icon(Icons.search, size: 20, color: Colors.grey),
+                  ),
+                  errorWidget: (_, __, ___) => Container(
+                    width: 40,
+                    height: 40,
+                    color: Colors.grey.shade100,
+                    child:
+                        const Icon(Icons.search, size: 20, color: Colors.grey),
+                  ),
+                ),
+              )
+            else
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? Colors.green.shade100
+                      : Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Icon(
+                  isSelected
+                      ? Icons.check_circle_rounded
+                      : Icons.inventory_2_outlined,
+                  color:
+                      isSelected ? Colors.green.shade700 : Colors.grey.shade600,
+                  size: 20,
+                ),
+              ),
+          ],
+        ),
+        title: _buildHighlightedText(name, _searchQuery.trim()),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text(
+            "₹${price.toStringAsFixed(0)}",
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade700,
+            ),
+          ),
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            GestureDetector(
+              onTap: () => _handleCameraTap(id),
+              child: Container(
+                padding: const EdgeInsets.all(5),
+                decoration: BoxDecoration(
+                  color: hasPhoto ? Colors.green.shade700 : Colors.black,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Icon(
+                  Icons.camera_alt,
+                  color: Colors.white,
+                  size: 16,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            isSelected
+                ? Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade700,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          "$qtyText $unit",
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.edit, color: Colors.white, size: 12),
+                      ],
+                    ),
+                  )
+                : Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey.shade300),
+                      borderRadius: BorderRadius.circular(14),
+                      color: Colors.grey.shade50,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.add, size: 14, color: Colors.grey.shade700),
+                        const SizedBox(width: 2),
+                        Text(
+                          "Add",
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHighlightedText(String text, String query) {
+    if (query.isEmpty) {
+      return Text(
+        text,
+        style: const TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          color: Colors.black87,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+
+    final lowerText = text.toLowerCase();
+    final lowerQuery = query.toLowerCase();
+    final index = lowerText.indexOf(lowerQuery);
+
+    if (index == -1) {
+      return Text(
+        text,
+        style: const TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          color: Colors.black87,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+
+    final before = text.substring(0, index);
+    final match = text.substring(index, index + query.length);
+    final after = text.substring(index + query.length);
+
+    return RichText(
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      text: TextSpan(
+        style: const TextStyle(fontSize: 15, color: Colors.black87),
+        children: [
+          if (before.isNotEmpty)
+            TextSpan(
+              text: before,
+              style: const TextStyle(fontWeight: FontWeight.normal),
+            ),
+          TextSpan(
+            text: match,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Colors.black,
+              backgroundColor: Color(0x33FFD54F),
+            ),
+          ),
+          if (after.isNotEmpty)
+            TextSpan(
+              text: after,
+              style: const TextStyle(fontWeight: FontWeight.normal),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ========================== PRODUCT GRID ===========================
+  Widget _buildProductGrid(BuildContext context) {
+    final list = _filteredProducts;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final crossAxisCount = (width > 600) ? 5 : 3;
+        return GridView.builder(
+          padding: const EdgeInsets.all(10),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+            childAspectRatio: 0.75,
+          ),
+          itemCount: list.length,
+          itemBuilder: (context, index) {
+            final product = list[index];
+            final id = product['id'];
+            String? imageUrl;
+            if (product['images'] != null &&
+                product['images'].isNotEmpty &&
+                product['images'][0]['image'] != null &&
+                product['images'][0]['image']['url'] != null) {
+              imageUrl = product['images'][0]['image']['url'];
+              if (imageUrl != null && imageUrl.startsWith('/')) {
+                imageUrl = '${ApiConfig.domain}$imageUrl';
+              }
+            }
+            imageUrl ??= 'https://via.placeholder.com/150?text=No+Image';
+            dynamic priceDetails = product['defaultPriceDetails'];
+            if (_branchId != null && product['branchOverrides'] != null) {
+              for (var override in product['branchOverrides']) {
+                var branch = override['branch'];
+                String branchOid = branch is Map
+                    ? branch[r'$oid'] ?? branch['id'] ?? ''
+                    : branch ?? '';
+                if (branchOid == _branchId) {
+                  priceDetails = override;
+                  break;
+                }
+              }
+            }
+            final price = priceDetails != null
+                ? '₹${priceDetails['price'] ?? 0}'
+                : '₹0';
+            return GestureDetector(
+              onTap: () => _promptReturnQuantity(product),
+              child: Consumer<ReturnProvider>(
+                builder: (context, provider, child) {
+                  final matching =
+                      provider.returnItems.where((i) => i.id == id).toList();
+                  final isSelected =
+                      matching.isNotEmpty && matching.first.quantity > 0;
+                  final qty = isSelected ? matching.first.quantity : 0.0;
+                  String qtyText;
+                  if (qty == qty.floorToDouble()) {
+                    qtyText = qty.toInt().toString();
+                  } else {
+                    qtyText = qty.toStringAsFixed(2);
+                  }
+                  final hasPhoto = provider.hasPhoto(id);
+                  return Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                      border: isSelected
+                          ? Border.all(
+                              color: Colors.green,
+                              width: 4,
+                            )
+                          : null,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.grey.withValues(alpha: 0.1),
+                          spreadRadius: 2,
+                          blurRadius: 4,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Stack(
+                      children: [
+                        Column(
+                          children: [
+                            Expanded(
+                              flex: 8,
+                              child: ClipRRect(
+                                borderRadius: const BorderRadius.vertical(
+                                  top: Radius.circular(8),
+                                ),
+                                child: CachedNetworkImage(
+                                  imageUrl: imageUrl!,
+                                  fit: BoxFit.cover,
+                                  width: double.infinity,
+                                  placeholder: (context, url) => const Center(
+                                    child: CircularProgressIndicator(),
+                                  ),
+                                  errorWidget: (context, url, error) =>
+                                      const Center(
+                                    child: Text(
+                                      'No Image',
+                                      style: TextStyle(
+                                        color: Colors.grey,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Container(
+                                width: double.infinity,
+                                decoration: const BoxDecoration(
+                                  color: Colors.black,
+                                  borderRadius: BorderRadius.vertical(
+                                    bottom: Radius.circular(
+                                      8,
+                                    ),
+                                  ),
+                                ),
+                                alignment: Alignment.center,
+                                child: Text(
+                                  product['name'] ?? 'Unknown',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        Positioned(
+                          top: 2,
+                          left: 2,
+                          child: GestureDetector(
+                            onTap: () => _unselectProduct(id),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                price,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          top: 2,
+                          right: 2,
+                          child: GestureDetector(
+                            onTap: () => _handleCameraTap(id),
+                            child: Container(
+                              padding: const EdgeInsets.all(4),
+                              decoration: BoxDecoration(
+                                color: Colors.black,
+                                borderRadius: BorderRadius.circular(4),
+                                border: hasPhoto
+                                    ? Border.all(
+                                        color: Colors.green,
+                                        width: 2,
+                                      )
+                                    : null,
+                              ),
+                              child: provider.getTempPhoto(id) != null &&
+                                      provider.getTempPhoto(id)!.existsSync()
+                                  ? ClipRRect(
+                                      borderRadius: BorderRadius.circular(
+                                        4,
+                                      ),
+                                      child: Image.file(
+                                        provider.getTempPhoto(
+                                          id,
+                                        )!,
+                                        width: 24,
+                                        height: 24,
+                                        fit: BoxFit.cover,
+                                      ),
+                                    )
+                                  : provider.getPhotoUrl(id) != null
+                                      ? ClipRRect(
+                                          borderRadius: BorderRadius.circular(
+                                            4,
+                                          ),
+                                          child: CachedNetworkImage(
+                                            imageUrl:
+                                                provider.getPhotoUrl(id)!,
+                                            width: 24,
+                                            height: 24,
+                                            fit: BoxFit.cover,
+                                            placeholder: (context, url) =>
+                                                const CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                            errorWidget: (
+                                              context,
+                                              url,
+                                              error,
+                                            ) =>
+                                                Icon(
+                                              Icons.camera_alt,
+                                              color: hasPhoto
+                                                  ? Colors.green
+                                                  : Colors.white,
+                                              size: 20,
+                                            ),
+                                          ),
+                                        )
+                                      : Icon(
+                                          Icons.camera_alt,
+                                          color: hasPhoto
+                                              ? Colors.green
+                                              : Colors.white,
+                                          size: 20,
+                                        ),
+                            ),
+                          ),
+                        ),
+                        if (isSelected)
+                          Positioned.fill(
+                            child: Align(
+                              alignment: Alignment.center,
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withOpacity(
+                                    0.7,
+                                  ),
+                                  border: Border.all(
+                                    color: Colors.grey,
+                                    width: 1,
+                                  ),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                child: Text(
+                                  qtyText,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }

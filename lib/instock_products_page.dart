@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 import 'package:blackforest_app/common_scaffold.dart';
 import 'package:blackforest_app/instock_provider.dart';
 import 'package:blackforest_app/api_config.dart';
-import 'package:blackforest_app/instock_cart_page.dart';
 
 import 'package:camera/camera.dart';
 import 'package:image/image.dart' as img_lib;
@@ -25,6 +24,25 @@ class InstockProductsPage extends StatefulWidget {
 
 class _InstockProductsPageState extends State<InstockProductsPage> {
   // No need to set live mode as InstockProvider handles it implicitly
+  final TextEditingController _searchCtrl = TextEditingController();
+  String _searchQuery = '';
+  bool _showAsGrid = true;
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<dynamic> _getFilteredProducts(InstockProvider sp) {
+    final query = _searchQuery.trim().toLowerCase();
+    if (query.isEmpty) return sp.filteredProducts;
+    return sp.filteredProducts.where((p) {
+      final name = (p['name'] ?? '').toString().toLowerCase();
+      final upc = (p['upc'] ?? '').toString().toLowerCase();
+      return name.contains(query) || upc.contains(query);
+    }).toList();
+  }
 
   @override
   void initState() {
@@ -498,9 +516,8 @@ class _InstockProductsPageState extends State<InstockProductsPage> {
     }
   }
 
-  void _toggleProductSelection(int index) async {
+  void _promptInstockQuantity(dynamic product) async {
     final sp = Provider.of<InstockProvider>(context, listen: false);
-    final product = sp.filteredProducts[index];
     final String id = product["id"];
 
     // Detect Weight Based
@@ -621,30 +638,437 @@ class _InstockProductsPageState extends State<InstockProductsPage> {
 
     if (enteredStock == null || enteredStock < 0) return;
     sp.updateInStock(id, enteredStock);
+
+    if (_searchCtrl.text.isNotEmpty) {
+      _searchCtrl.clear();
+      setState(() {
+        _searchQuery = '';
+      });
+      FocusScope.of(context).unfocus();
+    } else {
+      setState(() {});
+    }
+  }
+
+  void _toggleProductSelection(dynamic product) {
+    _promptInstockQuantity(product);
+  }
+
+  Widget _buildHighlightedText(String text, String query) {
+    if (query.isEmpty) {
+      return Text(
+        text,
+        style: const TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          color: Colors.black87,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+
+    final lowerText = text.toLowerCase();
+    final lowerQuery = query.toLowerCase();
+    final index = lowerText.indexOf(lowerQuery);
+
+    if (index == -1) {
+      return Text(
+        text,
+        style: const TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          color: Colors.black87,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+
+    final before = text.substring(0, index);
+    final match = text.substring(index, index + query.length);
+    final after = text.substring(index + query.length);
+
+    return RichText(
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      text: TextSpan(
+        style: const TextStyle(fontSize: 15, color: Colors.black87),
+        children: [
+          if (before.isNotEmpty)
+            TextSpan(
+              text: before,
+              style: const TextStyle(fontWeight: FontWeight.normal),
+            ),
+          TextSpan(
+            text: match,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Colors.black,
+              backgroundColor: Color(0x33FFD54F),
+            ),
+          ),
+          if (after.isNotEmpty)
+            TextSpan(
+              text: after,
+              style: const TextStyle(fontWeight: FontWeight.normal),
+            ),
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Consumer<InstockProvider>(
       builder: (context, sp, child) {
+        final filteredProducts = _getFilteredProducts(sp);
+
         return CommonScaffold(
           title: 'Instock: ${sp.selectedCategoryName ?? "Products"}',
           pageType: PageType.instock,
-          body: sp.isLoading
-              ? const Center(
-                  child: CircularProgressIndicator(color: Colors.black),
-                )
-              : Column(children: [Expanded(child: _buildGrid(sp))]),
+          body: Column(
+            children: [
+              // SEARCH BAR
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.grey.withValues(alpha: 0.18),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: TextField(
+                    controller: _searchCtrl,
+                    textInputAction: TextInputAction.search,
+                    decoration: InputDecoration(
+                      hintText:
+                          "Search in ${sp.selectedCategoryName ?? 'Products'}...",
+                      hintStyle:
+                          TextStyle(color: Colors.grey.shade400, fontSize: 14),
+                      prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                      suffixIcon: _searchCtrl.text.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear, color: Colors.grey),
+                              onPressed: () {
+                                _searchCtrl.clear();
+                                setState(() {
+                                  _searchQuery = '';
+                                });
+                              },
+                            )
+                          : null,
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 14, vertical: 12),
+                    ),
+                    onChanged: (val) {
+                      setState(() {
+                        _searchQuery = val;
+                      });
+                    },
+                  ),
+                ),
+              ),
+
+              // HEADER ROW: PRODUCTS COUNT + SINGLE FIXED TOGGLE BUTTON
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Products (${filteredProducts.length})',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.grey.shade700,
+                      ),
+                    ),
+                    InkWell(
+                      onTap: () {
+                        setState(() {
+                          _showAsGrid = !_showAsGrid;
+                        });
+                      },
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey.shade300),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.grey.withValues(alpha: 0.08),
+                              blurRadius: 4,
+                              offset: const Offset(0, 1),
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _showAsGrid
+                                  ? Icons.view_list_rounded
+                                  : Icons.grid_view_rounded,
+                              size: 16,
+                              color: const Color(0xFF0F766E),
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              _showAsGrid ? 'List View' : 'Grid View',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF0F766E),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              Expanded(
+                child: sp.isLoading
+                    ? const Center(
+                        child: CircularProgressIndicator(color: Colors.black),
+                      )
+                    : filteredProducts.isEmpty && _searchQuery.isNotEmpty
+                    ? Center(
+                        child: Text(
+                          'No products match "$_searchQuery"',
+                          style: const TextStyle(
+                              color: Color(0xFF4A4A4A), fontSize: 18),
+                        ),
+                      )
+                    : (_showAsGrid
+                        ? _buildGrid(sp, filteredProducts)
+                        : _buildGoogleSearchList(sp, filteredProducts)),
+              ),
+            ],
+          ),
         );
       },
     );
   }
 
-  Widget _buildGrid(InstockProvider sp) {
+  // ========================== GOOGLE SEARCH SUGGESTIONS LIST ===========================
+  Widget _buildGoogleSearchList(InstockProvider sp, List<dynamic> products) {
+    if (products.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.search_off_rounded,
+              size: 54,
+              color: Colors.grey.shade400,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'No instock products found for "$_searchQuery"',
+              style: TextStyle(
+                fontSize: 15,
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      itemCount: products.length,
+      itemBuilder: (context, index) {
+        final p = products[index];
+        final id = p['id']?.toString() ?? '';
+        final name = p['name']?.toString() ?? 'Unknown';
+
+        final double pVal = sp.prices[id] ?? 0.0;
+        final price = '₹${pVal % 1 == 0 ? pVal.toInt() : pVal}';
+
+        final currentStock = sp.inStockQuery[id] ?? 0.0;
+        final isSelected = currentStock > 0;
+
+        String qtyText;
+        if (currentStock == currentStock.floorToDouble()) {
+          qtyText = currentStock.toInt().toString();
+        } else {
+          qtyText = currentStock.toStringAsFixed(2);
+        }
+
+        final unitDetails = p['defaultPriceDetails'];
+        final String uName = unitDetails?['unit'] ?? 'pcs';
+
+        String? imageUrl;
+        if (p['images'] != null &&
+            p['images'].isNotEmpty &&
+            p['images'][0]['image'] != null &&
+            p['images'][0]['image']['url'] != null) {
+          imageUrl = p['images'][0]['image']['url'];
+          if (imageUrl != null && imageUrl.startsWith('/')) {
+            imageUrl = '${ApiConfig.domain}$imageUrl';
+          }
+        }
+
+        return Container(
+          margin: const EdgeInsets.symmetric(vertical: 3),
+          decoration: BoxDecoration(
+            color: isSelected ? const Color(0xFFF1F8E9) : Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isSelected ? Colors.green.shade400 : Colors.grey.shade200,
+              width: isSelected ? 1.5 : 1,
+            ),
+          ),
+          child: ListTile(
+            dense: true,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            onTap: () => _promptInstockQuantity(p),
+            leading: Stack(
+              alignment: Alignment.center,
+              children: [
+                if (imageUrl != null)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: CachedNetworkImage(
+                      imageUrl: imageUrl,
+                      width: 40,
+                      height: 40,
+                      fit: BoxFit.cover,
+                      placeholder: (_, __) => Container(
+                        width: 40,
+                        height: 40,
+                        color: Colors.grey.shade100,
+                        child: const Icon(Icons.search,
+                            size: 20, color: Colors.grey),
+                      ),
+                      errorWidget: (_, __, ___) => Container(
+                        width: 40,
+                        height: 40,
+                        color: Colors.grey.shade100,
+                        child: const Icon(Icons.search,
+                            size: 20, color: Colors.grey),
+                      ),
+                    ),
+                  )
+                else
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? Colors.green.shade100
+                          : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Icon(
+                      isSelected
+                          ? Icons.check_circle_rounded
+                          : Icons.inventory_2_outlined,
+                      color: isSelected
+                          ? Colors.green.shade700
+                          : Colors.grey.shade600,
+                      size: 20,
+                    ),
+                  ),
+              ],
+            ),
+            title: _buildHighlightedText(name, _searchQuery.trim()),
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                price,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+            ),
+            trailing: isSelected
+                ? Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade700,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          "$qtyText $uName",
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.edit, color: Colors.white, size: 12),
+                      ],
+                    ),
+                  )
+                : Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey.shade300),
+                      borderRadius: BorderRadius.circular(14),
+                      color: Colors.grey.shade50,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.add, size: 14, color: Colors.grey.shade700),
+                        const SizedBox(width: 2),
+                        Text(
+                          "Add",
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ========================== GRID VIEW ===========================
+  Widget _buildGrid(InstockProvider sp, List<dynamic> products) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
         final crossAxisCount = (width > 600) ? 5 : 3;
+        final showNewProduct = _searchQuery.isEmpty;
+        final itemCount = products.length + (showNewProduct ? 1 : 0);
+
         return GridView.builder(
           padding: const EdgeInsets.all(10),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
@@ -653,9 +1077,9 @@ class _InstockProductsPageState extends State<InstockProductsPage> {
             mainAxisSpacing: 10,
             childAspectRatio: 0.75,
           ),
-          itemCount: sp.filteredProducts.length + 1,
+          itemCount: itemCount,
           itemBuilder: (context, index) {
-            if (index == 0) {
+            if (showNewProduct && index == 0) {
               return GestureDetector(
                 onTap: () => _showCreateProductDialog(sp),
                 child: Container(
@@ -698,7 +1122,8 @@ class _InstockProductsPageState extends State<InstockProductsPage> {
               );
             }
 
-            final product = sp.filteredProducts[index - 1];
+            final productIndex = showNewProduct ? index - 1 : index;
+            final product = products[productIndex];
             final String id = product["id"];
 
             String? imageUrl;
@@ -738,7 +1163,7 @@ class _InstockProductsPageState extends State<InstockProductsPage> {
             final String unitDisplay = '$uQtyStr$uName';
 
             return GestureDetector(
-              onTap: () => _toggleProductSelection(index - 1),
+              onTap: () => _promptInstockQuantity(product),
               child: Container(
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(8),

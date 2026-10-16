@@ -2581,5 +2581,95 @@ Future<List<dynamic>> fetchEmployees() async {
     }
     return {'success': false, 'message': lastErrorMessage ?? 'Failed to record work completion time'};
   }
+
+  Future<Map<String, dynamic>> fetchReportCardData({
+    String? employeeId,
+    String? month,
+    String? role,
+  }) async {
+    final token = await _getToken();
+    final prefs = await SharedPreferences.getInstance();
+    final resolvedEmpId = employeeId ??
+        await storage.read(key: 'employeeDocId') ??
+        await storage.read(key: 'employeeId') ??
+        prefs.getString('employee_id') ??
+        await storage.read(key: 'userId') ??
+        prefs.getString('userId') ??
+        '';
+    final resolvedUserId =
+        await storage.read(key: 'userId') ?? prefs.getString('userId') ?? '';
+    final resolvedRole = role ??
+        await storage.read(key: 'userRole') ??
+        prefs.getString('role') ??
+        'waiter';
+    final now = DateTime.now();
+    final resolvedMonth = month ?? DateFormat('yyyy-MM').format(now);
+
+    final queryParams = <String, String>{
+      if (resolvedEmpId.isNotEmpty) 'employeeId': resolvedEmpId,
+      if (resolvedUserId.isNotEmpty) 'userId': resolvedUserId,
+      'month': resolvedMonth,
+      'role': resolvedRole,
+    };
+
+    final endpoints = [
+      Uri.parse('$_baseUrl/reports/report-card-data')
+          .replace(queryParameters: queryParams)
+          .toString(),
+      Uri.parse('$_baseUrl/report-card-data')
+          .replace(queryParameters: queryParams)
+          .toString(),
+    ];
+
+    for (final url in endpoints) {
+      try {
+        final res = await http.get(
+          Uri.parse(url),
+          headers: {
+            'Accept': 'application/json',
+            'x-app-secret': 'bf_pos_9f8d7e6c5b4a3210',
+            'x-app-key': 'bf_pos_9f8d7e6c5b4a3210',
+            if (token != null) 'Authorization': 'Bearer $token',
+          },
+        );
+        if (res.statusCode == 200) {
+          final data = jsonDecode(res.body);
+          if (data is Map<String, dynamic>) {
+            return data;
+          }
+        }
+      } catch (e) {
+        debugPrint('fetchReportCardData error ($url): $e');
+      }
+    }
+
+    return {'success': false};
+  }
+
+  Future<List<dynamic>> fetchReportCardRules() async {
+    final token = await _getToken();
+    final url =
+        '$_baseUrl/report-card-rules?where[enabled][equals]=true&limit=100';
+    try {
+      final res = await http.get(
+        Uri.parse(url),
+        headers: {
+          'Accept': 'application/json',
+          'x-app-secret': 'bf_pos_9f8d7e6c5b4a3210',
+          'x-app-key': 'bf_pos_9f8d7e6c5b4a3210',
+          if (token != null) 'Authorization': 'Bearer $token',
+        },
+      );
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        if (data is Map && data['docs'] is List) {
+          return data['docs'] as List<dynamic>;
+        }
+      }
+    } catch (e) {
+      debugPrint('fetchReportCardRules error: $e');
+    }
+    return [];
+  }
 }
 

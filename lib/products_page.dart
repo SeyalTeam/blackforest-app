@@ -344,6 +344,7 @@ class _ProductsPageState extends State<ProductsPage> {
   List<String> _favoriteProductIds = <String>[];
   final TextEditingController _homeSearchController = TextEditingController();
   String _homeSearchQuery = '';
+  bool _searchShowAsGrid = true;
   String? _focusedProductId;
   bool _showFocusedProductHighlight = false;
 
@@ -2092,85 +2093,134 @@ class _ProductsPageState extends State<ProductsPage> {
       existingQty = existingItem.quantity.toDouble();
     }
 
-    double quantity = 1.0;
-    if (isWeightBased) {
-      // Step 4: Show popup if weight-based
-
-      // Determine display unit
-      String displayUnit = 'kg';
-      if (_branchId != null && product['branchOverrides'] is List) {
-        final overrides = product['branchOverrides'] as List;
-        for (final override in overrides) {
-          if (override is Map) {
-            final overrideBranchId = CartItem.extractRefId(override['branch']);
-            if (overrideBranchId == _branchId && override['unit'] != null) {
-              displayUnit = override['unit'].toString();
-              break;
-            }
+    // Determine display unit
+    String displayUnit = 'pcs';
+    if (_branchId != null && product['branchOverrides'] is List) {
+      final overrides = product['branchOverrides'] as List;
+      for (final override in overrides) {
+        if (override is Map) {
+          final overrideBranchId = CartItem.extractRefId(override['branch']);
+          if (overrideBranchId == _branchId && override['unit'] != null) {
+            displayUnit = override['unit'].toString();
+            break;
           }
         }
-      } else {
-        displayUnit =
-            product['defaultPriceDetails']?['unit']?.toString() ?? 'kg';
       }
-
-      final TextEditingController weightController = TextEditingController(
-        text: existingQty > 0 ? existingQty.toStringAsFixed(2) : '',
-      );
-      final enteredWeight = await showDialog<double>(
-        context: context,
-        barrierDismissible: true,
-        builder: (context) {
-          return AlertDialog(
-            title: Text('Enter Weight ($displayUnit)'),
-            content: TextField(
-              controller: weightController,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              decoration: InputDecoration(
-                hintText: 'e.g. 0.5',
-                labelText: 'Weight in $displayUnit',
-                border: const OutlineInputBorder(),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  final value =
-                      double.tryParse(weightController.text.trim()) ?? 0.0;
-                  Navigator.pop(context, value);
-                },
-                child: const Text('OK'),
-              ),
-            ],
-          );
-        },
-      );
-      if (enteredWeight == null || enteredWeight <= 0) return;
-      quantity = enteredWeight;
+    } else {
+      displayUnit = product['defaultPriceDetails']?['unit']?.toString() ??
+          (isWeightBased ? 'kg' : 'pcs');
     }
 
-    // Step 5: Update or add
-    final item = CartItem.fromProduct(
-      product,
-      quantity,
-      branchPrice: price,
-      branchId: _branchId,
-      tableSection: cartProvider.selectedSection,
+    String initialText = '';
+    if (existingQty > 0) {
+      if (existingQty == existingQty.floorToDouble()) {
+        initialText = existingQty.toInt().toString();
+      } else {
+        initialText = existingQty.toString();
+      }
+    } else {
+      initialText = '1';
+    }
+
+    final TextEditingController qtyController =
+        TextEditingController(text: initialText);
+    qtyController.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: initialText.length,
     );
-    if (isWeightBased) {
+
+    final enteredQty = await showDialog<double>(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) {
+        return AlertDialog(
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                product['name'] ?? 'Product',
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                isWeightBased
+                    ? 'Enter Weight ($displayUnit)'
+                    : 'Enter Quantity ($displayUnit)',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.normal,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+            ],
+          ),
+          content: TextField(
+            controller: qtyController,
+            autofocus: true,
+            keyboardType: TextInputType.numberWithOptions(
+              decimal: isWeightBased,
+            ),
+            decoration: InputDecoration(
+              hintText: isWeightBased ? 'e.g. 0.5' : 'e.g. 10',
+              labelText: isWeightBased
+                  ? 'Weight in $displayUnit'
+                  : 'Quantity in $displayUnit',
+              border: const OutlineInputBorder(),
+            ),
+            onSubmitted: (val) {
+              final value = double.tryParse(val.trim()) ?? 0.0;
+              Navigator.pop(context, value);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final value =
+                    double.tryParse(qtyController.text.trim()) ?? 0.0;
+                Navigator.pop(context, value);
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (enteredQty == null || enteredQty < 0) return;
+
+    if (enteredQty == 0) {
+      cartProvider.updateQuantity(productId, 0);
+    } else {
+      final item = CartItem.fromProduct(
+        product,
+        enteredQty,
+        branchPrice: price,
+        branchId: _branchId,
+        tableSection: cartProvider.selectedSection,
+      );
       if (existingItem.id.isNotEmpty) {
-        cartProvider.updateQuantity(productId, quantity);
+        cartProvider.updateQuantity(productId, enteredQty);
       } else {
         cartProvider.addOrUpdateItem(item);
       }
-    } else {
-      cartProvider.addOrUpdateItem(item);
+    }
+
+    if (_homeSearchController.text.isNotEmpty) {
+      _homeSearchController.clear();
+      setState(() {
+        _homeSearchQuery = '';
+      });
+      FocusScope.of(context).unfocus();
     }
   }
 
@@ -2893,6 +2943,624 @@ class _ProductsPageState extends State<ProductsPage> {
     );
   }
 
+  Widget _buildHighlightedText(String text, String query) {
+    if (query.isEmpty) {
+      return Text(
+        text,
+        style: const TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          color: Colors.black87,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+
+    final lowerText = text.toLowerCase();
+    final lowerQuery = query.toLowerCase();
+    final index = lowerText.indexOf(lowerQuery);
+
+    if (index == -1) {
+      return Text(
+        text,
+        style: const TextStyle(
+          fontSize: 15,
+          fontWeight: FontWeight.w600,
+          color: Colors.black87,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      );
+    }
+
+    final before = text.substring(0, index);
+    final match = text.substring(index, index + query.length);
+    final after = text.substring(index + query.length);
+
+    return RichText(
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      text: TextSpan(
+        style: const TextStyle(fontSize: 15, color: Colors.black87),
+        children: [
+          if (before.isNotEmpty)
+            TextSpan(
+              text: before,
+              style: const TextStyle(fontWeight: FontWeight.normal),
+            ),
+          TextSpan(
+            text: match,
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Colors.black,
+              backgroundColor: Color(0x33FFD54F),
+            ),
+          ),
+          if (after.isNotEmpty)
+            TextSpan(
+              text: after,
+              style: const TextStyle(fontWeight: FontWeight.normal),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGoogleSearchList(
+    BuildContext context,
+    List<Map<String, dynamic>> products,
+    CartProvider cartProvider,
+  ) {
+    final query = _homeSearchQuery.trim();
+
+    if (products.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.search_off_rounded,
+              size: 54,
+              color: Colors.grey.shade400,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'No products found for "$query"',
+              style: TextStyle(
+                fontSize: 15,
+                color: Colors.grey.shade600,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      itemCount: products.length,
+      itemBuilder: (context, index) {
+        final product = products[index];
+        final id = _productId(product);
+        final name = product['name']?.toString() ?? 'Unknown';
+
+        final matching =
+            cartProvider.cartItems.where((i) => i.id == id).toList();
+        final isSelected = matching.isNotEmpty && matching.first.quantity > 0;
+        final qtyNum = isSelected ? matching.first.quantity : 0.0;
+        final qtyText = (qtyNum == qtyNum.floorToDouble())
+            ? qtyNum.toInt().toString()
+            : qtyNum.toStringAsFixed(2);
+
+        final resolvedPrice = _readProductPrice(
+          product,
+          cartProvider: cartProvider,
+        );
+        final price = _formatCompactPrice(resolvedPrice);
+
+        final isWeightBased = _isWeightBasedProduct(product);
+        final rawUnit = product['defaultPriceDetails']?['unit']?.toString() ?? '';
+        final unit = rawUnit.isNotEmpty ? rawUnit : (isWeightBased ? 'kg' : 'pcs');
+
+        String? imageUrl = _resolveProductImage(product);
+
+        return Container(
+          margin: const EdgeInsets.symmetric(vertical: 3),
+          decoration: BoxDecoration(
+            color: isSelected ? const Color(0xFFF1F8E9) : Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isSelected ? Colors.green.shade400 : Colors.grey.shade200,
+              width: isSelected ? 1.5 : 1,
+            ),
+          ),
+          child: ListTile(
+            dense: true,
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+            onTap: () async {
+              await _addOrUpdateProduct(product);
+            },
+            leading: Stack(
+              alignment: Alignment.center,
+              children: [
+                if (imageUrl != null)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: CachedNetworkImage(
+                      imageUrl: imageUrl,
+                      width: 40,
+                      height: 40,
+                      fit: BoxFit.cover,
+                      placeholder: (_, __) => Container(
+                        width: 40,
+                        height: 40,
+                        color: Colors.grey.shade100,
+                        child: const Icon(
+                          Icons.search,
+                          size: 20,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      errorWidget: (_, __, ___) => Container(
+                        width: 40,
+                        height: 40,
+                        color: Colors.grey.shade100,
+                        child: const Icon(
+                          Icons.search,
+                          size: 20,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ),
+                  )
+                else
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: isSelected
+                          ? Colors.green.shade100
+                          : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Icon(
+                      isSelected
+                          ? Icons.check_circle_rounded
+                          : Icons.search_rounded,
+                      color: isSelected
+                          ? Colors.green.shade700
+                          : Colors.grey.shade600,
+                      size: 20,
+                    ),
+                  ),
+              ],
+            ),
+            title: _buildHighlightedText(name, query),
+            subtitle: Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                price,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey.shade700,
+                ),
+              ),
+            ),
+            trailing: isSelected
+                ? Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade700,
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          "$qtyText $unit",
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.edit, color: Colors.white, size: 12),
+                      ],
+                    ),
+                  )
+                : Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.grey.shade300),
+                      borderRadius: BorderRadius.circular(14),
+                      color: Colors.grey.shade50,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.add,
+                          size: 14,
+                          color: Colors.grey.shade700,
+                        ),
+                        const SizedBox(width: 2),
+                        Text(
+                          "Add",
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.grey.shade800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildBillingModeBody({
+    required List<Map<String, dynamic>> visibleProducts,
+    required CartProvider cartProvider,
+  }) {
+    Widget content;
+    if (visibleProducts.isEmpty) {
+      content = ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        children: [
+          const SizedBox(height: 140),
+          Center(
+            child: Text(
+              _homeSearchQuery.isNotEmpty
+                  ? 'No products matching "$_homeSearchQuery"'
+                  : 'No products found',
+              style: const TextStyle(
+                color: Color(0xFF4A4A4A),
+                fontSize: 18,
+              ),
+            ),
+          ),
+        ],
+      );
+    } else if (!_searchShowAsGrid) {
+      content = _buildGoogleSearchList(
+        context,
+        visibleProducts,
+        cartProvider,
+      );
+    } else {
+      content = LayoutBuilder(
+        builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          final crossAxisCount = (width > 600) ? 5 : 3;
+          return GridView.builder(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(10),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              childAspectRatio: 0.75,
+            ),
+            itemCount: visibleProducts.length,
+            itemBuilder: (context, index) {
+              final product = visibleProducts[index];
+              final productMap = Map<String, dynamic>.from(product);
+              String? imageUrl = _resolveProductImage(productMap);
+              imageUrl ??= 'https://via.placeholder.com/150?text=No+Image';
+
+              return GestureDetector(
+                onTap: () => _addOrUpdateProduct(productMap),
+                child: Consumer<CartProvider>(
+                  builder: (context, cartProvider, child) {
+                    final resolvedPrice = _readProductPrice(
+                      productMap,
+                      cartProvider: cartProvider,
+                    );
+                    final price = _formatCompactPrice(resolvedPrice);
+                    final isSelected = cartProvider.cartItems.any(
+                      (i) => i.id == product['id'],
+                    );
+                    final qty = cartProvider.cartItems
+                        .firstWhere(
+                          (i) => i.id == product['id'],
+                          orElse: () => CartItem(
+                            id: '',
+                            name: '',
+                            price: 0,
+                            quantity: 0,
+                          ),
+                        )
+                        .quantity;
+                    String qtyText;
+                    if (qty == qty.floorToDouble()) {
+                      qtyText = qty.toInt().toString();
+                    } else {
+                      qtyText = qty.toStringAsFixed(2);
+                    }
+
+                    return Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(8),
+                        border: isSelected
+                            ? Border.all(
+                                color: Colors.green,
+                                width: 4,
+                              )
+                            : null,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(
+                              alpha: 0.1,
+                            ),
+                            spreadRadius: 1,
+                            blurRadius: 5,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
+                      ),
+                      child: Stack(
+                        children: [
+                          Column(
+                            children: [
+                              Expanded(
+                                flex: 8,
+                                child: ClipRRect(
+                                  borderRadius: const BorderRadius.vertical(
+                                    top: Radius.circular(8),
+                                  ),
+                                  child: CachedNetworkImage(
+                                    imageUrl: imageUrl!,
+                                    fit: BoxFit.cover,
+                                    width: double.infinity,
+                                    placeholder: (context, url) => const Center(
+                                      child: CircularProgressIndicator(),
+                                    ),
+                                    errorWidget: (context, url, error) => const Center(
+                                      child: Text(
+                                        'No Image',
+                                        style: TextStyle(color: Colors.grey),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              Expanded(
+                                flex: 2,
+                                child: Container(
+                                  width: double.infinity,
+                                  decoration: const BoxDecoration(
+                                    color: Colors.black,
+                                    borderRadius: BorderRadius.vertical(
+                                      bottom: Radius.circular(8),
+                                    ),
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: Text(
+                                    product['name'] ?? 'Unknown',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          Positioned(
+                            top: 2,
+                            left: 2,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                price,
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ),
+                          ),
+                          if (isSelected)
+                            Positioned.fill(
+                              child: Align(
+                                alignment: Alignment.center,
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: 0.7),
+                                    border: Border.all(
+                                      color: Colors.grey,
+                                      width: 1,
+                                    ),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
+                                  child: Text(
+                                    qtyText,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              );
+            },
+          );
+        },
+      );
+    }
+
+    return Column(
+      children: [
+        // SEARCH BAR
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.grey.withValues(alpha: 0.18),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: TextField(
+              controller: _homeSearchController,
+              textInputAction: TextInputAction.search,
+              decoration: InputDecoration(
+                hintText: "Search in ${widget.categoryName}...",
+                hintStyle: TextStyle(
+                  color: Colors.grey.shade400,
+                  fontSize: 14,
+                ),
+                prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                suffixIcon: _homeSearchController.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, color: Colors.grey),
+                        onPressed: () {
+                          _homeSearchController.clear();
+                          setState(() {
+                            _homeSearchQuery = '';
+                          });
+                        },
+                      )
+                    : null,
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide.none,
+                ),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
+                ),
+              ),
+              onChanged: (val) {
+                setState(() {
+                  _homeSearchQuery = val;
+                });
+              },
+            ),
+          ),
+        ),
+
+        // HEADER ROW: PRODUCTS COUNT + SINGLE FIXED VIEW TOGGLE BUTTON
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: Row(
+            children: [
+              Text(
+                _homeSearchQuery.trim().isNotEmpty
+                    ? "MATCHING PRODUCTS (${visibleProducts.length})"
+                    : "${visibleProducts.length} PRODUCTS",
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey.shade600,
+                  letterSpacing: 0.8,
+                ),
+              ),
+              const Spacer(),
+              InkWell(
+                onTap: () {
+                  setState(() {
+                    _searchShowAsGrid = !_searchShowAsGrid;
+                  });
+                },
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0F766E),
+                    borderRadius: BorderRadius.circular(8),
+                    boxShadow: [
+                      BoxShadow(
+                        color: const Color(0xFF0F766E).withValues(alpha: 0.2),
+                        blurRadius: 4,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _searchShowAsGrid
+                            ? Icons.grid_view_rounded
+                            : Icons.view_list_rounded,
+                        size: 16,
+                        color: Colors.white,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _searchShowAsGrid ? "Grid" : "List",
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // BODY
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: () => _fetchProducts(forceRefresh: true),
+            child: content,
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final cartProvider = Provider.of<CartProvider>(context);
@@ -2936,227 +3604,9 @@ class _ProductsPageState extends State<ProductsPage> {
                 activeCartItems: activeCartItems,
               ),
             )
-          : RefreshIndicator(
-              onRefresh: () => _fetchProducts(forceRefresh: true),
-              child: _products.isEmpty
-                  ? ListView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      children: const [
-                        SizedBox(height: 180),
-                        Center(
-                          child: Text(
-                            'No products found',
-                            style: TextStyle(
-                              color: Color(0xFF4A4A4A),
-                              fontSize: 18,
-                            ),
-                          ),
-                        ),
-                      ],
-                    )
-                  : LayoutBuilder(
-                      builder: (context, constraints) {
-                        final width = constraints.maxWidth;
-                        final crossAxisCount = (width > 600) ? 5 : 3;
-                        return GridView.builder(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          padding: const EdgeInsets.all(10),
-                          gridDelegate:
-                              SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: crossAxisCount,
-                                crossAxisSpacing: 10,
-                                mainAxisSpacing: 10,
-                                childAspectRatio: 0.75,
-                              ),
-                          itemCount: _products.length,
-                          itemBuilder: (context, index) {
-                            final product = _products[index];
-                            final productMap = Map<String, dynamic>.from(
-                              product,
-                            );
-                            String? imageUrl = _resolveProductImage(productMap);
-                            imageUrl ??=
-                                'https://via.placeholder.com/150?text=No+Image';
-
-                            return GestureDetector(
-                              onTap: () => _toggleProductSelection(index),
-                              child: Consumer<CartProvider>(
-                                builder: (context, cartProvider, child) {
-                                  final resolvedPrice = _readProductPrice(
-                                    Map<String, dynamic>.from(product),
-                                    cartProvider: cartProvider,
-                                  );
-                                  final price = _formatCompactPrice(
-                                    resolvedPrice,
-                                  );
-                                  final isSelected = cartProvider.cartItems.any(
-                                    (i) => i.id == product['id'],
-                                  );
-                                  final qty = cartProvider.cartItems
-                                      .firstWhere(
-                                        (i) => i.id == product['id'],
-                                        orElse: () => CartItem(
-                                          id: '',
-                                          name: '',
-                                          price: 0,
-                                          quantity: 0,
-                                        ),
-                                      )
-                                      .quantity;
-                                  String qtyText;
-                                  if (qty == qty.floorToDouble()) {
-                                    qtyText = qty.toInt().toString();
-                                  } else {
-                                    qtyText = qty.toStringAsFixed(2);
-                                  }
-
-                                  return Container(
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(8),
-                                      border: isSelected
-                                          ? Border.all(
-                                              color: Colors.green,
-                                              width: 4,
-                                            )
-                                          : null,
-                                      boxShadow: [
-                                        BoxShadow(
-                                          color: Colors.black.withValues(
-                                            alpha: 0.1,
-                                          ),
-                                          spreadRadius: 1,
-                                          blurRadius: 5,
-                                          offset: const Offset(0, 2),
-                                        ),
-                                      ],
-                                    ),
-                                    child: Stack(
-                                      children: [
-                                        Column(
-                                          children: [
-                                            Expanded(
-                                              flex: 8,
-                                              child: ClipRRect(
-                                                borderRadius:
-                                                    const BorderRadius.vertical(
-                                                      top: Radius.circular(8),
-                                                    ),
-                                                child: CachedNetworkImage(
-                                                  imageUrl: imageUrl!,
-                                                  fit: BoxFit.cover,
-                                                  width: double.infinity,
-                                                  placeholder: (context, url) =>
-                                                      const Center(
-                                                        child:
-                                                            CircularProgressIndicator(),
-                                                      ),
-                                                  errorWidget:
-                                                      (context, url, error) =>
-                                                          const Center(
-                                                            child: Text(
-                                                              'No Image',
-                                                              style: TextStyle(
-                                                                color:
-                                                                    Colors.grey,
-                                                              ),
-                                                            ),
-                                                          ),
-                                                ),
-                                              ),
-                                            ),
-                                            Expanded(
-                                              flex: 2,
-                                              child: Container(
-                                                width: double.infinity,
-                                                decoration: const BoxDecoration(
-                                                  color: Colors.black,
-                                                  borderRadius:
-                                                      BorderRadius.vertical(
-                                                        bottom: Radius.circular(
-                                                          8,
-                                                        ),
-                                                      ),
-                                                ),
-                                                alignment: Alignment.center,
-                                                child: Text(
-                                                  product['name'] ?? 'Unknown',
-                                                  style: const TextStyle(
-                                                    color: Colors.white,
-                                                    fontWeight: FontWeight.bold,
-                                                  ),
-                                                  textAlign: TextAlign.center,
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        Positioned(
-                                          top: 2,
-                                          left: 2,
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 4,
-                                              vertical: 2,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: Colors.black,
-                                              borderRadius:
-                                                  BorderRadius.circular(4),
-                                            ),
-                                            child: Text(
-                                              price,
-                                              style: const TextStyle(
-                                                color: Colors.white,
-                                                fontWeight: FontWeight.bold,
-                                                fontSize: 10,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                        if (isSelected)
-                                          Positioned.fill(
-                                            child: Align(
-                                              alignment: Alignment.center,
-                                              child: Container(
-                                                decoration: BoxDecoration(
-                                                  color: Colors.black
-                                                      .withValues(alpha: 0.7),
-                                                  border: Border.all(
-                                                    color: Colors.grey,
-                                                    width: 1,
-                                                  ),
-                                                  borderRadius:
-                                                      BorderRadius.circular(4),
-                                                ),
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      horizontal: 8,
-                                                      vertical: 4,
-                                                    ),
-                                                child: Text(
-                                                  qtyText,
-                                                  style: const TextStyle(
-                                                    color: Colors.white,
-                                                    fontSize: 16,
-                                                    fontWeight: FontWeight.bold,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                              ),
-                            );
-                          },
-                        );
-                      },
-                    ),
+          : _buildBillingModeBody(
+              visibleProducts: visibleProducts,
+              cartProvider: cartProvider,
             ),
     );
   }

@@ -248,6 +248,8 @@ class _StockOrderPageState extends State<StockOrderPage> {
                   return InkWell(
                     onTap: () async {
                       sp.searchCtrl.clear();
+                      _onSearchChanged('', sp);
+                      _searchFocusNode.unfocus();
                       await sp.selectCategory(cat);
                     },
                     borderRadius: BorderRadius.circular(18),
@@ -1329,5 +1331,10 @@ class _StockOrderPageState extends State<StockOrderPage> {
       return;
     }
     sp.updateQuantity(id, enteredQty);
+    if (sp.searchCtrl.text.isNotEmpty) {
+      sp.searchCtrl.clear();
+      _onSearchChanged('', sp);
+      _searchFocusNode.unfocus();
+    }
   }
 }

@@ -1069,6 +1069,10 @@ class _InstockCategoriesPageState extends State<InstockCategoriesPage> {
     if (enteredStock == null || enteredStock < 0) return;
     sp.storeProductMetadata(product);
     sp.updateInStock(id, enteredStock);
+    if (_searchCtrl.text.isNotEmpty) {
+      _searchCtrl.clear();
+      _onSearchChanged('');
+    }
     setState(() {});
   }
 }

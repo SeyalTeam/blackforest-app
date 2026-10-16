@@ -25,6 +25,7 @@ import 'employee_settings_page.dart';
 import 'geofence_util.dart';
 import 'login_page.dart';
 import 'notification_service.dart';
+import 'rank_card_page.dart';
 import 'session_prefs.dart';
 
 class EmployeePage extends StatefulWidget {
@@ -266,6 +267,7 @@ class _EmployeePageState extends State<EmployeePage> {
         final name = user['name']?.toString() ?? employee['name']?.toString();
         final role = user['role']?.toString();
         final code = employee['employeeId']?.toString();
+        final empDocId = (employee is Map ? (employee['id'] ?? employee['_id']) : user['employee'])?.toString();
         final phone = employee['phoneNumber']?.toString();
         final bName = branch['name']?.toString();
 
@@ -385,6 +387,9 @@ class _EmployeePageState extends State<EmployeePage> {
         }
 
         if (code != null) await _storage.write(key: 'employeeId', value: code);
+        if (empDocId != null && empDocId.isNotEmpty) {
+          await _storage.write(key: 'employeeDocId', value: empDocId);
+        }
         if (bName != null) await _storage.write(key: 'userBranchName', value: bName);
         if (companyNames.isNotEmpty) {
           await _storage.write(
@@ -2503,6 +2508,79 @@ class _EmployeePageState extends State<EmployeePage> {
                           ),
                         ),
                       ),
+
+                      const SizedBox(height: 16),
+                      GestureDetector(
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) => const RankCardPage(),
+                            ),
+                          );
+                        },
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.05),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              ),
+                            ],
+                            border: Border.all(color: Colors.grey[200]!),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFD97706).withValues(alpha: 0.12),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.military_tech,
+                                  color: Color(0xFFD97706),
+                                  size: 26,
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    const Text(
+                                      'Rank Card',
+                                      style: TextStyle(
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.black87,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'Progress report card & rank standing',
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.grey[600],
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Icon(
+                                Icons.arrow_forward_ios,
+                                color: Colors.grey[400],
+                                size: 16,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -3313,8 +3391,8 @@ class _EmployeePageState extends State<EmployeePage> {
   }
 
   Widget _buildRoutineTasksSection() {
-    // Only show routine tasks after employee has punched in
-    if (!_hasActiveSession) return const SizedBox.shrink();
+    // Only show routine tasks after employee has punched in and clicked 'Start My Work'
+    if (!_hasActiveSession || _workStatus != 'in_progress') return const SizedBox.shrink();
 
     final allRoutineTasks = _dailyTasks.where((t) => _isRoutineTask(t)).toList();
     if (allRoutineTasks.isEmpty) return const SizedBox.shrink();
