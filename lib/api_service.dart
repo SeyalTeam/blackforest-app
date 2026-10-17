@@ -2586,6 +2586,7 @@ Future<List<dynamic>> fetchEmployees() async {
     String? employeeId,
     String? month,
     String? role,
+    String? period,
   }) async {
     final token = await _getToken();
     final prefs = await SharedPreferences.getInstance();
@@ -2610,6 +2611,7 @@ Future<List<dynamic>> fetchEmployees() async {
       if (resolvedUserId.isNotEmpty) 'userId': resolvedUserId,
       'month': resolvedMonth,
       'role': resolvedRole,
+      if (period != null && period.isNotEmpty) 'period': period,
     };
 
     final endpoints = [

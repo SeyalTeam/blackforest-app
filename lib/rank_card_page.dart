@@ -15,6 +15,7 @@ class RankCardPage extends StatefulWidget {
 class _RankCardPageState extends State<RankCardPage> {
   final _storage = const FlutterSecureStorage();
 
+  String _selectedPeriod = 'month'; // 'today' | 'week' | 'month' | 'previous_month'
   DateTime _selectedMonth = DateTime.now();
   bool _isLoading = true;
   String? _errorMessage;
@@ -99,6 +100,7 @@ class _RankCardPageState extends State<RankCardPage> {
         employeeId: _employeeDocId.isNotEmpty ? _employeeDocId : _userId,
         month: monthStr,
         role: _employeeRole,
+        period: _selectedPeriod,
       );
 
       if (mounted) {
@@ -116,7 +118,7 @@ class _RankCardPageState extends State<RankCardPage> {
         } else {
           // If server returned an error or empty, generate a fallback demo benchmark
           setState(() {
-            _reportData = _generateLocalFallbackData(monthStr);
+            _reportData = _generateLocalFallbackData(monthStr, _selectedPeriod);
             _isLoading = false;
           });
         }
@@ -126,14 +128,14 @@ class _RankCardPageState extends State<RankCardPage> {
       if (mounted) {
         final monthStr = DateFormat('yyyy-MM').format(_selectedMonth);
         setState(() {
-          _reportData = _generateLocalFallbackData(monthStr);
+          _reportData = _generateLocalFallbackData(monthStr, _selectedPeriod);
           _isLoading = false;
         });
       }
     }
   }
 
-  Map<String, dynamic> _generateLocalFallbackData(String monthStr) {
+  Map<String, dynamic> _generateLocalFallbackData(String monthStr, [String period = 'month']) {
     final seed = (_employeeDocId.isNotEmpty ? _employeeDocId : _userId)
         .codeUnits
         .fold(0, (sum, c) => sum + c);
@@ -153,7 +155,7 @@ class _RankCardPageState extends State<RankCardPage> {
     if (avg >= 90) {
       grade = 'Grade A+';
       gradeTag = '🌟 Star Performer';
-      recommendation = 'Outstanding overall performance across punctuality, task execution, and table service. Highly recommended for monthly incentive.';
+      recommendation = 'Outstanding overall performance across punctuality, task execution, and table service. Highly recommended for incentive.';
     } else if (avg < 80 && avg >= 65) {
       grade = 'Grade B';
       gradeTag = '⚠️ Average';
@@ -164,9 +166,29 @@ class _RankCardPageState extends State<RankCardPage> {
       recommendation = 'Performance is below acceptable SLA thresholds. Immediate counseling required.';
     }
 
-    final totalCalls = 22 + (seed % 10);
-    final under30s = totalCalls - 2;
+    final isToday = period == 'today';
+    final isWeek = period == 'week';
+
+    final totalCalls = isToday ? (5 + (seed % 4)) : isWeek ? (16 + (seed % 6)) : (22 + (seed % 10));
+    final under30s = totalCalls > 1 ? totalCalls - 1 : totalCalls;
     final avgSpeed = 22 + (seed % 6);
+
+    final presentDays = isToday ? 1 : isWeek ? 6 : 25;
+    final totalDaysInMonth = isToday ? 1 : isWeek ? 7 : 30;
+    final onTimeDays = presentDays;
+    final lateDays = 0;
+
+    final totalAssigned = isToday ? 10 : isWeek ? 45 : 150;
+    final totalCompleted = isToday ? 10 : isWeek ? 43 : 144;
+    final completionRatePercent = ((totalCompleted / totalAssigned) * 100).round();
+
+    final totalProducts = isToday ? 30 : isWeek ? 95 : 350;
+    final servedProducts = isToday ? 30 : isWeek ? 94 : 345;
+    final cancelledProducts = totalProducts - servedProducts;
+
+    final totalItems = isToday ? 14 : isWeek ? 50 : 180;
+    final onTimeCount = isToday ? 13 : isWeek ? 48 : 172;
+    final onTimeRatePercent = ((onTimeCount / totalItems) * 100).round();
 
     return {
       'employeeId': _employeeDocId,
@@ -174,6 +196,7 @@ class _RankCardPageState extends State<RankCardPage> {
       'branchName': _branchName,
       'role': _employeeRole,
       'month': monthStr,
+      'period': period,
       'overallScore': avg,
       'grade': grade,
       'gradeTag': gradeTag,
@@ -191,37 +214,37 @@ class _RankCardPageState extends State<RankCardPage> {
       'rule2Attendance': {
         'ruleTitle': '⏰ Shift Attendance & Punctuality',
         'score': attScore,
-        'presentDays': 25,
-        'totalDaysInMonth': 30,
-        'onTimeDays': 24,
-        'lateDays': 1,
-        'attendanceRatePercent': 96,
+        'presentDays': presentDays,
+        'totalDaysInMonth': totalDaysInMonth,
+        'onTimeDays': onTimeDays,
+        'lateDays': lateDays,
+        'attendanceRatePercent': isToday ? 100 : isWeek ? 100 : 96,
         'ratingLabel': '🟢 Perfect / On-Time',
       },
       'rule3Tasks': {
         'ruleTitle': '📋 Daily Tasks & Routine Checklist',
         'score': taskScore,
-        'totalAssigned': 150,
-        'totalCompleted': 144,
-        'completionRatePercent': 96,
-        'perfectDays': 22,
+        'totalAssigned': totalAssigned,
+        'totalCompleted': totalCompleted,
+        'completionRatePercent': completionRatePercent,
+        'perfectDays': isToday ? 1 : isWeek ? 5 : 22,
         'ratingLabel': '🟢 High Checklist Discipline',
       },
       'rule4Billing': {
         'ruleTitle': '🍽️ Table Service & Billing Accuracy',
         'score': billScore,
-        'totalProducts': 350,
-        'servedProducts': 345,
-        'cancelledProducts': 5,
+        'totalProducts': totalProducts,
+        'servedProducts': servedProducts,
+        'cancelledProducts': cancelledProducts,
         'productAccuracyPercent': 98,
         'ratingLabel': '🟢 High Accuracy',
       },
       'rule5KotTime': {
         'ruleTitle': '⏱️ Waiter KOT Table Delivery SLA',
         'score': kotScore,
-        'totalItems': 180,
-        'onTimeCount': 172,
-        'onTimeRatePercent': 95,
+        'totalItems': totalItems,
+        'onTimeCount': onTimeCount,
+        'onTimeRatePercent': onTimeRatePercent,
         'avgDurationSeconds': 220,
         'targetDurationSeconds': 300,
         'ratingLabel': '🟢 Fast Table Delivery (< 5m)',
@@ -243,7 +266,7 @@ class _RankCardPageState extends State<RankCardPage> {
           'maxMarks': 100,
           'score': attScore,
           'ratingLabel': '🟢 Perfect / On-Time',
-          'summary': '25 shifts (24 on-time, 1 late, 96% attendance)',
+          'summary': '$presentDays shifts ($onTimeDays on-time, $lateDays late)',
         },
         {
           'id': 'rule-tasks',
@@ -252,7 +275,7 @@ class _RankCardPageState extends State<RankCardPage> {
           'maxMarks': 100,
           'score': taskScore,
           'ratingLabel': '🟢 High Checklist Discipline',
-          'summary': '144/150 tasks done (96% completion rate)',
+          'summary': '$totalCompleted/$totalAssigned tasks done ($completionRatePercent% completion rate)',
         },
         {
           'id': 'rule-billing',
@@ -261,7 +284,7 @@ class _RankCardPageState extends State<RankCardPage> {
           'maxMarks': 100,
           'score': billScore,
           'ratingLabel': '🟢 High Accuracy',
-          'summary': '345/350 items served (98% accuracy)',
+          'summary': '$servedProducts/$totalProducts items served (98% accuracy)',
         },
         {
           'id': 'rule-kot-time',
@@ -270,7 +293,7 @@ class _RankCardPageState extends State<RankCardPage> {
           'maxMarks': 100,
           'score': kotScore,
           'ratingLabel': '🟢 Fast Table Delivery (< 5m)',
-          'summary': '172/180 delivered < 5m (95% SLA adherence)',
+          'summary': '$onTimeCount/$totalItems delivered < 5m ($onTimeRatePercent% SLA adherence)',
         },
       ],
       'rankingList': [
@@ -318,30 +341,186 @@ class _RankCardPageState extends State<RankCardPage> {
     };
   }
 
-  void _previousMonth() {
+  void _selectPeriod(String period) {
+    if (_selectedPeriod == period && period != 'previous_month') return;
     setState(() {
-      _selectedMonth = DateTime(_selectedMonth.year, _selectedMonth.month - 1, 1);
+      _selectedPeriod = period;
+      if (period == 'today' || period == 'week' || period == 'month') {
+        _selectedMonth = DateTime.now();
+      }
     });
     _fetchReportCard();
   }
 
-  void _nextMonth() {
+  void _showPreviousMonthsPicker() {
     final now = DateTime.now();
-    final next = DateTime(_selectedMonth.year, _selectedMonth.month + 1, 1);
-    // Allow up to current month
-    if (next.isAfter(DateTime(now.year, now.month + 1, 1))) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Future evaluation reports are not yet available.'),
-          duration: Duration(seconds: 1),
-        ),
-      );
-      return;
+    final List<DateTime> previousMonths = [];
+    for (int i = 1; i <= 24; i++) {
+      final prev = DateTime(now.year, now.month - i, 1);
+      previousMonths.add(prev);
     }
-    setState(() {
-      _selectedMonth = next;
-    });
-    _fetchReportCard();
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return Container(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.65,
+          ),
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(height: 12),
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFCBD5E1),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                  child: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD97706).withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(
+                          Icons.calendar_month,
+                          size: 20,
+                          color: Color(0xFFD97706),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Choose Previous Month',
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              'Select any past month to view historical Rank Card',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: Color(0xFF64748B),
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, color: Color(0xFF64748B)),
+                        onPressed: () => Navigator.pop(ctx),
+                      ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                Flexible(
+                  child: ListView.separated(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    itemCount: previousMonths.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (context, index) {
+                      final monthDate = previousMonths[index];
+                      final monthName = DateFormat('MMMM yyyy').format(monthDate);
+                      final isCurrentSelected = _selectedPeriod == 'previous_month' &&
+                          _selectedMonth.year == monthDate.year &&
+                          _selectedMonth.month == monthDate.month;
+
+                      return InkWell(
+                        onTap: () {
+                          Navigator.pop(ctx);
+                          setState(() {
+                            _selectedPeriod = 'previous_month';
+                            _selectedMonth = monthDate;
+                          });
+                          _fetchReportCard();
+                        },
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          decoration: BoxDecoration(
+                            color: isCurrentSelected
+                                ? const Color(0xFFD97706).withValues(alpha: 0.08)
+                                : const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: isCurrentSelected
+                                  ? const Color(0xFFD97706)
+                                  : const Color(0xFFE2E8F0),
+                              width: isCurrentSelected ? 1.5 : 1,
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.calendar_today,
+                                size: 16,
+                                color: isCurrentSelected
+                                    ? const Color(0xFFD97706)
+                                    : const Color(0xFF64748B),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  monthName,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: isCurrentSelected
+                                        ? FontWeight.w800
+                                        : FontWeight.w600,
+                                    color: isCurrentSelected
+                                        ? const Color(0xFF92400E)
+                                        : const Color(0xFF1E293B),
+                                  ),
+                                ),
+                              ),
+                              if (isCurrentSelected)
+                                const Icon(
+                                  Icons.check_circle,
+                                  size: 18,
+                                  color: Color(0xFFD97706),
+                                )
+                              else
+                                const Icon(
+                                  Icons.chevron_right,
+                                  size: 18,
+                                  color: Color(0xFFCBD5E1),
+                                ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   Color _getScoreColor(num score, [num maxMarks = 100]) {
@@ -354,8 +533,6 @@ class _RankCardPageState extends State<RankCardPage> {
 
   @override
   Widget build(BuildContext context) {
-    final formattedMonth = DateFormat('MMMM yyyy').format(_selectedMonth);
-
     return Scaffold(
       backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
@@ -388,9 +565,9 @@ class _RankCardPageState extends State<RankCardPage> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // ---------------------------------------------------------------
-              // Month Selector Strip
+              // Period Selector Strip (Today, Week, Month, Calendar Icon for Previous Months)
               // ---------------------------------------------------------------
-              _buildMonthSelector(formattedMonth),
+              _buildPeriodSelector(),
 
               const SizedBox(height: 16),
 
@@ -406,7 +583,7 @@ class _RankCardPageState extends State<RankCardPage> {
                         ),
                         SizedBox(height: 16),
                         Text(
-                          'Evaluating monthly performance & rank...',
+                          'Evaluating performance & rank...',
                           style: TextStyle(
                             color: Color(0xFF64748B),
                             fontSize: 14,
@@ -454,7 +631,7 @@ class _RankCardPageState extends State<RankCardPage> {
                         Icon(Icons.bar_chart, size: 64, color: Colors.grey[400]),
                         const SizedBox(height: 16),
                         Text(
-                          _errorMessage ?? 'No report card available for this month',
+                          _errorMessage ?? 'No report card available for this evaluation period',
                           style: TextStyle(color: Colors.grey[600], fontSize: 16),
                         ),
                         const SizedBox(height: 12),
@@ -480,14 +657,29 @@ class _RankCardPageState extends State<RankCardPage> {
   }
 
   // ---------------------------------------------------------------------------
-  // Month Selector Widget
+  // Period Selector Widget (Today, Week, Month, Calendar Icon for Previous Months)
   // ---------------------------------------------------------------------------
-  Widget _buildMonthSelector(String formattedMonth) {
+  Widget _buildPeriodSelector() {
+    final now = DateTime.now();
+    String activeLabel = '';
+    if (_selectedPeriod == 'today') {
+      activeLabel = 'Today, ${DateFormat('EEEE, d MMM yyyy').format(now)}';
+    } else if (_selectedPeriod == 'week') {
+      final day = now.weekday; // 1 = Monday ... 7 = Sunday
+      final monday = now.subtract(Duration(days: day - 1));
+      final sunday = monday.add(const Duration(days: 6));
+      activeLabel = 'This Week (${DateFormat('d MMM').format(monday)} – ${DateFormat('d MMM yyyy').format(sunday)})';
+    } else if (_selectedPeriod == 'month') {
+      activeLabel = 'This Month (${DateFormat('MMMM yyyy').format(now)})';
+    } else {
+      activeLabel = 'Previous Month: ${DateFormat('MMMM yyyy').format(_selectedMonth)}';
+    }
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFE2E8F0)),
         boxShadow: [
           BoxShadow(
@@ -497,34 +689,212 @@ class _RankCardPageState extends State<RankCardPage> {
           ),
         ],
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          IconButton(
-            icon: const Icon(Icons.chevron_left, color: Color(0xFF0F172A)),
-            onPressed: _previousMonth,
-            tooltip: 'Previous Month',
-          ),
           Row(
             children: [
-              const Icon(Icons.calendar_month, size: 18, color: Color(0xFFD97706)),
+              Expanded(
+                child: _buildPeriodTab(
+                  periodKey: 'today',
+                  mainTitle: 'Today',
+                  subTitle: 'TODAY',
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: _buildPeriodTab(
+                  periodKey: 'week',
+                  mainTitle: 'Week',
+                  subTitle: 'THIS WEEK',
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: _buildPeriodTab(
+                  periodKey: 'month',
+                  mainTitle: 'Month',
+                  subTitle: 'THIS MONTH',
+                ),
+              ),
               const SizedBox(width: 8),
+              _buildCalendarIconButton(),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFF1F5F9)),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  _selectedPeriod == 'previous_month'
+                      ? Icons.history
+                      : Icons.event_available,
+                  size: 14,
+                  color: _selectedPeriod == 'previous_month'
+                      ? const Color(0xFFD97706)
+                      : const Color(0xFF64748B),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    activeLabel,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: _selectedPeriod == 'previous_month'
+                          ? const Color(0xFF92400E)
+                          : const Color(0xFF475569),
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (_selectedPeriod == 'previous_month')
+                  GestureDetector(
+                    onTap: () => _selectPeriod('month'),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD97706).withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            'Reset',
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFFD97706),
+                            ),
+                          ),
+                          SizedBox(width: 2),
+                          Icon(Icons.close, size: 11, color: Color(0xFFD97706)),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPeriodTab({
+    required String periodKey,
+    required String mainTitle,
+    required String subTitle,
+  }) {
+    final isSelected = _selectedPeriod == periodKey;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => _selectPeriod(periodKey),
+        borderRadius: BorderRadius.circular(10),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeInOut,
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+          decoration: BoxDecoration(
+            color: isSelected ? const Color(0xFF0F172A) : const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isSelected
+                  ? const Color(0xFF0F172A)
+                  : const Color(0xFFE2E8F0),
+              width: 1,
+            ),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                      color: const Color(0xFF0F172A).withValues(alpha: 0.15),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
               Text(
-                formattedMonth,
-                style: const TextStyle(
-                  fontSize: 16,
+                mainTitle,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w800,
+                  color: isSelected ? Colors.white : const Color(0xFF1E293B),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subTitle,
+                style: TextStyle(
+                  fontSize: 8.5,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF0F172A),
+                  letterSpacing: 0.3,
+                  color: isSelected ? const Color(0xFFFFB300) : const Color(0xFF94A3B8),
                 ),
               ),
             ],
           ),
-          IconButton(
-            icon: const Icon(Icons.chevron_right, color: Color(0xFF0F172A)),
-            onPressed: _nextMonth,
-            tooltip: 'Next Month',
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCalendarIconButton() {
+    final isPreviousMonthSelected = _selectedPeriod == 'previous_month';
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: _showPreviousMonthsPicker,
+        borderRadius: BorderRadius.circular(10),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          width: 44,
+          height: 48,
+          decoration: BoxDecoration(
+            color: isPreviousMonthSelected
+                ? const Color(0xFFD97706)
+                : const Color(0xFFF8FAFC),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isPreviousMonthSelected
+                  ? const Color(0xFFD97706)
+                  : const Color(0xFFE2E8F0),
+              width: 1,
+            ),
+            boxShadow: isPreviousMonthSelected
+                ? [
+                    BoxShadow(
+                      color: const Color(0xFFD97706).withValues(alpha: 0.25),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
           ),
-        ],
+          child: Tooltip(
+            message: 'Choose Previous Months',
+            child: Icon(
+              Icons.calendar_month,
+              size: 20,
+              color: isPreviousMonthSelected ? Colors.white : const Color(0xFF475569),
+            ),
+          ),
+        ),
       ),
     );
   }
