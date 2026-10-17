@@ -214,29 +214,27 @@ class _RankCardPageState extends State<RankCardPage> {
     String gradeFor(int s) => s >= 90 ? 'Grade A+' : s >= 80 ? 'Grade A' : s >= 65 ? 'Grade B' : 'Grade C';
     String tagFor(int s) => s >= 90 ? '🌟 Star Performer' : s >= 80 ? '✅ Target Met' : s >= 65 ? '⚠️ Average' : '🚨 Needs Attention';
 
-    // 1. VSeyal Branch Active Waiters
+    // 1. VSeyal Branch Active Waiters (Strictly only waiters active at VSeyal)
     final branchWaitersRaw = <Map<String, dynamic>>[
       {'name': _employeeName, 'score': avg, 'isCurrent': true, 'branchName': branchNameVal, 'companyName': companyNameVal},
-      {'name': 'Muthu', 'score': 93, 'isCurrent': false, 'branchName': branchNameVal, 'companyName': companyNameVal},
-      {'name': 'Muthuram', 'score': 90, 'isCurrent': false, 'branchName': branchNameVal, 'companyName': companyNameVal},
-      {'name': 'INFANT', 'score': 88, 'isCurrent': false, 'branchName': branchNameVal, 'companyName': companyNameVal},
-      {'name': 'Siva', 'score': 86, 'isCurrent': false, 'branchName': branchNameVal, 'companyName': companyNameVal},
-      {'name': 'THIRUMAARAN', 'score': 84, 'isCurrent': false, 'branchName': branchNameVal, 'companyName': companyNameVal},
-      {'name': 'Jeeva', 'score': 81, 'isCurrent': false, 'branchName': branchNameVal, 'companyName': companyNameVal},
-      {'name': 'Manikandan', 'score': 78, 'isCurrent': false, 'branchName': branchNameVal, 'companyName': companyNameVal},
+      {'name': 'THIRUMAARAN', 'score': (avg >= 88 ? 85 : 91), 'isCurrent': false, 'branchName': branchNameVal, 'companyName': companyNameVal},
     ];
 
     // 2. Company Active Waiters (BlackForest Cakes branches)
     final companyWaitersRaw = <Map<String, dynamic>>[
       ...branchWaitersRaw,
+      {'name': 'Muthu', 'score': 93, 'isCurrent': false, 'branchName': 'ETP-Ettayapuram Road', 'companyName': 'BlackForest Cakes'},
       {'name': 'VENKATESH BF', 'score': 96, 'isCurrent': false, 'branchName': 'ETP-Ettayapuram Road', 'companyName': 'BlackForest Cakes'},
       {'name': 'ANNALAKSHMI -CDM', 'score': 92, 'isCurrent': false, 'branchName': 'CHIDAMBARAM NAGAR', 'companyName': 'BlackForest Cakes'},
-      {'name': 'VIPIN WAITER', 'score': 89, 'isCurrent': false, 'branchName': 'VVD', 'companyName': 'BlackForest Cakes'},
+      {'name': 'Muthuram', 'score': 90, 'isCurrent': false, 'branchName': 'Ettayapuram', 'companyName': 'BlackForest Cakes'},
+      {'name': 'INFANT', 'score': 88, 'isCurrent': false, 'branchName': 'VVD', 'companyName': 'BlackForest Cakes'},
       {'name': 'RAVICHANDRAN -CDM', 'score': 87, 'isCurrent': false, 'branchName': 'CHIDAMBARAM NAGAR', 'companyName': 'BlackForest Cakes'},
+      {'name': 'Siva', 'score': 86, 'isCurrent': false, 'branchName': 'KMC', 'companyName': 'BlackForest Cakes'},
       {'name': 'SERMA MUTHUESWARI- KMC', 'score': 85, 'isCurrent': false, 'branchName': 'KMC', 'companyName': 'BlackForest Cakes'},
-      {'name': 'Dhilip Kumar', 'score': 83, 'isCurrent': false, 'branchName': 'Ettayapuram', 'companyName': 'BlackForest Cakes'},
+      {'name': 'Dhilip Kumar', 'score': 83, 'isCurrent': false, 'branchName': 'KMC', 'companyName': 'BlackForest Cakes'},
       {'name': 'MOHAMED RIFAZ', 'score': 82, 'isCurrent': false, 'branchName': 'Alagar', 'companyName': 'BlackForest Cakes'},
       {'name': 'MUTHURAJA', 'score': 80, 'isCurrent': false, 'branchName': 'Icing', 'companyName': 'BlackForest Cakes'},
+      {'name': 'Manikandan', 'score': 78, 'isCurrent': false, 'branchName': 'Alagar', 'companyName': 'BlackForest Cakes'},
     ];
 
     // 3. Overall Active Waiters (All 3 companies: BlackForest Cakes, Thoothukudi Hotel, Thoothukudi Macroon)
@@ -244,10 +242,13 @@ class _RankCardPageState extends State<RankCardPage> {
       ...companyWaitersRaw,
       {'name': 'MARIAPPAN', 'score': 95, 'isCurrent': false, 'branchName': 'TH1-THOOTHUKUDI HOTEL1', 'companyName': 'Thoothukudi Hotel'},
       {'name': 'SETHU', 'score': 94, 'isCurrent': false, 'branchName': 'Thoothukudi hotel', 'companyName': 'Thoothukudi Hotel'},
+      {'name': 'VIPIN WAITER', 'score': 89, 'isCurrent': false, 'branchName': 'TH1-THOOTHUKUDI HOTEL1', 'companyName': 'Thoothukudi Hotel'},
       {'name': 'KUMAR', 'score': 91, 'isCurrent': false, 'branchName': 'Pannai Veetu Samayal', 'companyName': 'Thoothukudi Hotel'},
       {'name': 'ANTONY', 'score': 88, 'isCurrent': false, 'branchName': 'THOOTHUKUDI MACROON', 'companyName': 'Thoothukudi Macroon'},
+      {'name': 'Jeeva', 'score': 85, 'isCurrent': false, 'branchName': 'THOOTHUKUDI MACROON', 'companyName': 'Thoothukudi Macroon'},
       {'name': 'BALA', 'score': 84, 'isCurrent': false, 'branchName': 'TH1-THOOTHUKUDI HOTEL1', 'companyName': 'Thoothukudi Hotel'},
       {'name': 'MURUGESH', 'score': 79, 'isCurrent': false, 'branchName': 'THOOTHUKUDI MACROON', 'companyName': 'Thoothukudi Macroon'},
+      {'name': 'karthikeyann', 'score': 76, 'isCurrent': false, 'branchName': 'THOOTHUKUDI MACROON', 'companyName': 'Thoothukudi Macroon'},
     ];
 
     final totalMarksVal = (callScore + attScore + taskScore + billScore + kotScore);
@@ -1182,54 +1183,62 @@ class _RankCardPageState extends State<RankCardPage> {
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.baseline,
-                textBaseline: TextBaseline.alphabetic,
-                children: [
-                  const Text(
-                    'Score: ',
-                    style: TextStyle(
-                      color: Color(0xFF94A3B8),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: 0.5,
-                    ),
+              Flexible(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.baseline,
+                    textBaseline: TextBaseline.alphabetic,
+                    children: [
+                      const Text(
+                        'Score: ',
+                        style: TextStyle(
+                          color: Color(0xFF94A3B8),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                        ),
+                      ),
+                      Text(
+                        scoreStr,
+                        style: TextStyle(
+                          color: scoreColor,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -0.5,
+                        ),
+                      ),
+                      Text(
+                        ' / $totalMax',
+                        style: const TextStyle(
+                          color: Color(0xFF94A3B8),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '($overallScore%)',
+                        style: TextStyle(
+                          color: scoreColor.withValues(alpha: 0.9),
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                   ),
-                  Text(
-                    scoreStr,
-                    style: TextStyle(
-                      color: scoreColor,
-                      fontSize: 26,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -0.5,
-                    ),
-                  ),
-                  Text(
-                    ' / $totalMax',
-                    style: const TextStyle(
-                      color: Color(0xFF94A3B8),
-                      fontSize: 13,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '($overallScore%)',
-                    style: TextStyle(
-                      color: scoreColor.withValues(alpha: 0.9),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ],
+                ),
               ),
+
+              const SizedBox(width: 6),
 
               // Grade badge & tag
               Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
                     decoration: BoxDecoration(
                       color: scoreColor.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(6),
@@ -1239,20 +1248,22 @@ class _RankCardPageState extends State<RankCardPage> {
                       grade,
                       style: TextStyle(
                         color: scoreColor,
-                        fontSize: 11.5,
+                        fontSize: 11,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
                   ),
-                  const SizedBox(width: 6),
-                  Text(
-                    gradeTag,
-                    style: const TextStyle(
-                      color: Color(0xFFE2E8F0),
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w600,
+                  if (gradeTag.isNotEmpty) ...[
+                    const SizedBox(width: 5),
+                    Text(
+                      gradeTag,
+                      style: const TextStyle(
+                        color: Color(0xFFE2E8F0),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ],
