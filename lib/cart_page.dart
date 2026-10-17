@@ -9739,6 +9739,7 @@ class _PaymentChip extends StatelessWidget {
   final Color inactiveBorderColor;
   final Color inactiveForegroundColor;
   final double width;
+  final bool enabled;
 
   const _PaymentChip({
     Key? key,
@@ -9752,41 +9753,49 @@ class _PaymentChip extends StatelessWidget {
     required this.inactiveBorderColor,
     required this.inactiveForegroundColor,
     required this.width,
+    this.enabled = true,
   }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        width: width, // 🔥 FIXED WIDTH
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: selected ? activeBackgroundColor : chipBg,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: selected ? activeColor : inactiveBorderColor,
+    final effectiveColor = enabled
+        ? (selected ? activeColor : inactiveForegroundColor)
+        : inactiveForegroundColor.withValues(alpha: 0.35);
+
+    return Opacity(
+      opacity: enabled ? 1.0 : 0.42,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          width: width, // 🔥 FIXED WIDTH
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: selected ? activeBackgroundColor : chipBg,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: selected ? activeColor : inactiveBorderColor,
+            ),
           ),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              size: 18,
-              color: selected ? activeColor : inactiveForegroundColor,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                color: selected ? activeColor : inactiveForegroundColor,
-                fontSize: 15,
-                fontWeight: FontWeight.w600,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 18,
+                color: effectiveColor,
               ),
-            ),
-          ],
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  color: effectiveColor,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

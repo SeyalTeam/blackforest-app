@@ -187,25 +187,26 @@ class _RankCardPageState extends State<RankCardPage> {
     final isToday = period == 'today';
     final isWeek = period == 'week';
 
-    final totalCalls = isToday ? (5 + (seed % 4)) : isWeek ? (16 + (seed % 6)) : (22 + (seed % 10));
+    final totalCalls = isToday ? (5 + (seed % 4)) : isWeek ? (22 + (seed % 6)) : (85 + (seed % 15));
     final under30s = totalCalls > 1 ? totalCalls - 1 : totalCalls;
-    final avgSpeed = 22 + (seed % 6);
+    final avgSpeed = 22 + (seed % 5);
 
-    final presentDays = isToday ? 1 : isWeek ? 6 : 25;
+    final presentDays = isToday ? 1 : isWeek ? 5 : 24;
     final totalDaysInMonth = isToday ? 1 : isWeek ? 7 : 30;
     final onTimeDays = presentDays;
     final lateDays = 0;
+    final attendanceRate = isToday ? 100 : isWeek ? 100 : 96;
 
     final totalAssigned = isToday ? 10 : isWeek ? 45 : 150;
     final totalCompleted = isToday ? 10 : isWeek ? 43 : 144;
     final completionRatePercent = ((totalCompleted / totalAssigned) * 100).round();
 
-    final totalProducts = isToday ? 30 : isWeek ? 95 : 350;
-    final servedProducts = isToday ? 30 : isWeek ? 94 : 345;
+    final totalProducts = isToday ? 30 : isWeek ? 120 : 350;
+    final servedProducts = isToday ? 30 : isWeek ? 118 : 345;
     final cancelledProducts = totalProducts - servedProducts;
 
-    final totalItems = isToday ? 14 : isWeek ? 50 : 180;
-    final onTimeCount = isToday ? 13 : isWeek ? 48 : 172;
+    final totalItems = isToday ? 15 : isWeek ? 60 : 180;
+    final onTimeCount = isToday ? 14 : isWeek ? 57 : 172;
     final onTimeRatePercent = ((onTimeCount / totalItems) * 100).round();
 
     final branchNameVal = _branchName.isNotEmpty ? _branchName : 'VSeyal';
@@ -214,41 +215,54 @@ class _RankCardPageState extends State<RankCardPage> {
     String gradeFor(int s) => s >= 90 ? 'Grade A+' : s >= 80 ? 'Grade A' : s >= 65 ? 'Grade B' : 'Grade C';
     String tagFor(int s) => s >= 90 ? '🌟 Star Performer' : s >= 80 ? '✅ Target Met' : s >= 65 ? '⚠️ Average' : '🚨 Needs Attention';
 
-    // 1. VSeyal Branch Active Waiters (Strictly only waiters active at VSeyal)
+    // 1. VSeyal Branch Active Waiters (Strictly only active waiters at VSeyal)
     final branchWaitersRaw = <Map<String, dynamic>>[
       {'name': _employeeName, 'score': avg, 'isCurrent': true, 'branchName': branchNameVal, 'companyName': companyNameVal},
       {'name': 'THIRUMAARAN', 'score': (avg >= 88 ? 85 : 91), 'isCurrent': false, 'branchName': branchNameVal, 'companyName': companyNameVal},
     ];
 
     // 2. Company Active Waiters (BlackForest Cakes branches)
+    // Dynamic by period (Today: 12 active who worked today; Week: 14 active; Month: 17 active)
     final companyWaitersRaw = <Map<String, dynamic>>[
       ...branchWaitersRaw,
+      {'name': 'JOSEPH', 'score': 96, 'isCurrent': false, 'branchName': 'ETP-Ettayapuram Road', 'companyName': 'BlackForest Cakes'},
+      {'name': 'Vijayalakshmi', 'score': 94, 'isCurrent': false, 'branchName': 'VVD', 'companyName': 'BlackForest Cakes'},
       {'name': 'Muthu', 'score': 93, 'isCurrent': false, 'branchName': 'ETP-Ettayapuram Road', 'companyName': 'BlackForest Cakes'},
-      {'name': 'VENKATESH BF', 'score': 96, 'isCurrent': false, 'branchName': 'ETP-Ettayapuram Road', 'companyName': 'BlackForest Cakes'},
       {'name': 'ANNALAKSHMI -CDM', 'score': 92, 'isCurrent': false, 'branchName': 'CHIDAMBARAM NAGAR', 'companyName': 'BlackForest Cakes'},
-      {'name': 'Muthuram', 'score': 90, 'isCurrent': false, 'branchName': 'Ettayapuram', 'companyName': 'BlackForest Cakes'},
-      {'name': 'INFANT', 'score': 88, 'isCurrent': false, 'branchName': 'VVD', 'companyName': 'BlackForest Cakes'},
-      {'name': 'RAVICHANDRAN -CDM', 'score': 87, 'isCurrent': false, 'branchName': 'CHIDAMBARAM NAGAR', 'companyName': 'BlackForest Cakes'},
-      {'name': 'Siva', 'score': 86, 'isCurrent': false, 'branchName': 'KMC', 'companyName': 'BlackForest Cakes'},
-      {'name': 'SERMA MUTHUESWARI- KMC', 'score': 85, 'isCurrent': false, 'branchName': 'KMC', 'companyName': 'BlackForest Cakes'},
-      {'name': 'Dhilip Kumar', 'score': 83, 'isCurrent': false, 'branchName': 'KMC', 'companyName': 'BlackForest Cakes'},
-      {'name': 'MOHAMED RIFAZ', 'score': 82, 'isCurrent': false, 'branchName': 'Alagar', 'companyName': 'BlackForest Cakes'},
-      {'name': 'MUTHURAJA', 'score': 80, 'isCurrent': false, 'branchName': 'Icing', 'companyName': 'BlackForest Cakes'},
-      {'name': 'Manikandan', 'score': 78, 'isCurrent': false, 'branchName': 'Alagar', 'companyName': 'BlackForest Cakes'},
+      {'name': 'Ajsh mon', 'score': 91, 'isCurrent': false, 'branchName': 'ETP-Ettayapuram Road', 'companyName': 'BlackForest Cakes'},
+      {'name': 'KARTHIKA', 'score': 89, 'isCurrent': false, 'branchName': 'ETP-Ettayapuram Road', 'companyName': 'BlackForest Cakes'},
+      {'name': 'SERMA MUTHUESWARI- KMC', 'score': 87, 'isCurrent': false, 'branchName': 'KMC', 'companyName': 'BlackForest Cakes'},
+      {'name': 'RAVICHANDRAN -CDM', 'score': 86, 'isCurrent': false, 'branchName': 'CHIDAMBARAM NAGAR', 'companyName': 'BlackForest Cakes'},
+      {'name': 'PREETHI', 'score': 85, 'isCurrent': false, 'branchName': 'ETP-Ettayapuram Road', 'companyName': 'BlackForest Cakes'},
+      {'name': 'Manikandan', 'score': 82, 'isCurrent': false, 'branchName': 'ETP-Ettayapuram Road', 'companyName': 'BlackForest Cakes'},
+      if (!isToday) ...[
+        {'name': 'SUGADEESH', 'score': 93, 'isCurrent': false, 'branchName': 'ETP-Ettayapuram Road', 'companyName': 'BlackForest Cakes'},
+        {'name': 'MUTHURAJA', 'score': 80, 'isCurrent': false, 'branchName': 'ETP-Ettayapuram Road', 'companyName': 'BlackForest Cakes'},
+      ],
+      if (!isToday && !isWeek) ...[
+        {'name': 'SANTHOSH- VVD', 'score': 80, 'isCurrent': false, 'branchName': 'VVD', 'companyName': 'BlackForest Cakes'},
+        {'name': 'SHAHIB', 'score': 78, 'isCurrent': false, 'branchName': 'ETP-Ettayapuram Road', 'companyName': 'BlackForest Cakes'},
+        {'name': 'Swathi', 'score': 77, 'isCurrent': false, 'branchName': 'KMC', 'companyName': 'BlackForest Cakes'},
+      ],
     ];
 
     // 3. Overall Active Waiters (All 3 companies: BlackForest Cakes, Thoothukudi Hotel, Thoothukudi Macroon)
+    // Dynamic by period (Today: 16 active; Week: 20 active; Month: 25 active)
     final overallWaitersRaw = <Map<String, dynamic>>[
       ...companyWaitersRaw,
-      {'name': 'MARIAPPAN', 'score': 95, 'isCurrent': false, 'branchName': 'TH1-THOOTHUKUDI HOTEL1', 'companyName': 'Thoothukudi Hotel'},
-      {'name': 'SETHU', 'score': 94, 'isCurrent': false, 'branchName': 'Thoothukudi hotel', 'companyName': 'Thoothukudi Hotel'},
-      {'name': 'VIPIN WAITER', 'score': 89, 'isCurrent': false, 'branchName': 'TH1-THOOTHUKUDI HOTEL1', 'companyName': 'Thoothukudi Hotel'},
-      {'name': 'KUMAR', 'score': 91, 'isCurrent': false, 'branchName': 'Pannai Veetu Samayal', 'companyName': 'Thoothukudi Hotel'},
-      {'name': 'ANTONY', 'score': 88, 'isCurrent': false, 'branchName': 'THOOTHUKUDI MACROON', 'companyName': 'Thoothukudi Macroon'},
-      {'name': 'Jeeva', 'score': 85, 'isCurrent': false, 'branchName': 'THOOTHUKUDI MACROON', 'companyName': 'Thoothukudi Macroon'},
-      {'name': 'BALA', 'score': 84, 'isCurrent': false, 'branchName': 'TH1-THOOTHUKUDI HOTEL1', 'companyName': 'Thoothukudi Hotel'},
-      {'name': 'MURUGESH', 'score': 79, 'isCurrent': false, 'branchName': 'THOOTHUKUDI MACROON', 'companyName': 'Thoothukudi Macroon'},
-      {'name': 'karthikeyann', 'score': 76, 'isCurrent': false, 'branchName': 'THOOTHUKUDI MACROON', 'companyName': 'Thoothukudi Macroon'},
+      {'name': 'Lakshmi', 'score': 95, 'isCurrent': false, 'branchName': 'TH1-THOOTHUKUDI HOTEL1', 'companyName': 'Thoothukudi Hotel'},
+      {'name': 'M.VENKATESH', 'score': 94, 'isCurrent': false, 'branchName': 'THOOTHUKUDI MACROON', 'companyName': 'Thoothukudi Macroon'},
+      {'name': 'Jeeva', 'score': 90, 'isCurrent': false, 'branchName': 'THOOTHUKUDI MACROON', 'companyName': 'Thoothukudi Macroon'},
+      {'name': 'ANANTHA MURUGAN', 'score': 88, 'isCurrent': false, 'branchName': 'THOOTHUKUDI MACROON', 'companyName': 'Thoothukudi Macroon'},
+      {'name': 'IKRAM', 'score': 84, 'isCurrent': false, 'branchName': 'TH1-THOOTHUKUDI HOTEL1', 'companyName': 'Thoothukudi Hotel'},
+      if (!isToday) ...[
+        {'name': 'palanisamy', 'score': 82, 'isCurrent': false, 'branchName': 'TH1-THOOTHUKUDI HOTEL1', 'companyName': 'Thoothukudi Hotel'},
+      ],
+      if (!isToday && !isWeek) ...[
+        {'name': 'GANESH KUMAR', 'score': 82, 'isCurrent': false, 'branchName': 'TH1-THOOTHUKUDI HOTEL1', 'companyName': 'Thoothukudi Hotel'},
+        {'name': 'MITHRA', 'score': 80, 'isCurrent': false, 'branchName': 'TH1-THOOTHUKUDI HOTEL1', 'companyName': 'Thoothukudi Hotel'},
+        {'name': 'karthikeyann', 'score': 78, 'isCurrent': false, 'branchName': 'THOOTHUKUDI MACROON', 'companyName': 'Thoothukudi Macroon'},
+      ],
     ];
 
     final totalMarksVal = (callScore + attScore + taskScore + billScore + kotScore);
@@ -370,7 +384,11 @@ class _RankCardPageState extends State<RankCardPage> {
           'maxMarks': 100,
           'score': attScore,
           'ratingLabel': '🟢 Perfect / On-Time',
-          'summary': '$presentDays shifts ($onTimeDays on-time, $lateDays late)',
+          'summary': isToday
+              ? '1 shift (1 on-time, 0 late, 100% attendance)'
+              : isWeek
+                  ? '$presentDays shifts ($onTimeDays on-time, $lateDays late, 100% attendance)'
+                  : '$presentDays shifts ($onTimeDays on-time, $lateDays late, $attendanceRate% attendance)',
         },
         {
           'id': 'rule-tasks',
@@ -388,7 +406,7 @@ class _RankCardPageState extends State<RankCardPage> {
           'maxMarks': 100,
           'score': billScore,
           'ratingLabel': '🟢 High Accuracy',
-          'summary': '$servedProducts/$totalProducts items served (98% accuracy)',
+          'summary': '$servedProducts/$totalProducts items served (${isToday ? 100 : 98}% accuracy)',
         },
         {
           'id': 'rule-kot-time',
@@ -1388,7 +1406,7 @@ class _RankCardPageState extends State<RankCardPage> {
       {
         'icon': '⏰',
         'title': 'Shift Attendance',
-        'subtitle': '$presentDays shifts • $attRate% attendance rate',
+        'subtitle': '${presentDays == 1 ? "1 shift" : "$presentDays shifts"} • $attRate% attendance rate',
         'mark': formatMark(attScore, attMax),
         'score': attScore,
         'maxMarks': attMax,
