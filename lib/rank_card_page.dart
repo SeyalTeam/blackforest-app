@@ -1428,24 +1428,24 @@ class _RankCardPageState extends State<RankCardPage> {
     final r6 = _reportData?['rule6TableBilling'] as Map<String, dynamic>?;
     final r7 = _reportData?['rule7CounterBilling'] as Map<String, dynamic>?;
 
-    final callSpeed = r1?['avgResponseSeconds'] != null ? '${r1!['avgResponseSeconds']}s' : '24s';
-    final under30s = r1?['under30sCount'] ?? 16;
-    final totalCalls = r1?['totalCalls'] ?? 18;
+    final callSpeed = r1?['avgResponseSeconds'] != null ? '${r1!['avgResponseSeconds']}s' : '0s';
+    final under30s = r1?['under30sCount'] ?? 0;
+    final totalCalls = r1?['totalCalls'] ?? 0;
 
-    final presentDays = r2?['presentDays'] ?? 25;
-    final attRate = r2?['attendanceRatePercent'] ?? 96;
+    final presentDays = r2?['presentDays'] ?? 0;
+    final attRate = r2?['attendanceRatePercent'] ?? 0;
 
-    final tasksDone = r3?['totalCompleted'] ?? 142;
-    final totalTasks = r3?['totalAssigned'] ?? 150;
-    final taskRate = r3?['completionRatePercent'] ?? 95;
+    final tasksDone = r3?['totalCompleted'] ?? 0;
+    final totalTasks = r3?['totalAssigned'] ?? 0;
+    final taskRate = r3?['completionRatePercent'] ?? 0;
 
-    final billingAcc = r4?['productAccuracyPercent'] ?? 98;
-    final servedProds = r4?['servedProducts'] ?? 342;
+    final billingAcc = r4?['productAccuracyPercent'] ?? 0;
+    final servedProds = r4?['servedProducts'] ?? 0;
 
     final kotAvg = r5?['avgDurationSeconds'] != null
         ? '${((r5!['avgDurationSeconds'] as num) / 60).toStringAsFixed(1)}m'
-        : '3.8m';
-    final kotRate = r5?['onTimeRatePercent'] ?? 95;
+        : '0m';
+    final kotRate = r5?['onTimeRatePercent'] ?? 0;
 
     final rulesList = _reportData?['rules'] as List<dynamic>? ?? [];
 
@@ -1498,50 +1498,41 @@ class _RankCardPageState extends State<RankCardPage> {
     }
 
     final callMax = resolveMaxMarks(ruleCall, r1);
-    final callScore = resolveScore(ruleCall, r1, callMax, 94);
+    final callScore = resolveScore(ruleCall, r1, callMax, 0);
 
     final attMax = resolveMaxMarks(ruleAtt, r2);
-    final attScore = resolveScore(ruleAtt, r2, attMax, 96);
+    final attScore = resolveScore(ruleAtt, r2, attMax, 0);
 
     final tasksMax = resolveMaxMarks(ruleTasks, r3);
-    final tasksScore = resolveScore(ruleTasks, r3, tasksMax, 92);
+    final tasksScore = resolveScore(ruleTasks, r3, tasksMax, 0);
 
     final billMax = resolveMaxMarks(ruleBilling, r4);
-    final billScore = resolveScore(ruleBilling, r4, billMax, 98);
+    final billScore = resolveScore(ruleBilling, r4, billMax, 0);
 
     final kotMax = resolveMaxMarks(ruleKot, r5);
-    final kotScore = resolveScore(ruleKot, r5, kotMax, 95);
-
-    final isToday = _selectedPeriod == 'today';
-    final isWeek = _selectedPeriod == 'week';
-
-    final defaultTableRev = isToday ? 3800 : isWeek ? 28500 : 134500;
-    final defaultTableBills = isToday ? 8 : isWeek ? 48 : 185;
-    final defaultTableAch = isToday ? 108 : isWeek ? 110 : 112;
-
-    final defaultCounterRev = isToday ? 2100 : isWeek ? 14500 : 58000;
-    final defaultCounterBills = isToday ? 6 : isWeek ? 32 : 110;
-    final defaultCounterAch = isToday ? 95 : isWeek ? 97 : 97;
+    final kotScore = resolveScore(ruleKot, r5, kotMax, 0);
 
     final tableMax = resolveMaxMarks(ruleTable, r6);
-    final tableScore = resolveScore(ruleTable, r6, tableMax, (r6 != null ? 0 : 91));
-    final tableRevenue = (r6?['totalRevenue'] as num?)?.toInt() ?? (r6 != null ? 0 : defaultTableRev);
-    final tableBills = (r6?['totalBills'] as num?)?.toInt() ?? (r6 != null ? 0 : defaultTableBills);
-    final tableAch = (r6?['achievementPercent'] as num?)?.round() ?? (r6 != null ? 0 : defaultTableAch);
+    final tableScore = resolveScore(ruleTable, r6, tableMax, 0);
+    final tableRevenue = (r6?['totalRevenue'] as num?)?.toInt() ?? 0;
+    final tableBills = (r6?['totalBills'] as num?)?.toInt() ?? 0;
+    final tableAch = (r6?['achievementPercent'] as num?)?.round() ?? 0;
     final tableRevStr = '₹${NumberFormat.decimalPattern('en_IN').format(tableRevenue)}';
 
     final counterMax = resolveMaxMarks(ruleCounter, r7);
-    final counterScore = resolveScore(ruleCounter, r7, counterMax, (r7 != null ? 0 : 88));
-    final counterRevenue = (r7?['totalRevenue'] as num?)?.toInt() ?? (r7 != null ? 0 : defaultCounterRev);
-    final counterBills = (r7?['totalBills'] as num?)?.toInt() ?? (r7 != null ? 0 : defaultCounterBills);
-    final counterAch = (r7?['achievementPercent'] as num?)?.round() ?? (r7 != null ? 0 : defaultCounterAch);
+    final counterScore = resolveScore(ruleCounter, r7, counterMax, 0);
+    final counterRevenue = (r7?['totalRevenue'] as num?)?.toInt() ?? 0;
+    final counterBills = (r7?['totalBills'] as num?)?.toInt() ?? 0;
+    final counterAch = (r7?['achievementPercent'] as num?)?.round() ?? 0;
     final counterRevStr = '₹${NumberFormat.decimalPattern('en_IN').format(counterRevenue)}';
 
     final items = [
       {
         'icon': '⚡',
         'title': 'Call Response SLA',
-        'subtitle': '$callSpeed avg • $under30s of $totalCalls calls < 30s',
+        'subtitle': totalCalls == 0
+            ? '0 calls received'
+            : '$callSpeed avg • $under30s of $totalCalls calls < 30s',
         'mark': formatMark(callScore, callMax),
         'score': callScore,
         'maxMarks': callMax,
@@ -1550,7 +1541,9 @@ class _RankCardPageState extends State<RankCardPage> {
       {
         'icon': '⏰',
         'title': 'Shift Attendance',
-        'subtitle': '${presentDays == 1 ? "1 shift" : "$presentDays shifts"} • $attRate% attendance rate',
+        'subtitle': presentDays == 0
+            ? '0 shifts • Not punched in'
+            : '${presentDays == 1 ? "1 shift" : "$presentDays shifts"} • $attRate% attendance rate',
         'mark': formatMark(attScore, attMax),
         'score': attScore,
         'maxMarks': attMax,
@@ -1559,7 +1552,9 @@ class _RankCardPageState extends State<RankCardPage> {
       {
         'icon': '📋',
         'title': 'Daily Tasks Checklist',
-        'subtitle': '$tasksDone of $totalTasks completed ($taskRate%)',
+        'subtitle': totalTasks == 0
+            ? '0 tasks recorded'
+            : '$tasksDone of $totalTasks completed ($taskRate%)',
         'mark': formatMark(tasksScore, tasksMax),
         'score': tasksScore,
         'maxMarks': tasksMax,
@@ -1568,7 +1563,9 @@ class _RankCardPageState extends State<RankCardPage> {
       {
         'icon': '🍽️',
         'title': 'Table Billing Accuracy',
-        'subtitle': '$servedProds items served • $billingAcc% accuracy',
+        'subtitle': servedProds == 0
+            ? '0 items served'
+            : '$servedProds items served • $billingAcc% accuracy',
         'mark': formatMark(billScore, billMax),
         'score': billScore,
         'maxMarks': billMax,
@@ -1577,7 +1574,9 @@ class _RankCardPageState extends State<RankCardPage> {
       {
         'icon': '⏱️',
         'title': 'KOT Table Delivery SLA',
-        'subtitle': '$kotAvg avg • $kotRate% delivered on-time',
+        'subtitle': (r5?['totalItems'] == null || r5?['totalItems'] == 0)
+            ? '0 KOT deliveries'
+            : '$kotAvg avg • $kotRate% delivered on-time',
         'mark': formatMark(kotScore, kotMax),
         'score': kotScore,
         'maxMarks': kotMax,
