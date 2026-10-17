@@ -250,6 +250,9 @@ class _RankCardPageState extends State<RankCardPage> {
       {'name': 'MURUGESH', 'score': 79, 'isCurrent': false, 'branchName': 'THOOTHUKUDI MACROON', 'companyName': 'Thoothukudi Macroon'},
     ];
 
+    final totalMarksVal = (callScore + attScore + taskScore + billScore + kotScore);
+    const totalMaxMarksVal = 500;
+
     List<Map<String, dynamic>> buildRanking(List<Map<String, dynamic>> raw) {
       final sorted = List<Map<String, dynamic>>.from(raw)
         ..sort((a, b) {
@@ -264,10 +267,13 @@ class _RankCardPageState extends State<RankCardPage> {
         final idx = entry.key;
         final item = entry.value;
         final score = item['score'] as int;
+        final pTotal = item['isCurrent'] == true ? totalMarksVal : ((score / 100) * totalMaxMarksVal).round();
         return {
           'rank': idx + 1,
           'name': item['name'],
           'score': score,
+          'totalScore': pTotal,
+          'totalMaxMarks': totalMaxMarksVal,
           'grade': gradeFor(score),
           'gradeTag': tagFor(score),
           'isCurrent': item['isCurrent'] == true,
@@ -293,6 +299,8 @@ class _RankCardPageState extends State<RankCardPage> {
       'month': monthStr,
       'period': period,
       'overallScore': avg,
+      'totalScore': totalMarksVal,
+      'totalMaxMarks': totalMaxMarksVal,
       'grade': grade,
       'gradeTag': gradeTag,
       'recommendation': recommendation,
@@ -976,6 +984,18 @@ class _RankCardPageState extends State<RankCardPage> {
   // ---------------------------------------------------------------------------
   Widget _buildHeroRankBanner() {
     final overallScore = (_reportData?['overallScore'] ?? 0) as num;
+    final rules = _reportData?['rules'] as List<dynamic>? ?? [];
+    final totalScore = _reportData?['totalScore'] != null
+        ? (_reportData!['totalScore'] as num)
+        : (rules.isNotEmpty
+            ? rules.fold<num>(0, (sum, r) => sum + ((r is Map ? r['score'] : 0) as num? ?? 0))
+            : (overallScore * 5).round());
+    final totalMax = _reportData?['totalMaxMarks'] != null
+        ? (_reportData!['totalMaxMarks'] as num)
+        : (rules.isNotEmpty
+            ? rules.fold<num>(0, (sum, r) => sum + ((r is Map ? r['maxMarks'] : 100) as num? ?? 100))
+            : 500);
+    final scoreStr = totalScore % 1 == 0 ? totalScore.toInt().toString() : totalScore.toStringAsFixed(1);
     final grade = _reportData?['grade']?.toString() ?? 'Grade A';
     final gradeTag = _reportData?['gradeTag']?.toString() ?? '🌟 Star Performer';
 
@@ -1176,7 +1196,7 @@ class _RankCardPageState extends State<RankCardPage> {
                     ),
                   ),
                   Text(
-                    '$overallScore',
+                    scoreStr,
                     style: TextStyle(
                       color: scoreColor,
                       fontSize: 26,
@@ -1184,11 +1204,20 @@ class _RankCardPageState extends State<RankCardPage> {
                       letterSpacing: -0.5,
                     ),
                   ),
-                  const Text(
-                    ' / 100',
+                  Text(
+                    ' / $totalMax',
+                    style: const TextStyle(
+                      color: Color(0xFF94A3B8),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    '($overallScore%)',
                     style: TextStyle(
-                      color: Color(0xFF64748B),
-                      fontSize: 12,
+                      color: scoreColor.withValues(alpha: 0.9),
+                      fontSize: 11,
                       fontWeight: FontWeight.w700,
                     ),
                   ),
@@ -1398,16 +1427,44 @@ class _RankCardPageState extends State<RankCardPage> {
       },
     ];
 
+    final totalHighlightsScore = (callScore + attScore + tasksScore + billScore + kotScore);
+    final totalHighlightsMax = (callMax + attMax + tasksMax + billMax + kotMax);
+    final totalHighlightsScoreStr = totalHighlightsScore % 1 == 0
+        ? totalHighlightsScore.toInt().toString()
+        : totalHighlightsScore.toStringAsFixed(1);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Operational Highlights',
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w800,
-            color: Color(0xFF0F172A),
-          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            const Text(
+              'Operational Highlights',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF0F172A),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFFEFF6FF),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: const Color(0xFFBFDBFE)),
+              ),
+              child: Text(
+                'Total: $totalHighlightsScoreStr / $totalHighlightsMax',
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF1D4ED8),
+                ),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 8),
         Container(
@@ -1540,6 +1597,15 @@ class _RankCardPageState extends State<RankCardPage> {
     final userRank = activeScopeData?['rank'] ?? _reportData?['rank'] ?? 1;
     final totalRanked = activeScopeData?['totalRanked'] ?? _reportData?['totalRanked'] ?? rankingList.length;
     final userOverallScore = (_reportData?['overallScore'] ?? 0) as num;
+    final userTotalScore = _reportData?['totalScore'] != null
+        ? (_reportData!['totalScore'] as num)
+        : (userOverallScore * 5).round();
+    final userTotalMax = _reportData?['totalMaxMarks'] != null
+        ? (_reportData!['totalMaxMarks'] as num)
+        : 500;
+    final userTotalScoreStr = userTotalScore % 1 == 0
+        ? userTotalScore.toInt().toString()
+        : userTotalScore.toStringAsFixed(1);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1751,7 +1817,7 @@ class _RankCardPageState extends State<RankCardPage> {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      '$userOverallScore pts',
+                      '$userTotalScoreStr / $userTotalMax',
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w900,
@@ -1759,7 +1825,7 @@ class _RankCardPageState extends State<RankCardPage> {
                       ),
                     ),
                     Text(
-                      _reportData?['grade']?.toString() ?? 'Grade A',
+                      '${userOverallScore.round()}% • ${_reportData?['grade']?.toString() ?? 'Grade A'}',
                       style: const TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.w700,
@@ -2059,26 +2125,38 @@ class _RankCardPageState extends State<RankCardPage> {
                         ),
 
                         // Grade + Score
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              '$score pts',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w800,
-                                color: _getScoreColor(score),
-                              ),
-                            ),
-                            Text(
-                              peerGrade,
-                              style: const TextStyle(
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF94A3B8),
-                              ),
-                            ),
-                          ],
+                        Builder(
+                          builder: (context) {
+                            final peerTotalScore = peer['totalScore'] != null
+                                ? (peer['totalScore'] as num)
+                                : ((score / 100) * userTotalMax).round();
+                            final peerTotalMax = (peer['totalMaxMarks'] as num?) ?? userTotalMax;
+                            final pScoreStr = peerTotalScore % 1 == 0
+                                ? peerTotalScore.toInt().toString()
+                                : peerTotalScore.toStringAsFixed(1);
+
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Text(
+                                  '$pScoreStr / $peerTotalMax',
+                                  style: TextStyle(
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w800,
+                                    color: _getScoreColor(score),
+                                  ),
+                                ),
+                                Text(
+                                  '${score.round()}% • $peerGrade',
+                                  style: const TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF94A3B8),
+                                  ),
+                                ),
+                              ],
+                            );
+                          },
                         ),
                       ],
                     ),
