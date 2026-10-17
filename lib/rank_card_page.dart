@@ -1524,17 +1524,17 @@ class _RankCardPageState extends State<RankCardPage> {
     final defaultCounterAch = isToday ? 95 : isWeek ? 97 : 97;
 
     final tableMax = resolveMaxMarks(ruleTable, r6);
-    final tableScore = resolveScore(ruleTable, r6, tableMax, 91);
-    final tableRevenue = (r6?['totalRevenue'] as num?)?.toInt() ?? defaultTableRev;
-    final tableBills = (r6?['totalBills'] as num?)?.toInt() ?? defaultTableBills;
-    final tableAch = (r6?['achievementPercent'] as num?)?.round() ?? defaultTableAch;
+    final tableScore = resolveScore(ruleTable, r6, tableMax, (r6 != null ? 0 : 91));
+    final tableRevenue = (r6?['totalRevenue'] as num?)?.toInt() ?? (r6 != null ? 0 : defaultTableRev);
+    final tableBills = (r6?['totalBills'] as num?)?.toInt() ?? (r6 != null ? 0 : defaultTableBills);
+    final tableAch = (r6?['achievementPercent'] as num?)?.round() ?? (r6 != null ? 0 : defaultTableAch);
     final tableRevStr = '₹${NumberFormat.decimalPattern('en_IN').format(tableRevenue)}';
 
     final counterMax = resolveMaxMarks(ruleCounter, r7);
-    final counterScore = resolveScore(ruleCounter, r7, counterMax, 88);
-    final counterRevenue = (r7?['totalRevenue'] as num?)?.toInt() ?? defaultCounterRev;
-    final counterBills = (r7?['totalBills'] as num?)?.toInt() ?? defaultCounterBills;
-    final counterAch = (r7?['achievementPercent'] as num?)?.round() ?? defaultCounterAch;
+    final counterScore = resolveScore(ruleCounter, r7, counterMax, (r7 != null ? 0 : 88));
+    final counterRevenue = (r7?['totalRevenue'] as num?)?.toInt() ?? (r7 != null ? 0 : defaultCounterRev);
+    final counterBills = (r7?['totalBills'] as num?)?.toInt() ?? (r7 != null ? 0 : defaultCounterBills);
+    final counterAch = (r7?['achievementPercent'] as num?)?.round() ?? (r7 != null ? 0 : defaultCounterAch);
     final counterRevStr = '₹${NumberFormat.decimalPattern('en_IN').format(counterRevenue)}';
 
     final items = [
@@ -1586,7 +1586,9 @@ class _RankCardPageState extends State<RankCardPage> {
       {
         'icon': '🍽️',
         'title': 'Table Order Sales SLA',
-        'subtitle': '$tableRevStr across $tableBills tables • $tableAch% achieved',
+        'subtitle': tableBills == 0
+            ? '₹0 • 0 tables billed'
+            : '$tableRevStr across $tableBills tables • $tableAch% achieved',
         'mark': formatMark(tableScore, tableMax),
         'score': tableScore,
         'maxMarks': tableMax,
@@ -1595,7 +1597,9 @@ class _RankCardPageState extends State<RankCardPage> {
       {
         'icon': '🛍️',
         'title': 'Counter Bill Sales SLA',
-        'subtitle': '$counterRevStr across $counterBills bills • $counterAch% achieved',
+        'subtitle': counterBills == 0
+            ? '₹0 • 0 counter bills'
+            : '$counterRevStr across $counterBills bills • $counterAch% achieved',
         'mark': formatMark(counterScore, counterMax),
         'score': counterScore,
         'maxMarks': counterMax,
