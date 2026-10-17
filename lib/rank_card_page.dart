@@ -163,8 +163,12 @@ class _RankCardPageState extends State<RankCardPage> {
     final taskScore = (91 + (seed % 8)).clamp(70, 100);
     final billScore = (94 + (seed % 5)).clamp(75, 100);
     final kotScore = (90 + (seed % 9)).clamp(70, 100);
+    final tableScore = (91 + (seed % 9)).clamp(75, 100);
+    final counterScore = (88 + (seed % 11)).clamp(70, 100);
 
-    final avg = ((callScore + attScore + taskScore + billScore + kotScore) / 5).round();
+    final totalMarksVal = (callScore + attScore + taskScore + billScore + kotScore + tableScore + counterScore);
+    const totalMaxMarksVal = 700;
+    final avg = (totalMarksVal / 7).round();
 
     String grade = 'Grade A';
     String gradeTag = '✅ Target Met';
@@ -208,6 +212,24 @@ class _RankCardPageState extends State<RankCardPage> {
     final totalItems = isToday ? 15 : isWeek ? 60 : 180;
     final onTimeCount = isToday ? 14 : isWeek ? 57 : 172;
     final onTimeRatePercent = ((onTimeCount / totalItems) * 100).round();
+
+    final tableBills = isToday ? (8 + (seed % 4)) : isWeek ? (48 + (seed % 10)) : (185 + (seed % 25));
+    final tableRevenue = isToday
+        ? (3800 + (seed % 1200))
+        : isWeek
+            ? (28500 + (seed % 5000))
+            : (134500 + (seed % 20000));
+    final branchTableBenchmark = isToday ? 3500 : isWeek ? 26000 : 120000;
+    final tableAchPercent = ((tableRevenue / branchTableBenchmark) * 100).round();
+
+    final counterBills = isToday ? (6 + (seed % 3)) : isWeek ? (32 + (seed % 8)) : (110 + (seed % 20));
+    final counterRevenue = isToday
+        ? (2100 + (seed % 800))
+        : isWeek
+            ? (14500 + (seed % 3000))
+            : (58000 + (seed % 10000));
+    final branchCounterBenchmark = isToday ? 2200 : isWeek ? 15000 : 60000;
+    final counterAchPercent = ((counterRevenue / branchCounterBenchmark) * 100).round();
 
     final branchNameVal = _branchName.isNotEmpty ? _branchName : 'VSeyal';
     final companyNameVal = _companyName.isNotEmpty ? _companyName : 'BlackForest Cakes';
@@ -264,9 +286,6 @@ class _RankCardPageState extends State<RankCardPage> {
         {'name': 'karthikeyann', 'score': 78, 'isCurrent': false, 'branchName': 'THOOTHUKUDI MACROON', 'companyName': 'Thoothukudi Macroon'},
       ],
     ];
-
-    final totalMarksVal = (callScore + attScore + taskScore + billScore + kotScore);
-    const totalMaxMarksVal = 500;
 
     List<Map<String, dynamic>> buildRanking(List<Map<String, dynamic>> raw) {
       final sorted = List<Map<String, dynamic>>.from(raw)
@@ -367,6 +386,26 @@ class _RankCardPageState extends State<RankCardPage> {
         'targetDurationSeconds': 300,
         'ratingLabel': '🟢 Fast Table Delivery (< 5m)',
       },
+      'rule6TableBilling': {
+        'ruleTitle': '🍽️ Table Order Billing & Revenue SLA',
+        'score': tableScore,
+        'totalBills': tableBills,
+        'totalRevenue': tableRevenue,
+        'branchBenchmarkRevenue': branchTableBenchmark,
+        'achievementPercent': tableAchPercent,
+        'alertTag': tableScore >= 95 ? '🌟 Star Contributor' : '🟢 Target Met',
+        'ratingLabel': tableScore >= 95 ? '🌟 Star Contributor' : '🟢 Target Met',
+      },
+      'rule7CounterBilling': {
+        'ruleTitle': '🛍️ Counter Bill (Non-Table KOT) Revenue SLA',
+        'score': counterScore,
+        'totalBills': counterBills,
+        'totalRevenue': counterRevenue,
+        'branchBenchmarkRevenue': branchCounterBenchmark,
+        'achievementPercent': counterAchPercent,
+        'alertTag': counterScore >= 95 ? '🌟 Star Contributor' : '🟢 Target Met',
+        'ratingLabel': counterScore >= 95 ? '🌟 Star Contributor' : '🟢 Target Met',
+      },
       'rules': [
         {
           'id': 'rule-call-speed',
@@ -416,6 +455,24 @@ class _RankCardPageState extends State<RankCardPage> {
           'score': kotScore,
           'ratingLabel': '🟢 Fast Table Delivery (< 5m)',
           'summary': '$onTimeCount/$totalItems delivered < 5m ($onTimeRatePercent% SLA adherence)',
+        },
+        {
+          'id': 'rule-billing-table',
+          'title': '🍽️ Table Order Billing & Revenue SLA',
+          'category': 'billing_table',
+          'maxMarks': 100,
+          'score': tableScore,
+          'ratingLabel': tableScore >= 95 ? '🌟 Star Contributor' : '🟢 Target Met',
+          'summary': '₹${NumberFormat.decimalPattern('en_IN').format(tableRevenue)} from $tableBills tables • $tableAchPercent% benchmark',
+        },
+        {
+          'id': 'rule-billing-counter',
+          'title': '🛍️ Counter Bill (Non-Table KOT) Revenue SLA',
+          'category': 'billing_counter',
+          'maxMarks': 100,
+          'score': counterScore,
+          'ratingLabel': counterScore >= 95 ? '🌟 Star Contributor' : '🟢 Target Met',
+          'summary': '₹${NumberFormat.decimalPattern('en_IN').format(counterRevenue)} from $counterBills counter bills • $counterAchPercent% benchmark',
         },
       ],
       'companyName': companyNameVal,
@@ -1004,16 +1061,16 @@ class _RankCardPageState extends State<RankCardPage> {
   Widget _buildHeroRankBanner() {
     final overallScore = (_reportData?['overallScore'] ?? 0) as num;
     final rules = _reportData?['rules'] as List<dynamic>? ?? [];
-    final totalScore = _reportData?['totalScore'] != null
-        ? (_reportData!['totalScore'] as num)
-        : (rules.isNotEmpty
-            ? rules.fold<num>(0, (sum, r) => sum + ((r is Map ? r['score'] : 0) as num? ?? 0))
-            : (overallScore * 5).round());
     final totalMax = _reportData?['totalMaxMarks'] != null
         ? (_reportData!['totalMaxMarks'] as num)
         : (rules.isNotEmpty
             ? rules.fold<num>(0, (sum, r) => sum + ((r is Map ? r['maxMarks'] : 100) as num? ?? 100))
-            : 500);
+            : 700);
+    final totalScore = _reportData?['totalScore'] != null
+        ? (_reportData!['totalScore'] as num)
+        : (rules.isNotEmpty
+            ? rules.fold<num>(0, (sum, r) => sum + ((r is Map ? r['score'] : 0) as num? ?? 0))
+            : ((overallScore / 100) * totalMax).round());
     final scoreStr = totalScore % 1 == 0 ? totalScore.toInt().toString() : totalScore.toStringAsFixed(1);
     final grade = _reportData?['grade']?.toString() ?? 'Grade A';
     final gradeTag = _reportData?['gradeTag']?.toString() ?? '🌟 Star Performer';
@@ -1310,6 +1367,8 @@ class _RankCardPageState extends State<RankCardPage> {
     final r3 = _reportData?['rule3Tasks'] as Map<String, dynamic>?;
     final r4 = _reportData?['rule4Billing'] as Map<String, dynamic>?;
     final r5 = _reportData?['rule5KotTime'] as Map<String, dynamic>?;
+    final r6 = _reportData?['rule6TableBilling'] as Map<String, dynamic>?;
+    final r7 = _reportData?['rule7CounterBilling'] as Map<String, dynamic>?;
 
     final callSpeed = r1?['avgResponseSeconds'] != null ? '${r1!['avgResponseSeconds']}s' : '24s';
     final under30s = r1?['under30sCount'] ?? 16;
@@ -1346,6 +1405,8 @@ class _RankCardPageState extends State<RankCardPage> {
     final ruleTasks = findRule('tasks');
     final ruleBilling = findRule('billing');
     final ruleKot = findRule('kot_time');
+    final ruleTable = findRule('billing_table');
+    final ruleCounter = findRule('billing_counter');
 
     int resolveMaxMarks(Map<String, dynamic>? rule, Map<String, dynamic>? ruleObj) {
       if (rule != null && rule['maxMarks'] is num) {
@@ -1393,6 +1454,20 @@ class _RankCardPageState extends State<RankCardPage> {
     final kotMax = resolveMaxMarks(ruleKot, r5);
     final kotScore = resolveScore(ruleKot, r5, kotMax, 95);
 
+    final tableMax = resolveMaxMarks(ruleTable, r6);
+    final tableScore = resolveScore(ruleTable, r6, tableMax, 91);
+    final tableRevenue = (r6?['totalRevenue'] as num?)?.toInt() ?? 134500;
+    final tableBills = (r6?['totalBills'] as num?)?.toInt() ?? 185;
+    final tableAch = (r6?['achievementPercent'] as num?)?.round() ?? 112;
+    final tableRevStr = '₹${NumberFormat.decimalPattern('en_IN').format(tableRevenue)}';
+
+    final counterMax = resolveMaxMarks(ruleCounter, r7);
+    final counterScore = resolveScore(ruleCounter, r7, counterMax, 88);
+    final counterRevenue = (r7?['totalRevenue'] as num?)?.toInt() ?? 58000;
+    final counterBills = (r7?['totalBills'] as num?)?.toInt() ?? 110;
+    final counterAch = (r7?['achievementPercent'] as num?)?.round() ?? 97;
+    final counterRevStr = '₹${NumberFormat.decimalPattern('en_IN').format(counterRevenue)}';
+
     final items = [
       {
         'icon': '⚡',
@@ -1439,10 +1514,30 @@ class _RankCardPageState extends State<RankCardPage> {
         'maxMarks': kotMax,
         'color': _getScoreColor(kotScore, kotMax),
       },
+      if (ruleTable != null || r6 != null)
+        {
+          'icon': '🍽️',
+          'title': 'Table Order Sales SLA',
+          'subtitle': '$tableRevStr across $tableBills tables • $tableAch% achieved',
+          'mark': formatMark(tableScore, tableMax),
+          'score': tableScore,
+          'maxMarks': tableMax,
+          'color': _getScoreColor(tableScore, tableMax),
+        },
+      if (ruleCounter != null || r7 != null)
+        {
+          'icon': '🛍️',
+          'title': 'Counter Bill Sales SLA',
+          'subtitle': '$counterRevStr across $counterBills bills • $counterAch% achieved',
+          'mark': formatMark(counterScore, counterMax),
+          'score': counterScore,
+          'maxMarks': counterMax,
+          'color': _getScoreColor(counterScore, counterMax),
+        },
     ];
 
-    final totalHighlightsScore = (callScore + attScore + tasksScore + billScore + kotScore);
-    final totalHighlightsMax = (callMax + attMax + tasksMax + billMax + kotMax);
+    final totalHighlightsScore = items.fold<num>(0, (sum, it) => sum + (it['score'] as num));
+    final totalHighlightsMax = items.fold<int>(0, (sum, it) => sum + (it['maxMarks'] as int));
     final totalHighlightsScoreStr = totalHighlightsScore % 1 == 0
         ? totalHighlightsScore.toInt().toString()
         : totalHighlightsScore.toStringAsFixed(1);
@@ -1617,12 +1712,17 @@ class _RankCardPageState extends State<RankCardPage> {
     final userRank = activeScopeData?['rank'] ?? _reportData?['rank'] ?? 1;
     final totalRanked = activeScopeData?['totalRanked'] ?? _reportData?['totalRanked'] ?? rankingList.length;
     final userOverallScore = (_reportData?['overallScore'] ?? 0) as num;
-    final userTotalScore = _reportData?['totalScore'] != null
-        ? (_reportData!['totalScore'] as num)
-        : (userOverallScore * 5).round();
+    final rules = _reportData?['rules'] as List<dynamic>? ?? [];
     final userTotalMax = _reportData?['totalMaxMarks'] != null
         ? (_reportData!['totalMaxMarks'] as num)
-        : 500;
+        : (rules.isNotEmpty
+            ? rules.fold<num>(0, (sum, r) => sum + ((r is Map ? r['maxMarks'] : 100) as num? ?? 100))
+            : 700);
+    final userTotalScore = _reportData?['totalScore'] != null
+        ? (_reportData!['totalScore'] as num)
+        : (rules.isNotEmpty
+            ? rules.fold<num>(0, (sum, r) => sum + ((r is Map ? r['score'] : 0) as num? ?? 0))
+            : ((userOverallScore / 100) * userTotalMax).round());
     final userTotalScoreStr = userTotalScore % 1 == 0
         ? userTotalScore.toInt().toString()
         : userTotalScore.toStringAsFixed(1);
