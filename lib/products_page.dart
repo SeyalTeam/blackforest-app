@@ -1417,7 +1417,7 @@ class _ProductsPageState extends State<ProductsPage> {
                 final status = item['status'];
                 if (status == 'inactive') return false;
                 if (item['isAvailable'] == false) return false;
-                if (item['isOutOfStock'] == true) return false;
+                if (item['isOutOfStock'] == true && item['allowZeroStockBilling'] != true) return false;
                 return true;
               })
               .toList(growable: false);
@@ -2067,9 +2067,12 @@ class _ProductsPageState extends State<ProductsPage> {
     final productId = _productId(product);
     if (productId.isEmpty) return;
 
+    final allowZeroStockBilling = product['allowZeroStockBilling'] == true;
     final isOutOfStock = product['isOutOfStock'] == true;
     final stockVal = product['stock'];
-    if (isOutOfStock || (stockVal != null && (num.tryParse(stockVal.toString()) ?? 0) <= 0)) {
+    final isZeroStock = (stockVal != null && (num.tryParse(stockVal.toString()) ?? 0) <= 0);
+
+    if (!allowZeroStockBilling && (isOutOfStock || isZeroStock)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
