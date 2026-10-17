@@ -418,25 +418,18 @@ class _RankCardPageState extends State<RankCardPage> {
                 )
               else if (_reportData != null) ...[
                 // ---------------------------------------------------------------
-                // Hero Rank Card Banner
+                // Hero Rank Card Banner (Reduced Height)
                 // ---------------------------------------------------------------
                 _buildHeroRankBanner(),
 
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
 
                 // ---------------------------------------------------------------
-                // Supervisor Recommendation Note
-                // ---------------------------------------------------------------
-                _buildSupervisorNote(),
-
-                const SizedBox(height: 20),
-
-                // ---------------------------------------------------------------
-                // Monthly Operational Highlights Grid
+                // Monthly Operational Highlights (Row-by-Row List)
                 // ---------------------------------------------------------------
                 _buildOperationalHighlights(),
 
-                const SizedBox(height: 24),
+                const SizedBox(height: 20),
 
                 // ---------------------------------------------------------------
                 // Report Card Rules Breakdown
@@ -536,7 +529,7 @@ class _RankCardPageState extends State<RankCardPage> {
   }
 
   // ---------------------------------------------------------------------------
-  // Hero Rank Banner (Dark Modern Card with Gold Trophy & Score Meter)
+  // Hero Rank Banner (Compact Modern Card with Reduced Height)
   // ---------------------------------------------------------------------------
   Widget _buildHeroRankBanner() {
     final overallScore = (_reportData?['overallScore'] ?? 0) as num;
@@ -548,7 +541,7 @@ class _RankCardPageState extends State<RankCardPage> {
 
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
@@ -558,45 +551,45 @@ class _RankCardPageState extends State<RankCardPage> {
             Color(0xFF0F172A), // Slate 900
           ],
         ),
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0F172A).withValues(alpha: 0.25),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
+            color: const Color(0xFF0F172A).withValues(alpha: 0.18),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
           ),
         ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Row 1: Profile info + Rank Badge
+          // Row 1: Profile info + Compact Rank Badge
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               // Avatar
               Container(
-                width: 54,
-                height: 54,
+                width: 42,
+                height: 42,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: const Color(0xFFD97706).withValues(alpha: 0.25),
-                  border: Border.all(color: const Color(0xFFFFB300), width: 2),
+                  border: Border.all(color: const Color(0xFFFFB300), width: 1.5),
                 ),
                 alignment: Alignment.center,
                 child: _photoUrl != null && _photoUrl!.isNotEmpty
                     ? ClipOval(
                         child: Image.network(
                           _photoUrl!,
-                          width: 50,
-                          height: 50,
+                          width: 40,
+                          height: 40,
                           fit: BoxFit.cover,
                           errorBuilder: (_, __, ___) => _buildAvatarInitial(),
                         ),
                       )
                     : _buildAvatarInitial(),
               ),
-              const SizedBox(width: 14),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -605,95 +598,95 @@ class _RankCardPageState extends State<RankCardPage> {
                       _employeeName,
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 18,
+                        fontSize: 16,
                         fontWeight: FontWeight.w800,
-                        letterSpacing: -0.3,
+                        letterSpacing: -0.2,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
-                    const SizedBox(height: 4),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 4,
+                    const SizedBox(height: 3),
+                    Row(
                       children: [
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
                           decoration: BoxDecoration(
                             color: const Color(0xFFD97706),
-                            borderRadius: BorderRadius.circular(6),
+                            borderRadius: BorderRadius.circular(4),
                           ),
                           child: Text(
                             _employeeRole.toUpperCase(),
                             style: const TextStyle(
                               color: Colors.white,
-                              fontSize: 10,
+                              fontSize: 9.5,
                               fontWeight: FontWeight.w800,
-                              letterSpacing: 0.5,
+                              letterSpacing: 0.4,
                             ),
                           ),
                         ),
-                        if (_employeeCode.isNotEmpty)
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF334155),
-                              borderRadius: BorderRadius.circular(6),
-                            ),
-                            child: Text(
-                              'ID: $_employeeCode',
-                              style: const TextStyle(
-                                color: Color(0xFFE2E8F0),
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ),
-                        if (_branchName.isNotEmpty)
+                        if (_employeeCode.isNotEmpty) ...[
+                          const SizedBox(width: 6),
                           Text(
-                            '• $_branchName',
+                            'ID: $_employeeCode',
                             style: const TextStyle(
-                              color: Color(0xFF94A3B8),
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
+                              color: Color(0xFFCBD5E1),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
+                        ],
+                        if (_branchName.isNotEmpty) ...[
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              '• $_branchName',
+                              style: const TextStyle(
+                                color: Color(0xFF94A3B8),
+                                fontSize: 11,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ],
                 ),
               ),
 
-              // Rank Pill (Trophy)
+              // Compact Rank Badge
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
                   gradient: const LinearGradient(
                     colors: [Color(0xFFF59E0B), Color(0xFFD97706)],
                   ),
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: const Color(0xFFD97706).withValues(alpha: 0.4),
-                      blurRadius: 8,
-                      offset: const Offset(0, 3),
+                      color: const Color(0xFFD97706).withValues(alpha: 0.3),
+                      blurRadius: 6,
+                      offset: const Offset(0, 2),
                     ),
                   ],
                 ),
-                child: Column(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.emoji_events, color: Colors.white, size: 20),
-                    const SizedBox(height: 2),
+                    const Icon(Icons.emoji_events, color: Colors.white, size: 16),
+                    const SizedBox(width: 5),
                     Text(
                       'Rank #$rank',
                       style: const TextStyle(
                         color: Colors.white,
-                        fontSize: 13,
+                        fontSize: 12.5,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
                     Text(
-                      'of $totalRanked',
+                      ' / $totalRanked',
                       style: const TextStyle(
                         color: Color(0xFFFEF3C7),
                         fontSize: 10,
@@ -706,81 +699,74 @@ class _RankCardPageState extends State<RankCardPage> {
             ],
           ),
 
-          const SizedBox(height: 20),
+          const SizedBox(height: 10),
           const Divider(color: Color(0xFF334155), height: 1),
-          const SizedBox(height: 18),
+          const SizedBox(height: 10),
 
-          // Row 2: Score Meter & Grade Banner
+          // Row 2: Score & Grade
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            crossAxisAlignment: CrossAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
                 children: [
                   const Text(
-                    'MONTHLY OVERALL SCORE',
+                    'Score: ',
                     style: TextStyle(
                       color: Color(0xFF94A3B8),
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
-                      letterSpacing: 0.6,
+                      letterSpacing: 0.5,
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.baseline,
-                    textBaseline: TextBaseline.alphabetic,
-                    children: [
-                      Text(
-                        '$overallScore',
-                        style: TextStyle(
-                          color: scoreColor,
-                          fontSize: 42,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: -1,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      const Text(
-                        '/ 100',
-                        style: TextStyle(
-                          color: Color(0xFF64748B),
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
+                  Text(
+                    '$overallScore',
+                    style: TextStyle(
+                      color: scoreColor,
+                      fontSize: 26,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+                  const Text(
+                    ' / 100',
+                    style: TextStyle(
+                      color: Color(0xFF64748B),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ],
               ),
 
-              // Grade Tag
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+              // Grade badge & tag
+              Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(
                       color: scoreColor.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(6),
                       border: Border.all(color: scoreColor.withValues(alpha: 0.4)),
                     ),
                     child: Text(
                       grade,
                       style: TextStyle(
                         color: scoreColor,
-                        fontSize: 14,
+                        fontSize: 11.5,
                         fontWeight: FontWeight.w800,
                       ),
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(width: 6),
                   Text(
                     gradeTag,
                     style: const TextStyle(
                       color: Color(0xFFE2E8F0),
-                      fontSize: 12,
+                      fontSize: 11.5,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
@@ -789,14 +775,14 @@ class _RankCardPageState extends State<RankCardPage> {
             ],
           ),
 
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
 
-          // Linear Progress Bar
+          // Thin Progress Bar
           ClipRRect(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
               value: (overallScore / 100).clamp(0.0, 1.0),
-              minHeight: 8,
+              minHeight: 5,
               backgroundColor: const Color(0xFF334155),
               valueColor: AlwaysStoppedAnimation<Color>(scoreColor),
             ),
@@ -812,57 +798,14 @@ class _RankCardPageState extends State<RankCardPage> {
       initial,
       style: const TextStyle(
         color: Color(0xFFFFB300),
-        fontSize: 22,
+        fontSize: 18,
         fontWeight: FontWeight.w800,
       ),
     );
   }
 
   // ---------------------------------------------------------------------------
-  // Supervisor Recommendation Card
-  // ---------------------------------------------------------------------------
-  Widget _buildSupervisorNote() {
-    final note = _reportData?['recommendation']?.toString() ??
-        'Consistent role performance across punctuality and operational standards.';
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFEF3C7).withValues(alpha: 0.6), // Light Amber
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFFDE68A)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('💡', style: TextStyle(fontSize: 18)),
-          const SizedBox(width: 10),
-          Expanded(
-            child: RichText(
-              text: TextSpan(
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: Color(0xFF92400E),
-                  height: 1.4,
-                ),
-                children: [
-                  const TextSpan(
-                    text: 'Supervisor Assessment: ',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  TextSpan(text: note),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ---------------------------------------------------------------------------
-  // Operational Highlights Grid
+  // Operational Highlights (Short Row-by-Row List)
   // ---------------------------------------------------------------------------
   Widget _buildOperationalHighlights() {
     final r1 = _reportData?['rule1CallSpeed'] as Map<String, dynamic>?;
@@ -892,37 +835,37 @@ class _RankCardPageState extends State<RankCardPage> {
     final items = [
       {
         'icon': '⚡',
-        'title': 'Call Response',
+        'title': 'Call Response SLA',
+        'subtitle': '$under30s of $totalCalls calls < 30s',
         'value': callSpeed,
-        'subtitle': '$under30s / $totalCalls < 30s',
         'color': const Color(0xFF059669),
       },
       {
         'icon': '⏰',
-        'title': 'Attendance',
+        'title': 'Shift Attendance',
+        'subtitle': '$presentDays shifts ($attRate% rate)',
         'value': '$presentDays Shifts',
-        'subtitle': '$attRate% month rate',
         'color': const Color(0xFF2563EB),
       },
       {
         'icon': '📋',
-        'title': 'Daily Tasks',
+        'title': 'Daily Tasks Checklist',
+        'subtitle': '$tasksDone of ${r3?['totalAssigned'] ?? 150} completed ($taskRate%)',
         'value': '$tasksDone Done',
-        'subtitle': '$taskRate% compliance',
         'color': const Color(0xFF7C3AED),
       },
       {
         'icon': '🍽️',
-        'title': 'Table Service',
+        'title': 'Table Billing Accuracy',
+        'subtitle': '$servedProds items served',
         'value': '$billingAcc%',
-        'subtitle': '$servedProds served items',
         'color': const Color(0xFFD97706),
       },
       {
         'icon': '⏱️',
-        'title': 'KOT Delivery',
+        'title': 'KOT Table Delivery SLA',
+        'subtitle': '$kotRate% delivered within 5m SLA',
         'value': kotAvg,
-        'subtitle': '$kotRate% within SLA',
         'color': const Color(0xFF0284C7),
       },
     ];
@@ -933,85 +876,98 @@ class _RankCardPageState extends State<RankCardPage> {
         const Text(
           'Operational Highlights',
           style: TextStyle(
-            fontSize: 16,
+            fontSize: 15,
             fontWeight: FontWeight.w800,
             color: Color(0xFF0F172A),
           ),
         ),
-        const SizedBox(height: 10),
-        SizedBox(
-          height: 104,
+        const SizedBox(height: 8),
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.02),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
           child: ListView.separated(
-            scrollDirection: Axis.horizontal,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            padding: EdgeInsets.zero,
             itemCount: items.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 10),
+            separatorBuilder: (_, __) => const Divider(
+              height: 1,
+              thickness: 1,
+              color: Color(0xFFF1F5F9),
+            ),
             itemBuilder: (context, idx) {
               final it = items[idx];
               final col = it['color'] as Color;
-              return Container(
-                width: 136,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.02),
-                      blurRadius: 6,
-                      offset: const Offset(0, 2),
-                    ),
-                  ],
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
                   children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(it['icon'] as String, style: const TextStyle(fontSize: 16)),
-                        Container(
-                          width: 6,
-                          height: 6,
-                          decoration: BoxDecoration(shape: BoxShape.circle, color: col),
-                        ),
-                      ],
+                    Container(
+                      width: 30,
+                      height: 30,
+                      decoration: BoxDecoration(
+                        color: col.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      alignment: Alignment.center,
+                      child: Text(
+                        it['icon'] as String,
+                        style: const TextStyle(fontSize: 14),
+                      ),
                     ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          it['value'] as String,
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w800,
-                            color: col,
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            it['title'] as String,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF0F172A),
+                            ),
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        Text(
-                          it['title'] as String,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF64748B),
+                          Text(
+                            it['subtitle'] as String,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFF64748B),
+                              fontWeight: FontWeight.w500,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: col.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        it['value'] as String,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: col,
                         ),
-                        Text(
-                          it['subtitle'] as String,
-                          style: const TextStyle(
-                            fontSize: 9.5,
-                            fontWeight: FontWeight.w500,
-                            color: Color(0xFF94A3B8),
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
+                      ),
                     ),
                   ],
                 ),
