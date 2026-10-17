@@ -2587,6 +2587,8 @@ Future<List<dynamic>> fetchEmployees() async {
     String? month,
     String? role,
     String? period,
+    String? branchId,
+    String? branchName,
   }) async {
     final token = await _getToken();
     final prefs = await SharedPreferences.getInstance();
@@ -2603,12 +2605,24 @@ Future<List<dynamic>> fetchEmployees() async {
         await storage.read(key: 'userRole') ??
         prefs.getString('role') ??
         'waiter';
+    final resolvedBranchId = branchId ??
+        await storage.read(key: 'userBranchId') ??
+        prefs.getString('branchId') ??
+        prefs.getString('branch') ??
+        '';
+    final resolvedBranchName = branchName ??
+        await storage.read(key: 'userBranchName') ??
+        prefs.getString('branchName') ??
+        prefs.getString('lastGpsBranchName') ??
+        '';
     final now = DateTime.now();
     final resolvedMonth = month ?? DateFormat('yyyy-MM').format(now);
 
     final queryParams = <String, String>{
       if (resolvedEmpId.isNotEmpty) 'employeeId': resolvedEmpId,
       if (resolvedUserId.isNotEmpty) 'userId': resolvedUserId,
+      if (resolvedBranchId.isNotEmpty) 'branch': resolvedBranchId,
+      if (resolvedBranchName.isNotEmpty) 'branchName': resolvedBranchName,
       'month': resolvedMonth,
       'role': resolvedRole,
       if (period != null && period.isNotEmpty) 'period': period,

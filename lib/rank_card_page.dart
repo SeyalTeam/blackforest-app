@@ -23,8 +23,9 @@ class _RankCardPageState extends State<RankCardPage> {
   String _employeeName = 'Waiter';
   String _employeeRole = 'waiter';
   String _employeeCode = '';
-  String _branchName = '';
-  String _companyName = 'Blackforest Foods';
+  String _branchId = '';
+  String _branchName = 'VSeyal';
+  String _companyName = 'BlackForest Cakes';
   String _leaderboardScope = 'branch'; // 'branch' | 'company' | 'overall'
   String? _photoUrl;
   String _employeeDocId = '';
@@ -57,13 +58,17 @@ class _RankCardPageState extends State<RankCardPage> {
       final cachedEmpCode = (await _storage.read(key: 'employeeId')) ??
           prefs.getString('employee_code') ??
           '';
+      final cachedBranchId = (await _storage.read(key: 'userBranchId')) ??
+          prefs.getString('branchId') ??
+          prefs.getString('branch') ??
+          '';
       final cachedBranch = (await _storage.read(key: 'userBranchName')) ??
           prefs.getString('branchName') ??
-          'Branch';
+          'VSeyal';
       final cachedCompany = (await _storage.read(key: 'userCompanyName')) ??
           prefs.getString('companyName') ??
           prefs.getString('company_name') ??
-          'Blackforest Foods';
+          'BlackForest Cakes';
       final cachedUserId = (await _storage.read(key: 'userId')) ??
           prefs.getString('userId') ??
           '';
@@ -75,8 +80,9 @@ class _RankCardPageState extends State<RankCardPage> {
           _employeeRole = cachedRole;
           _employeeDocId = cachedEmpId;
           _employeeCode = cachedEmpCode;
-          _branchName = cachedBranch;
-          _companyName = cachedCompany;
+          _branchId = cachedBranchId;
+          _branchName = cachedBranch.isNotEmpty ? cachedBranch : 'VSeyal';
+          _companyName = cachedCompany.isNotEmpty ? cachedCompany : 'BlackForest Cakes';
           _userId = cachedUserId;
           _photoUrl = cachedPhoto;
         });
@@ -108,6 +114,8 @@ class _RankCardPageState extends State<RankCardPage> {
         month: monthStr,
         role: _employeeRole,
         period: _selectedPeriod,
+        branchId: _branchId.isNotEmpty ? _branchId : null,
+        branchName: _branchName.isNotEmpty ? _branchName : null,
       );
 
       if (mounted) {
@@ -200,10 +208,87 @@ class _RankCardPageState extends State<RankCardPage> {
     final onTimeCount = isToday ? 13 : isWeek ? 48 : 172;
     final onTimeRatePercent = ((onTimeCount / totalItems) * 100).round();
 
+    final branchNameVal = _branchName.isNotEmpty ? _branchName : 'VSeyal';
+    final companyNameVal = _companyName.isNotEmpty ? _companyName : 'BlackForest Cakes';
+
+    String gradeFor(int s) => s >= 90 ? 'Grade A+' : s >= 80 ? 'Grade A' : s >= 65 ? 'Grade B' : 'Grade C';
+    String tagFor(int s) => s >= 90 ? '🌟 Star Performer' : s >= 80 ? '✅ Target Met' : s >= 65 ? '⚠️ Average' : '🚨 Needs Attention';
+
+    // 1. VSeyal Branch Active Waiters
+    final branchWaitersRaw = <Map<String, dynamic>>[
+      {'name': _employeeName, 'score': avg, 'isCurrent': true, 'branchName': branchNameVal, 'companyName': companyNameVal},
+      {'name': 'Muthu', 'score': 93, 'isCurrent': false, 'branchName': branchNameVal, 'companyName': companyNameVal},
+      {'name': 'Muthuram', 'score': 90, 'isCurrent': false, 'branchName': branchNameVal, 'companyName': companyNameVal},
+      {'name': 'INFANT', 'score': 88, 'isCurrent': false, 'branchName': branchNameVal, 'companyName': companyNameVal},
+      {'name': 'Siva', 'score': 86, 'isCurrent': false, 'branchName': branchNameVal, 'companyName': companyNameVal},
+      {'name': 'THIRUMAARAN', 'score': 84, 'isCurrent': false, 'branchName': branchNameVal, 'companyName': companyNameVal},
+      {'name': 'Jeeva', 'score': 81, 'isCurrent': false, 'branchName': branchNameVal, 'companyName': companyNameVal},
+      {'name': 'Manikandan', 'score': 78, 'isCurrent': false, 'branchName': branchNameVal, 'companyName': companyNameVal},
+    ];
+
+    // 2. Company Active Waiters (BlackForest Cakes branches)
+    final companyWaitersRaw = <Map<String, dynamic>>[
+      ...branchWaitersRaw,
+      {'name': 'VENKATESH BF', 'score': 96, 'isCurrent': false, 'branchName': 'ETP-Ettayapuram Road', 'companyName': 'BlackForest Cakes'},
+      {'name': 'ANNALAKSHMI -CDM', 'score': 92, 'isCurrent': false, 'branchName': 'CHIDAMBARAM NAGAR', 'companyName': 'BlackForest Cakes'},
+      {'name': 'VIPIN WAITER', 'score': 89, 'isCurrent': false, 'branchName': 'VVD', 'companyName': 'BlackForest Cakes'},
+      {'name': 'RAVICHANDRAN -CDM', 'score': 87, 'isCurrent': false, 'branchName': 'CHIDAMBARAM NAGAR', 'companyName': 'BlackForest Cakes'},
+      {'name': 'SERMA MUTHUESWARI- KMC', 'score': 85, 'isCurrent': false, 'branchName': 'KMC', 'companyName': 'BlackForest Cakes'},
+      {'name': 'Dhilip Kumar', 'score': 83, 'isCurrent': false, 'branchName': 'Ettayapuram', 'companyName': 'BlackForest Cakes'},
+      {'name': 'MOHAMED RIFAZ', 'score': 82, 'isCurrent': false, 'branchName': 'Alagar', 'companyName': 'BlackForest Cakes'},
+      {'name': 'MUTHURAJA', 'score': 80, 'isCurrent': false, 'branchName': 'Icing', 'companyName': 'BlackForest Cakes'},
+    ];
+
+    // 3. Overall Active Waiters (All 3 companies: BlackForest Cakes, Thoothukudi Hotel, Thoothukudi Macroon)
+    final overallWaitersRaw = <Map<String, dynamic>>[
+      ...companyWaitersRaw,
+      {'name': 'MARIAPPAN', 'score': 95, 'isCurrent': false, 'branchName': 'TH1-THOOTHUKUDI HOTEL1', 'companyName': 'Thoothukudi Hotel'},
+      {'name': 'SETHU', 'score': 94, 'isCurrent': false, 'branchName': 'Thoothukudi hotel', 'companyName': 'Thoothukudi Hotel'},
+      {'name': 'KUMAR', 'score': 91, 'isCurrent': false, 'branchName': 'Pannai Veetu Samayal', 'companyName': 'Thoothukudi Hotel'},
+      {'name': 'ANTONY', 'score': 88, 'isCurrent': false, 'branchName': 'THOOTHUKUDI MACROON', 'companyName': 'Thoothukudi Macroon'},
+      {'name': 'BALA', 'score': 84, 'isCurrent': false, 'branchName': 'TH1-THOOTHUKUDI HOTEL1', 'companyName': 'Thoothukudi Hotel'},
+      {'name': 'MURUGESH', 'score': 79, 'isCurrent': false, 'branchName': 'THOOTHUKUDI MACROON', 'companyName': 'Thoothukudi Macroon'},
+    ];
+
+    List<Map<String, dynamic>> buildRanking(List<Map<String, dynamic>> raw) {
+      final sorted = List<Map<String, dynamic>>.from(raw)
+        ..sort((a, b) {
+          final sc = (b['score'] as int).compareTo(a['score'] as int);
+          if (sc != 0) return sc;
+          if (a['isCurrent'] == true) return -1;
+          if (b['isCurrent'] == true) return 1;
+          return (a['name'] as String).compareTo(b['name'] as String);
+        });
+
+      return sorted.asMap().entries.map((entry) {
+        final idx = entry.key;
+        final item = entry.value;
+        final score = item['score'] as int;
+        return {
+          'rank': idx + 1,
+          'name': item['name'],
+          'score': score,
+          'grade': gradeFor(score),
+          'gradeTag': tagFor(score),
+          'isCurrent': item['isCurrent'] == true,
+          'branchName': item['branchName'],
+          'companyName': item['companyName'],
+        };
+      }).toList();
+    }
+
+    final bRanked = buildRanking(branchWaitersRaw);
+    final cRanked = buildRanking(companyWaitersRaw);
+    final oRanked = buildRanking(overallWaitersRaw);
+
+    final bUserRank = bRanked.firstWhere((r) => r['isCurrent'] == true, orElse: () => bRanked.first)['rank'] as int;
+    final cUserRank = cRanked.firstWhere((r) => r['isCurrent'] == true, orElse: () => cRanked.first)['rank'] as int;
+    final oUserRank = oRanked.firstWhere((r) => r['isCurrent'] == true, orElse: () => oRanked.first)['rank'] as int;
+
     return {
       'employeeId': _employeeDocId,
       'employeeName': _employeeName,
-      'branchName': _branchName,
+      'branchName': branchNameVal,
       'role': _employeeRole,
       'month': monthStr,
       'period': period,
@@ -211,8 +296,8 @@ class _RankCardPageState extends State<RankCardPage> {
       'grade': grade,
       'gradeTag': gradeTag,
       'recommendation': recommendation,
-      'rank': 1 + (seed % 3),
-      'totalRanked': 6 + (seed % 4),
+      'rank': bUserRank,
+      'totalRanked': bRanked.length,
       'rule1CallSpeed': {
         'ruleTitle': '🚨 Waiter Call Response Speed SLA (< 30s)',
         'score': callScore,
@@ -306,626 +391,32 @@ class _RankCardPageState extends State<RankCardPage> {
           'summary': '$onTimeCount/$totalItems delivered < 5m ($onTimeRatePercent% SLA adherence)',
         },
       ],
-      'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
+      'companyName': companyNameVal,
       'branchRanking': {
         'scope': 'branch',
         'scopeLabel': 'Branch',
-        'scopeName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
-        'rank': 1,
-        'totalRanked': 8,
-        'rankingList': [
-          {
-            'rank': 1,
-            'name': _employeeName,
-            'score': avg,
-            'grade': grade,
-            'gradeTag': gradeTag,
-            'isCurrent': true,
-            'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
-            'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
-          },
-          {
-            'rank': 2,
-            'name': 'Praveen K.',
-            'score': 89,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
-            'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
-          },
-          {
-            'rank': 3,
-            'name': 'Suresh R.',
-            'score': 86,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
-            'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
-          },
-          {
-            'rank': 4,
-            'name': 'Vignesh R.',
-            'score': 84,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
-            'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
-          },
-          {
-            'rank': 5,
-            'name': 'Karthik M.',
-            'score': 81,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
-            'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
-          },
-          {
-            'rank': 6,
-            'name': 'Ganesh V.',
-            'score': 74,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
-            'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
-          },
-          {
-            'rank': 7,
-            'name': 'Prabhu C.',
-            'score': 71,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
-            'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
-          },
-          {
-            'rank': 8,
-            'name': 'Dinesh K.',
-            'score': 68,
-            'grade': 'Grade C',
-            'gradeTag': '🚨 Needs Improvement',
-            'isCurrent': false,
-            'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
-            'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
-          },
-        ],
+        'scopeName': branchNameVal,
+        'rank': bUserRank,
+        'totalRanked': bRanked.length,
+        'rankingList': bRanked,
       },
       'companyRanking': {
         'scope': 'company',
         'scopeLabel': 'Company',
-        'scopeName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
-        'rank': 3,
-        'totalRanked': 18,
-        'rankingList': [
-          {
-            'rank': 1,
-            'name': 'Arun Kumar',
-            'score': 96,
-            'grade': 'Grade A+',
-            'gradeTag': '🌟 Star Performer',
-            'isCurrent': false,
-            'branchName': 'T. Nagar',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 2,
-            'name': 'Dinesh Babu',
-            'score': 93,
-            'grade': 'Grade A+',
-            'gradeTag': '🌟 Star Performer',
-            'isCurrent': false,
-            'branchName': 'Velachery',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 3,
-            'name': _employeeName,
-            'score': avg,
-            'grade': grade,
-            'gradeTag': gradeTag,
-            'isCurrent': true,
-            'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 4,
-            'name': 'Manoj S.',
-            'score': 91,
-            'grade': 'Grade A+',
-            'gradeTag': '🌟 Star Performer',
-            'isCurrent': false,
-            'branchName': 'Nungambakkam',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 5,
-            'name': 'Praveen K.',
-            'score': 89,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': 'Anna Nagar',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 6,
-            'name': 'Vignesh R.',
-            'score': 87,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': 'Anna Nagar',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 7,
-            'name': 'Suresh R.',
-            'score': 86,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': 'Anna Nagar',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 8,
-            'name': 'Saravanan P.',
-            'score': 85,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': 'T. Nagar',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 9,
-            'name': 'Murugan K.',
-            'score': 82,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': 'Velachery',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 10,
-            'name': 'Karthik M.',
-            'score': 81,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': 'Anna Nagar',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 11,
-            'name': 'Deepak Raj',
-            'score': 80,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': 'Nungambakkam',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 12,
-            'name': 'Ramesh Sundaram',
-            'score': 79,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': 'OMR Thoraipakkam',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 13,
-            'name': 'Vijay Anand',
-            'score': 78,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': 'Adyar',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 14,
-            'name': 'Shankar M.',
-            'score': 77,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': 'T. Nagar',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 15,
-            'name': 'Sanjay Kumar',
-            'score': 75,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': 'Velachery',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 16,
-            'name': 'Ganesh V.',
-            'score': 74,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': 'Anna Nagar',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 17,
-            'name': 'Hariharan B.',
-            'score': 73,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': 'OMR Thoraipakkam',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 18,
-            'name': 'Muthu Krishnan',
-            'score': 72,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': 'Adyar',
-            'companyName': 'Blackforest Foods',
-          },
-        ],
+        'scopeName': companyNameVal,
+        'rank': cUserRank,
+        'totalRanked': cRanked.length,
+        'rankingList': cRanked,
       },
       'overallRanking': {
         'scope': 'overall',
         'scopeLabel': 'Overall',
         'scopeName': 'All Companies & Branches',
-        'rank': 7,
-        'totalRanked': 28,
-        'rankingList': [
-          {
-            'rank': 1,
-            'name': 'Anand Sharma',
-            'score': 98,
-            'grade': 'Grade A+',
-            'gradeTag': '🌟 Star Performer',
-            'isCurrent': false,
-            'branchName': 'Bangalore Indiranagar',
-            'companyName': 'Blackforest Cafe',
-          },
-          {
-            'rank': 2,
-            'name': 'Arun Kumar',
-            'score': 96,
-            'grade': 'Grade A+',
-            'gradeTag': '🌟 Star Performer',
-            'isCurrent': false,
-            'branchName': 'T. Nagar',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 3,
-            'name': 'Kavitha S.',
-            'score': 95,
-            'grade': 'Grade A+',
-            'gradeTag': '🌟 Star Performer',
-            'isCurrent': false,
-            'branchName': 'Coimbatore Gandhipuram',
-            'companyName': 'Blackforest Cafe',
-          },
-          {
-            'rank': 4,
-            'name': 'Rajesh Nair',
-            'score': 94,
-            'grade': 'Grade A+',
-            'gradeTag': '🌟 Star Performer',
-            'isCurrent': false,
-            'branchName': 'Kochi Marine Drive',
-            'companyName': 'Blackforest Express',
-          },
-          {
-            'rank': 5,
-            'name': 'Dinesh Babu',
-            'score': 93,
-            'grade': 'Grade A+',
-            'gradeTag': '🌟 Star Performer',
-            'isCurrent': false,
-            'branchName': 'Velachery',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 6,
-            'name': 'Siddharth M.',
-            'score': 92,
-            'grade': 'Grade A+',
-            'gradeTag': '🌟 Star Performer',
-            'isCurrent': false,
-            'branchName': 'Bangalore Koramangala',
-            'companyName': 'Blackforest Cafe',
-          },
-          {
-            'rank': 7,
-            'name': _employeeName,
-            'score': avg,
-            'grade': grade,
-            'gradeTag': gradeTag,
-            'isCurrent': true,
-            'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 8,
-            'name': 'Manoj S.',
-            'score': 90,
-            'grade': 'Grade A+',
-            'gradeTag': '🌟 Star Performer',
-            'isCurrent': false,
-            'branchName': 'Nungambakkam',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 9,
-            'name': 'Praveen K.',
-            'score': 89,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': 'Anna Nagar',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 10,
-            'name': 'Venkatesh P.',
-            'score': 88,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': 'Madurai KK Nagar',
-            'companyName': 'Blackforest Express',
-          },
-          {
-            'rank': 11,
-            'name': 'Vignesh R.',
-            'score': 87,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': 'Anna Nagar',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 12,
-            'name': 'Gopal Krishnan',
-            'score': 86,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': 'Salem Junction',
-            'companyName': 'Blackforest Express',
-          },
-          {
-            'rank': 13,
-            'name': 'Harish V.',
-            'score': 85,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': 'Trichy Thillai Nagar',
-            'companyName': 'Blackforest Express',
-          },
-          {
-            'rank': 14,
-            'name': 'Aakash Verma',
-            'score': 84,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': 'Bangalore Indiranagar',
-            'companyName': 'Blackforest Cafe',
-          },
-          {
-            'rank': 15,
-            'name': 'Swaminathan B.',
-            'score': 83,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': 'Coimbatore RS Puram',
-            'companyName': 'Blackforest Cafe',
-          },
-          {
-            'rank': 16,
-            'name': 'Saravanan P.',
-            'score': 82,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': 'T. Nagar',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 17,
-            'name': 'Karthik Sundar',
-            'score': 81,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': 'Kochi Edappally',
-            'companyName': 'Blackforest Express',
-          },
-          {
-            'rank': 18,
-            'name': 'Murugan K.',
-            'score': 80,
-            'grade': 'Grade A',
-            'gradeTag': '✅ Target Met',
-            'isCurrent': false,
-            'branchName': 'Velachery',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 19,
-            'name': 'Naveen Kumar',
-            'score': 79,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': 'Bangalore Koramangala',
-            'companyName': 'Blackforest Cafe',
-          },
-          {
-            'rank': 20,
-            'name': 'Deepak Raj',
-            'score': 78,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': 'Nungambakkam',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 21,
-            'name': 'Jeyaram S.',
-            'score': 77,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': 'Madurai KK Nagar',
-            'companyName': 'Blackforest Express',
-          },
-          {
-            'rank': 22,
-            'name': 'Ramesh Sundaram',
-            'score': 76,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': 'OMR Thoraipakkam',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 23,
-            'name': 'Vijay Anand',
-            'score': 75,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': 'Adyar',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 24,
-            'name': 'Rohan Joshi',
-            'score': 74,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': 'Bangalore HSR Layout',
-            'companyName': 'Blackforest Cafe',
-          },
-          {
-            'rank': 25,
-            'name': 'Prashanth T.',
-            'score': 73,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': 'Coimbatore Gandhipuram',
-            'companyName': 'Blackforest Cafe',
-          },
-          {
-            'rank': 26,
-            'name': 'Muthu Krishnan',
-            'score': 72,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': 'Adyar',
-            'companyName': 'Blackforest Foods',
-          },
-          {
-            'rank': 27,
-            'name': 'Balamurugan R.',
-            'score': 71,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': 'Salem Junction',
-            'companyName': 'Blackforest Express',
-          },
-          {
-            'rank': 28,
-            'name': 'Shiva Prasad',
-            'score': 70,
-            'grade': 'Grade B',
-            'gradeTag': '⚠️ Average',
-            'isCurrent': false,
-            'branchName': 'Bangalore HSR Layout',
-            'companyName': 'Blackforest Cafe',
-          },
-        ],
+        'rank': oUserRank,
+        'totalRanked': oRanked.length,
+        'rankingList': oRanked,
       },
-      'rankingList': [
-        {
-          'rank': 1,
-          'name': _employeeName,
-          'score': avg,
-          'grade': grade,
-          'gradeTag': gradeTag,
-          'isCurrent': true,
-          'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
-          'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
-        },
-        {
-          'rank': 2,
-          'name': 'Praveen K.',
-          'score': 89,
-          'grade': 'Grade A',
-          'gradeTag': '✅ Target Met',
-          'isCurrent': false,
-          'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
-          'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
-        },
-        {
-          'rank': 3,
-          'name': 'Suresh R.',
-          'score': 86,
-          'grade': 'Grade A',
-          'gradeTag': '✅ Target Met',
-          'isCurrent': false,
-          'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
-          'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
-        },
-        {
-          'rank': 4,
-          'name': 'Karthik M.',
-          'score': 81,
-          'grade': 'Grade A',
-          'gradeTag': '✅ Target Met',
-          'isCurrent': false,
-          'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
-          'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
-        },
-        {
-          'rank': 5,
-          'name': 'Ganesh V.',
-          'score': 74,
-          'grade': 'Grade B',
-          'gradeTag': '⚠️ Average',
-          'isCurrent': false,
-          'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
-          'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
-        },
-      ],
+      'rankingList': bRanked,
     };
   }
 
