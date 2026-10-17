@@ -1110,21 +1110,6 @@ class _RankCardPageState extends State<RankCardPage> {
                             ),
                           ),
                         ],
-                        if (_branchName.isNotEmpty) ...[
-                          const SizedBox(width: 6),
-                          Flexible(
-                            child: Text(
-                              '• $_branchName',
-                              style: const TextStyle(
-                                color: Color(0xFF94A3B8),
-                                fontSize: 11,
-                                fontWeight: FontWeight.w500,
-                              ),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ],
                       ],
                     ),
                   ],
@@ -1577,6 +1562,12 @@ class _RankCardPageState extends State<RankCardPage> {
     );
   }
 
+  String _cleanBranchName(String raw) {
+    if (raw.trim().isEmpty) return '';
+    final cleaned = raw.replaceAll(RegExp(r'[\s\-•/]*\bbranch\b[\s\-•/]*', caseSensitive: false), '').trim();
+    return cleaned.isNotEmpty ? cleaned : raw.trim();
+  }
+
   // ---------------------------------------------------------------------------
   // Leaderboard Section (Branch, Company, Overall)
   // ---------------------------------------------------------------------------
@@ -1935,7 +1926,7 @@ class _RankCardPageState extends State<RankCardPage> {
                   final isCurrent = peer['isCurrent'] == true;
                   final peerGrade = peer['grade']?.toString() ?? 'Grade A';
                   final branchLocation = peer['branchName']?.toString() ?? '';
-                  final companyLocation = peer['companyName']?.toString() ?? '';
+                  final displayBranch = _cleanBranchName(branchLocation);
 
                   String medalIcon = '';
                   if (rankNum == 1) {
@@ -1982,7 +1973,7 @@ class _RankCardPageState extends State<RankCardPage> {
                         ),
                         const SizedBox(width: 8),
 
-                        // Name + You Pill + Branch/Company details
+                        // Name + You Pill + Branch details
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -2022,114 +2013,32 @@ class _RankCardPageState extends State<RankCardPage> {
                                   ],
                                 ],
                               ),
-                              if (_leaderboardScope == 'overall') ...[
-                                if (companyLocation.isNotEmpty || branchLocation.isNotEmpty) ...[
-                                  const SizedBox(height: 2),
-                                  Row(
-                                    children: [
-                                      if (companyLocation.isNotEmpty) ...[
-                                        const Icon(
-                                          Icons.business,
-                                          size: 11,
-                                          color: Color(0xFF94A3B8),
+                              if (displayBranch.isNotEmpty) ...[
+                                const SizedBox(height: 2),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      _leaderboardScope == 'branch'
+                                          ? Icons.storefront
+                                          : Icons.location_on,
+                                      size: 11,
+                                      color: const Color(0xFF94A3B8),
+                                    ),
+                                    const SizedBox(width: 2),
+                                    Expanded(
+                                      child: Text(
+                                        displayBranch,
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w500,
+                                          color: Color(0xFF64748B),
                                         ),
-                                        const SizedBox(width: 2),
-                                        Flexible(
-                                          child: Text(
-                                            companyLocation,
-                                            style: const TextStyle(
-                                              fontSize: 11,
-                                              fontWeight: FontWeight.w600,
-                                              color: Color(0xFF475569),
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                      ],
-                                      if (companyLocation.isNotEmpty && branchLocation.isNotEmpty)
-                                        const Padding(
-                                          padding: EdgeInsets.symmetric(horizontal: 4),
-                                          child: Text(
-                                            '•',
-                                            style: TextStyle(fontSize: 10, color: Color(0xFF94A3B8)),
-                                          ),
-                                        ),
-                                      if (branchLocation.isNotEmpty) ...[
-                                        const Icon(
-                                          Icons.location_on,
-                                          size: 11,
-                                          color: Color(0xFF94A3B8),
-                                        ),
-                                        const SizedBox(width: 2),
-                                        Flexible(
-                                          child: Text(
-                                            branchLocation,
-                                            style: const TextStyle(
-                                              fontSize: 11,
-                                              fontWeight: FontWeight.w500,
-                                              color: Color(0xFF64748B),
-                                            ),
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                ],
-                              ] else if (_leaderboardScope == 'company') ...[
-                                if (branchLocation.isNotEmpty) ...[
-                                  const SizedBox(height: 2),
-                                  Row(
-                                    children: [
-                                      const Icon(
-                                        Icons.location_on,
-                                        size: 11,
-                                        color: Color(0xFF94A3B8),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
                                       ),
-                                      const SizedBox(width: 2),
-                                      Expanded(
-                                        child: Text(
-                                          branchLocation.endsWith('Branch') ? branchLocation : '$branchLocation Branch',
-                                          style: const TextStyle(
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w500,
-                                            color: Color(0xFF64748B),
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ] else ...[
-                                if (branchLocation.isNotEmpty) ...[
-                                  const SizedBox(height: 2),
-                                  Row(
-                                    children: [
-                                      const Icon(
-                                        Icons.storefront,
-                                        size: 11,
-                                        color: Color(0xFF94A3B8),
-                                      ),
-                                      const SizedBox(width: 2),
-                                      Expanded(
-                                        child: Text(
-                                          branchLocation,
-                                          style: const TextStyle(
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.w500,
-                                            color: Color(0xFF64748B),
-                                          ),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
+                                    ),
+                                  ],
+                                ),
                               ],
                             ],
                           ),
