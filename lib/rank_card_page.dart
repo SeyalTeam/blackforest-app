@@ -344,10 +344,11 @@ class _RankCardPageState extends State<RankCardPage> {
     _fetchReportCard();
   }
 
-  Color _getScoreColor(num score) {
-    if (score >= 90) return const Color(0xFF10B981); // Emerald
-    if (score >= 80) return const Color(0xFF3B82F6); // Blue
-    if (score >= 65) return const Color(0xFFF59E0B); // Amber
+  Color _getScoreColor(num score, [num maxMarks = 100]) {
+    final pct = maxMarks > 0 ? (score / maxMarks) * 100 : score;
+    if (pct >= 90) return const Color(0xFF10B981); // Emerald
+    if (pct >= 80) return const Color(0xFF3B82F6); // Blue
+    if (pct >= 65) return const Color(0xFFF59E0B); // Amber
     return const Color(0xFFEF4444); // Red
   }
 
@@ -822,6 +823,7 @@ class _RankCardPageState extends State<RankCardPage> {
     final attRate = r2?['attendanceRatePercent'] ?? 96;
 
     final tasksDone = r3?['totalCompleted'] ?? 142;
+    final totalTasks = r3?['totalAssigned'] ?? 150;
     final taskRate = r3?['completionRatePercent'] ?? 95;
 
     final billingAcc = r4?['productAccuracyPercent'] ?? 98;
@@ -832,41 +834,114 @@ class _RankCardPageState extends State<RankCardPage> {
         : '3.8m';
     final kotRate = r5?['onTimeRatePercent'] ?? 95;
 
+    final rulesList = _reportData?['rules'] as List<dynamic>? ?? [];
+
+    Map<String, dynamic>? findRule(String category) {
+      for (final r in rulesList) {
+        if (r is Map<String, dynamic> && r['category'] == category) {
+          return r;
+        }
+      }
+      return null;
+    }
+
+    final ruleCall = findRule('call_speed');
+    final ruleAtt = findRule('attendance');
+    final ruleTasks = findRule('tasks');
+    final ruleBilling = findRule('billing');
+    final ruleKot = findRule('kot_time');
+
+    int resolveMaxMarks(Map<String, dynamic>? rule, Map<String, dynamic>? ruleObj) {
+      if (rule != null && rule['maxMarks'] is num) {
+        return (rule['maxMarks'] as num).toInt();
+      }
+      if (ruleObj != null && ruleObj['maxMarks'] is num) {
+        return (ruleObj['maxMarks'] as num).toInt();
+      }
+      return 100;
+    }
+
+    num resolveScore(Map<String, dynamic>? rule, Map<String, dynamic>? ruleObj, int maxMarks, num defaultScore) {
+      num val = defaultScore;
+      if (rule != null && rule['score'] is num) {
+        val = rule['score'] as num;
+      } else if (ruleObj != null && ruleObj['marks'] is num) {
+        val = ruleObj['marks'] as num;
+      } else if (ruleObj != null && ruleObj['score'] is num) {
+        val = ruleObj['score'] as num;
+      }
+      // If score is on 0-100 scale but maxMarks is different (e.g. 50):
+      if (maxMarks != 100 && val > maxMarks) {
+        val = (val / 100) * maxMarks;
+      }
+      return val;
+    }
+
+    String formatMark(num score, int maxMarks) {
+      final scoreStr = score % 1 == 0 ? score.toInt().toString() : score.toStringAsFixed(1);
+      return '$scoreStr / $maxMarks';
+    }
+
+    final callMax = resolveMaxMarks(ruleCall, r1);
+    final callScore = resolveScore(ruleCall, r1, callMax, 94);
+
+    final attMax = resolveMaxMarks(ruleAtt, r2);
+    final attScore = resolveScore(ruleAtt, r2, attMax, 96);
+
+    final tasksMax = resolveMaxMarks(ruleTasks, r3);
+    final tasksScore = resolveScore(ruleTasks, r3, tasksMax, 92);
+
+    final billMax = resolveMaxMarks(ruleBilling, r4);
+    final billScore = resolveScore(ruleBilling, r4, billMax, 98);
+
+    final kotMax = resolveMaxMarks(ruleKot, r5);
+    final kotScore = resolveScore(ruleKot, r5, kotMax, 95);
+
     final items = [
       {
         'icon': '⚡',
         'title': 'Call Response SLA',
-        'subtitle': '$under30s of $totalCalls calls < 30s',
-        'value': callSpeed,
-        'color': const Color(0xFF059669),
+        'subtitle': '$callSpeed avg • $under30s of $totalCalls calls < 30s',
+        'mark': formatMark(callScore, callMax),
+        'score': callScore,
+        'maxMarks': callMax,
+        'color': _getScoreColor(callScore, callMax),
       },
       {
         'icon': '⏰',
         'title': 'Shift Attendance',
-        'subtitle': '$presentDays shifts ($attRate% rate)',
-        'value': '$presentDays Shifts',
-        'color': const Color(0xFF2563EB),
+        'subtitle': '$presentDays shifts • $attRate% attendance rate',
+        'mark': formatMark(attScore, attMax),
+        'score': attScore,
+        'maxMarks': attMax,
+        'color': _getScoreColor(attScore, attMax),
       },
       {
         'icon': '📋',
         'title': 'Daily Tasks Checklist',
-        'subtitle': '$tasksDone of ${r3?['totalAssigned'] ?? 150} completed ($taskRate%)',
-        'value': '$tasksDone Done',
-        'color': const Color(0xFF7C3AED),
+        'subtitle': '$tasksDone of $totalTasks completed ($taskRate%)',
+        'mark': formatMark(tasksScore, tasksMax),
+        'score': tasksScore,
+        'maxMarks': tasksMax,
+        'color': _getScoreColor(tasksScore, tasksMax),
       },
       {
         'icon': '🍽️',
         'title': 'Table Billing Accuracy',
-        'subtitle': '$servedProds items served',
-        'value': '$billingAcc%',
-        'color': const Color(0xFFD97706),
+        'subtitle': '$servedProds items served • $billingAcc% accuracy',
+        'mark': formatMark(billScore, billMax),
+        'score': billScore,
+        'maxMarks': billMax,
+        'color': _getScoreColor(billScore, billMax),
       },
       {
         'icon': '⏱️',
         'title': 'KOT Table Delivery SLA',
-        'subtitle': '$kotRate% delivered within 5m SLA',
-        'value': kotAvg,
-        'color': const Color(0xFF0284C7),
+        'subtitle': '$kotAvg avg • $kotRate% delivered on-time',
+        'mark': formatMark(kotScore, kotMax),
+        'score': kotScore,
+        'maxMarks': kotMax,
+        'color': _getScoreColor(kotScore, kotMax),
       },
     ];
 
@@ -955,17 +1030,19 @@ class _RankCardPageState extends State<RankCardPage> {
                     ),
                     const SizedBox(width: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
                       decoration: BoxDecoration(
                         color: col.withValues(alpha: 0.1),
                         borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: col.withValues(alpha: 0.2)),
                       ),
                       child: Text(
-                        it['value'] as String,
+                        it['mark'] as String,
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w800,
                           color: col,
+                          letterSpacing: 0.2,
                         ),
                       ),
                     ),
@@ -1018,7 +1095,7 @@ class _RankCardPageState extends State<RankCardPage> {
         ),
         const SizedBox(height: 4),
         const Text(
-          'Each rule evaluated out of 100 max marks based on branch standards',
+          'Evaluated based on branch standards and assigned max marks (e.g. 100 or 50)',
           style: TextStyle(
             fontSize: 12,
             color: Color(0xFF64748B),
@@ -1043,9 +1120,10 @@ class _RankCardPageState extends State<RankCardPage> {
     final title = rule['title']?.toString() ?? 'Evaluation Rule';
     final category = rule['category']?.toString() ?? 'general';
     final score = (rule['score'] ?? 0) as num;
+    final maxMarks = (rule['maxMarks'] as num?)?.toInt() ?? 100;
     final ratingLabel = rule['ratingLabel']?.toString() ?? '';
     final summary = rule['summary']?.toString() ?? '';
-    final scoreColor = _getScoreColor(score);
+    final scoreColor = _getScoreColor(score, maxMarks);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -1106,16 +1184,16 @@ class _RankCardPageState extends State<RankCardPage> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      '$score',
+                      score % 1 == 0 ? score.toInt().toString() : score.toStringAsFixed(1),
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w900,
                         color: scoreColor,
                       ),
                     ),
-                    const Text(
-                      ' / 100',
-                      style: TextStyle(
+                    Text(
+                      ' / $maxMarks',
+                      style: const TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
                         color: Color(0xFF94A3B8),
@@ -1133,7 +1211,7 @@ class _RankCardPageState extends State<RankCardPage> {
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
             child: LinearProgressIndicator(
-              value: (score / 100).clamp(0.0, 1.0),
+              value: (maxMarks > 0 ? (score / maxMarks) : (score / 100)).clamp(0.0, 1.0),
               minHeight: 6,
               backgroundColor: const Color(0xFFF1F5F9),
               valueColor: AlwaysStoppedAnimation<Color>(scoreColor),
