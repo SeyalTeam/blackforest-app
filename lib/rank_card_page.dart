@@ -312,7 +312,7 @@ class _RankCardPageState extends State<RankCardPage> {
         'scopeLabel': 'Branch',
         'scopeName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
         'rank': 1,
-        'totalRanked': 6,
+        'totalRanked': 8,
         'rankingList': [
           {
             'rank': 1,
@@ -322,6 +322,7 @@ class _RankCardPageState extends State<RankCardPage> {
             'gradeTag': gradeTag,
             'isCurrent': true,
             'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
+            'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
           },
           {
             'rank': 2,
@@ -331,6 +332,7 @@ class _RankCardPageState extends State<RankCardPage> {
             'gradeTag': '✅ Target Met',
             'isCurrent': false,
             'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
+            'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
           },
           {
             'rank': 3,
@@ -340,33 +342,57 @@ class _RankCardPageState extends State<RankCardPage> {
             'gradeTag': '✅ Target Met',
             'isCurrent': false,
             'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
+            'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
           },
           {
             'rank': 4,
+            'name': 'Vignesh R.',
+            'score': 84,
+            'grade': 'Grade A',
+            'gradeTag': '✅ Target Met',
+            'isCurrent': false,
+            'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
+            'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
+          },
+          {
+            'rank': 5,
             'name': 'Karthik M.',
             'score': 81,
             'grade': 'Grade A',
             'gradeTag': '✅ Target Met',
             'isCurrent': false,
             'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
+            'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
           },
           {
-            'rank': 5,
+            'rank': 6,
             'name': 'Ganesh V.',
             'score': 74,
             'grade': 'Grade B',
             'gradeTag': '⚠️ Average',
             'isCurrent': false,
             'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
+            'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
           },
           {
-            'rank': 6,
+            'rank': 7,
+            'name': 'Prabhu C.',
+            'score': 71,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
+            'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
+          },
+          {
+            'rank': 8,
             'name': 'Dinesh K.',
             'score': 68,
             'grade': 'Grade C',
             'gradeTag': '🚨 Needs Improvement',
             'isCurrent': false,
             'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
+            'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
           },
         ],
       },
@@ -375,7 +401,7 @@ class _RankCardPageState extends State<RankCardPage> {
         'scopeLabel': 'Company',
         'scopeName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
         'rank': 3,
-        'totalRanked': 24,
+        'totalRanked': 18,
         'rankingList': [
           {
             'rank': 1,
@@ -385,6 +411,7 @@ class _RankCardPageState extends State<RankCardPage> {
             'gradeTag': '🌟 Star Performer',
             'isCurrent': false,
             'branchName': 'T. Nagar',
+            'companyName': 'Blackforest Foods',
           },
           {
             'rank': 2,
@@ -394,6 +421,7 @@ class _RankCardPageState extends State<RankCardPage> {
             'gradeTag': '🌟 Star Performer',
             'isCurrent': false,
             'branchName': 'Velachery',
+            'companyName': 'Blackforest Foods',
           },
           {
             'rank': 3,
@@ -403,6 +431,7 @@ class _RankCardPageState extends State<RankCardPage> {
             'gradeTag': gradeTag,
             'isCurrent': true,
             'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
+            'companyName': 'Blackforest Foods',
           },
           {
             'rank': 4,
@@ -412,6 +441,7 @@ class _RankCardPageState extends State<RankCardPage> {
             'gradeTag': '🌟 Star Performer',
             'isCurrent': false,
             'branchName': 'Nungambakkam',
+            'companyName': 'Blackforest Foods',
           },
           {
             'rank': 5,
@@ -421,6 +451,7 @@ class _RankCardPageState extends State<RankCardPage> {
             'gradeTag': '✅ Target Met',
             'isCurrent': false,
             'branchName': 'Anna Nagar',
+            'companyName': 'Blackforest Foods',
           },
           {
             'rank': 6,
@@ -430,33 +461,136 @@ class _RankCardPageState extends State<RankCardPage> {
             'gradeTag': '✅ Target Met',
             'isCurrent': false,
             'branchName': 'Anna Nagar',
+            'companyName': 'Blackforest Foods',
           },
           {
             'rank': 7,
+            'name': 'Suresh R.',
+            'score': 86,
+            'grade': 'Grade A',
+            'gradeTag': '✅ Target Met',
+            'isCurrent': false,
+            'branchName': 'Anna Nagar',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 8,
             'name': 'Saravanan P.',
             'score': 85,
             'grade': 'Grade A',
             'gradeTag': '✅ Target Met',
             'isCurrent': false,
             'branchName': 'T. Nagar',
+            'companyName': 'Blackforest Foods',
           },
           {
-            'rank': 8,
+            'rank': 9,
             'name': 'Murugan K.',
             'score': 82,
             'grade': 'Grade A',
             'gradeTag': '✅ Target Met',
             'isCurrent': false,
             'branchName': 'Velachery',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 10,
+            'name': 'Karthik M.',
+            'score': 81,
+            'grade': 'Grade A',
+            'gradeTag': '✅ Target Met',
+            'isCurrent': false,
+            'branchName': 'Anna Nagar',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 11,
+            'name': 'Deepak Raj',
+            'score': 80,
+            'grade': 'Grade A',
+            'gradeTag': '✅ Target Met',
+            'isCurrent': false,
+            'branchName': 'Nungambakkam',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 12,
+            'name': 'Ramesh Sundaram',
+            'score': 79,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': 'OMR Thoraipakkam',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 13,
+            'name': 'Vijay Anand',
+            'score': 78,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': 'Adyar',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 14,
+            'name': 'Shankar M.',
+            'score': 77,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': 'T. Nagar',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 15,
+            'name': 'Sanjay Kumar',
+            'score': 75,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': 'Velachery',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 16,
+            'name': 'Ganesh V.',
+            'score': 74,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': 'Anna Nagar',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 17,
+            'name': 'Hariharan B.',
+            'score': 73,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': 'OMR Thoraipakkam',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 18,
+            'name': 'Muthu Krishnan',
+            'score': 72,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': 'Adyar',
+            'companyName': 'Blackforest Foods',
           },
         ],
       },
       'overallRanking': {
         'scope': 'overall',
         'scopeLabel': 'Overall',
-        'scopeName': 'All Branches',
+        'scopeName': 'All Companies & Branches',
         'rank': 7,
-        'totalRanked': 72,
+        'totalRanked': 28,
         'rankingList': [
           {
             'rank': 1,
@@ -466,6 +600,7 @@ class _RankCardPageState extends State<RankCardPage> {
             'gradeTag': '🌟 Star Performer',
             'isCurrent': false,
             'branchName': 'Bangalore Indiranagar',
+            'companyName': 'Blackforest Cafe',
           },
           {
             'rank': 2,
@@ -475,6 +610,7 @@ class _RankCardPageState extends State<RankCardPage> {
             'gradeTag': '🌟 Star Performer',
             'isCurrent': false,
             'branchName': 'T. Nagar',
+            'companyName': 'Blackforest Foods',
           },
           {
             'rank': 3,
@@ -484,6 +620,7 @@ class _RankCardPageState extends State<RankCardPage> {
             'gradeTag': '🌟 Star Performer',
             'isCurrent': false,
             'branchName': 'Coimbatore Gandhipuram',
+            'companyName': 'Blackforest Cafe',
           },
           {
             'rank': 4,
@@ -493,6 +630,7 @@ class _RankCardPageState extends State<RankCardPage> {
             'gradeTag': '🌟 Star Performer',
             'isCurrent': false,
             'branchName': 'Kochi Marine Drive',
+            'companyName': 'Blackforest Express',
           },
           {
             'rank': 5,
@@ -502,15 +640,17 @@ class _RankCardPageState extends State<RankCardPage> {
             'gradeTag': '🌟 Star Performer',
             'isCurrent': false,
             'branchName': 'Velachery',
+            'companyName': 'Blackforest Foods',
           },
           {
             'rank': 6,
-            'name': 'Manoj S.',
-            'score': 91,
+            'name': 'Siddharth M.',
+            'score': 92,
             'grade': 'Grade A+',
             'gradeTag': '🌟 Star Performer',
             'isCurrent': false,
-            'branchName': 'Nungambakkam',
+            'branchName': 'Bangalore Koramangala',
+            'companyName': 'Blackforest Cafe',
           },
           {
             'rank': 7,
@@ -520,33 +660,217 @@ class _RankCardPageState extends State<RankCardPage> {
             'gradeTag': gradeTag,
             'isCurrent': true,
             'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
+            'companyName': 'Blackforest Foods',
           },
           {
             'rank': 8,
+            'name': 'Manoj S.',
+            'score': 90,
+            'grade': 'Grade A+',
+            'gradeTag': '🌟 Star Performer',
+            'isCurrent': false,
+            'branchName': 'Nungambakkam',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 9,
+            'name': 'Praveen K.',
+            'score': 89,
+            'grade': 'Grade A',
+            'gradeTag': '✅ Target Met',
+            'isCurrent': false,
+            'branchName': 'Anna Nagar',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 10,
             'name': 'Venkatesh P.',
             'score': 88,
             'grade': 'Grade A',
             'gradeTag': '✅ Target Met',
             'isCurrent': false,
             'branchName': 'Madurai KK Nagar',
+            'companyName': 'Blackforest Express',
           },
           {
-            'rank': 9,
-            'name': 'Praveen K.',
-            'score': 86,
+            'rank': 11,
+            'name': 'Vignesh R.',
+            'score': 87,
             'grade': 'Grade A',
             'gradeTag': '✅ Target Met',
             'isCurrent': false,
             'branchName': 'Anna Nagar',
+            'companyName': 'Blackforest Foods',
           },
           {
-            'rank': 10,
+            'rank': 12,
             'name': 'Gopal Krishnan',
-            'score': 82,
+            'score': 86,
             'grade': 'Grade A',
             'gradeTag': '✅ Target Met',
             'isCurrent': false,
             'branchName': 'Salem Junction',
+            'companyName': 'Blackforest Express',
+          },
+          {
+            'rank': 13,
+            'name': 'Harish V.',
+            'score': 85,
+            'grade': 'Grade A',
+            'gradeTag': '✅ Target Met',
+            'isCurrent': false,
+            'branchName': 'Trichy Thillai Nagar',
+            'companyName': 'Blackforest Express',
+          },
+          {
+            'rank': 14,
+            'name': 'Aakash Verma',
+            'score': 84,
+            'grade': 'Grade A',
+            'gradeTag': '✅ Target Met',
+            'isCurrent': false,
+            'branchName': 'Bangalore Indiranagar',
+            'companyName': 'Blackforest Cafe',
+          },
+          {
+            'rank': 15,
+            'name': 'Swaminathan B.',
+            'score': 83,
+            'grade': 'Grade A',
+            'gradeTag': '✅ Target Met',
+            'isCurrent': false,
+            'branchName': 'Coimbatore RS Puram',
+            'companyName': 'Blackforest Cafe',
+          },
+          {
+            'rank': 16,
+            'name': 'Saravanan P.',
+            'score': 82,
+            'grade': 'Grade A',
+            'gradeTag': '✅ Target Met',
+            'isCurrent': false,
+            'branchName': 'T. Nagar',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 17,
+            'name': 'Karthik Sundar',
+            'score': 81,
+            'grade': 'Grade A',
+            'gradeTag': '✅ Target Met',
+            'isCurrent': false,
+            'branchName': 'Kochi Edappally',
+            'companyName': 'Blackforest Express',
+          },
+          {
+            'rank': 18,
+            'name': 'Murugan K.',
+            'score': 80,
+            'grade': 'Grade A',
+            'gradeTag': '✅ Target Met',
+            'isCurrent': false,
+            'branchName': 'Velachery',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 19,
+            'name': 'Naveen Kumar',
+            'score': 79,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': 'Bangalore Koramangala',
+            'companyName': 'Blackforest Cafe',
+          },
+          {
+            'rank': 20,
+            'name': 'Deepak Raj',
+            'score': 78,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': 'Nungambakkam',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 21,
+            'name': 'Jeyaram S.',
+            'score': 77,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': 'Madurai KK Nagar',
+            'companyName': 'Blackforest Express',
+          },
+          {
+            'rank': 22,
+            'name': 'Ramesh Sundaram',
+            'score': 76,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': 'OMR Thoraipakkam',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 23,
+            'name': 'Vijay Anand',
+            'score': 75,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': 'Adyar',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 24,
+            'name': 'Rohan Joshi',
+            'score': 74,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': 'Bangalore HSR Layout',
+            'companyName': 'Blackforest Cafe',
+          },
+          {
+            'rank': 25,
+            'name': 'Prashanth T.',
+            'score': 73,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': 'Coimbatore Gandhipuram',
+            'companyName': 'Blackforest Cafe',
+          },
+          {
+            'rank': 26,
+            'name': 'Muthu Krishnan',
+            'score': 72,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': 'Adyar',
+            'companyName': 'Blackforest Foods',
+          },
+          {
+            'rank': 27,
+            'name': 'Balamurugan R.',
+            'score': 71,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': 'Salem Junction',
+            'companyName': 'Blackforest Express',
+          },
+          {
+            'rank': 28,
+            'name': 'Shiva Prasad',
+            'score': 70,
+            'grade': 'Grade B',
+            'gradeTag': '⚠️ Average',
+            'isCurrent': false,
+            'branchName': 'Bangalore HSR Layout',
+            'companyName': 'Blackforest Cafe',
           },
         ],
       },
@@ -559,6 +883,7 @@ class _RankCardPageState extends State<RankCardPage> {
           'gradeTag': gradeTag,
           'isCurrent': true,
           'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
+          'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
         },
         {
           'rank': 2,
@@ -568,6 +893,7 @@ class _RankCardPageState extends State<RankCardPage> {
           'gradeTag': '✅ Target Met',
           'isCurrent': false,
           'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
+          'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
         },
         {
           'rank': 3,
@@ -577,6 +903,7 @@ class _RankCardPageState extends State<RankCardPage> {
           'gradeTag': '✅ Target Met',
           'isCurrent': false,
           'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
+          'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
         },
         {
           'rank': 4,
@@ -586,6 +913,7 @@ class _RankCardPageState extends State<RankCardPage> {
           'gradeTag': '✅ Target Met',
           'isCurrent': false,
           'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
+          'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
         },
         {
           'rank': 5,
@@ -595,6 +923,7 @@ class _RankCardPageState extends State<RankCardPage> {
           'gradeTag': '⚠️ Average',
           'isCurrent': false,
           'branchName': _branchName.isNotEmpty ? _branchName : 'Anna Nagar',
+          'companyName': _companyName.isNotEmpty ? _companyName : 'Blackforest Foods',
         },
       ],
     };
@@ -1907,15 +2236,15 @@ class _RankCardPageState extends State<RankCardPage> {
     if (_leaderboardScope == 'branch') {
       activeScopeData = _reportData?['branchRanking'] as Map<String, dynamic>?;
       scopeTitle = activeScopeData?['scopeName']?.toString() ?? (_branchName.isNotEmpty ? _branchName : 'Branch');
-      scopeSubtitle = 'Classroom ranking among waiters at $scopeTitle';
+      scopeSubtitle = 'All waiters at $scopeTitle branch';
     } else if (_leaderboardScope == 'company') {
       activeScopeData = _reportData?['companyRanking'] as Map<String, dynamic>?;
       scopeTitle = activeScopeData?['scopeName']?.toString() ?? (_companyName.isNotEmpty ? _companyName : 'Blackforest Foods');
-      scopeSubtitle = 'Performance ranking across all branches in $scopeTitle';
+      scopeSubtitle = 'All waiters in $scopeTitle across all branches';
     } else {
       activeScopeData = _reportData?['overallRanking'] as Map<String, dynamic>?;
-      scopeTitle = 'All Branches';
-      scopeSubtitle = 'Overall waiter standing across all network branches';
+      scopeTitle = activeScopeData?['scopeName']?.toString() ?? 'All Companies & Branches';
+      scopeSubtitle = 'All waiters across all companies and all branches';
     }
 
     final rankingList = (activeScopeData?['rankingList'] as List<dynamic>?) ??
@@ -2112,8 +2441,8 @@ class _RankCardPageState extends State<RankCardPage> {
                       _leaderboardScope == 'branch'
                           ? '📍 $scopeTitle'
                           : _leaderboardScope == 'company'
-                              ? '🏢 $scopeTitle'
-                              : '🌐 Network-wide standing',
+                              ? '🏢 $scopeTitle • All Branches'
+                              : '🌐 All Companies & All Branches',
                       style: const TextStyle(
                         fontSize: 11,
                         color: Color(0xFF92400E),
@@ -2175,160 +2504,303 @@ class _RankCardPageState extends State<RankCardPage> {
               ),
             ],
           ),
-          child: ListView.separated(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: rankingList.length,
-            separatorBuilder: (_, __) => const Divider(color: Color(0xFFF1F5F9), height: 1),
-            itemBuilder: (context, idx) {
-              final peer = rankingList[idx] as Map<String, dynamic>;
-              final rankNum = peer['rank'] ?? (idx + 1);
-              final name = peer['name']?.toString() ?? 'Waiter';
-              final score = (peer['score'] ?? 0) as num;
-              final isCurrent = peer['isCurrent'] == true;
-              final peerGrade = peer['grade']?.toString() ?? 'Grade A';
-              final branchLocation = peer['branchName']?.toString() ?? '';
-
-              String medalIcon = '';
-              if (rankNum == 1) {
-                medalIcon = '🏆';
-              } else if (rankNum == 2) {
-                medalIcon = '🥈';
-              } else if (rankNum == 3) {
-                medalIcon = '🥉';
-              }
-
-              return Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-                color: isCurrent
-                    ? const Color(0xFFFEF3C7).withValues(alpha: 0.4)
-                    : Colors.transparent,
+          child: Column(
+            children: [
+              // Header strip showing list title and total count
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: const BoxDecoration(
+                  color: Color(0xFFF8FAFC),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(15)),
+                  border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
+                ),
                 child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    // Rank badge
-                    SizedBox(
-                      width: 32,
-                      child: medalIcon.isNotEmpty
-                          ? Text(medalIcon, style: const TextStyle(fontSize: 18))
-                          : Container(
-                              width: 24,
-                              height: 24,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: isCurrent
-                                    ? const Color(0xFFD97706).withValues(alpha: 0.15)
-                                    : const Color(0xFFF1F5F9),
-                              ),
-                              alignment: Alignment.center,
-                              child: Text(
-                                '#$rankNum',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w700,
-                                  color: isCurrent
-                                      ? const Color(0xFF92400E)
-                                      : const Color(0xFF64748B),
-                                ),
-                              ),
-                            ),
-                    ),
-                    const SizedBox(width: 8),
-
-                    // Name + You Pill + Branch Location
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  name,
-                                  style: TextStyle(
-                                    fontSize: 13.5,
-                                    fontWeight: isCurrent ? FontWeight.w800 : FontWeight.w600,
-                                    color: isCurrent ? const Color(0xFF92400E) : const Color(0xFF1E293B),
-                                  ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ),
-                              if (isCurrent) ...[
-                                const SizedBox(width: 6),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFFD97706),
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: const Text(
-                                    'YOU',
-                                    style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.w800,
-                                      letterSpacing: 0.5,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                          if (branchLocation.isNotEmpty) ...[
-                            const SizedBox(height: 2),
-                            Row(
-                              children: [
-                                const Icon(
-                                  Icons.location_on,
-                                  size: 11,
-                                  color: Color(0xFF94A3B8),
-                                ),
-                                const SizedBox(width: 2),
-                                Expanded(
-                                  child: Text(
-                                    branchLocation,
-                                    style: const TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w500,
-                                      color: Color(0xFF64748B),
-                                    ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-
-                    // Grade + Score
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
+                    Row(
                       children: [
-                        Text(
-                          '$score pts',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w800,
-                            color: _getScoreColor(score),
-                          ),
+                        const Icon(
+                          Icons.format_list_numbered,
+                          size: 14,
+                          color: Color(0xFF64748B),
                         ),
+                        const SizedBox(width: 6),
                         Text(
-                          peerGrade,
+                          'ALL WAITERS (${rankingList.length})',
                           style: const TextStyle(
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF94A3B8),
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.5,
+                            color: Color(0xFF475569),
                           ),
                         ),
                       ],
                     ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Text(
+                        _leaderboardScope == 'branch'
+                            ? '📍 $scopeTitle'
+                            : _leaderboardScope == 'company'
+                                ? '🏢 $scopeTitle'
+                                : '🌐 All Companies & Branches',
+                        style: const TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF64748B),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
-              );
-            },
+              ),
+
+              ListView.separated(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: rankingList.length,
+                separatorBuilder: (_, __) => const Divider(color: Color(0xFFF1F5F9), height: 1),
+                itemBuilder: (context, idx) {
+                  final peer = rankingList[idx] as Map<String, dynamic>;
+                  final rankNum = peer['rank'] ?? (idx + 1);
+                  final name = peer['name']?.toString() ?? 'Waiter';
+                  final score = (peer['score'] ?? 0) as num;
+                  final isCurrent = peer['isCurrent'] == true;
+                  final peerGrade = peer['grade']?.toString() ?? 'Grade A';
+                  final branchLocation = peer['branchName']?.toString() ?? '';
+                  final companyLocation = peer['companyName']?.toString() ?? '';
+
+                  String medalIcon = '';
+                  if (rankNum == 1) {
+                    medalIcon = '🏆';
+                  } else if (rankNum == 2) {
+                    medalIcon = '🥈';
+                  } else if (rankNum == 3) {
+                    medalIcon = '🥉';
+                  }
+
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                    color: isCurrent
+                        ? const Color(0xFFFEF3C7).withValues(alpha: 0.4)
+                        : Colors.transparent,
+                    child: Row(
+                      children: [
+                        // Rank badge
+                        SizedBox(
+                          width: 32,
+                          child: medalIcon.isNotEmpty
+                              ? Text(medalIcon, style: const TextStyle(fontSize: 18))
+                              : Container(
+                                  width: 24,
+                                  height: 24,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: isCurrent
+                                        ? const Color(0xFFD97706).withValues(alpha: 0.15)
+                                        : const Color(0xFFF1F5F9),
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: Text(
+                                    '#$rankNum',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: isCurrent
+                                          ? const Color(0xFF92400E)
+                                          : const Color(0xFF64748B),
+                                    ),
+                                  ),
+                                ),
+                        ),
+                        const SizedBox(width: 8),
+
+                        // Name + You Pill + Branch/Company details
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Flexible(
+                                    child: Text(
+                                      name,
+                                      style: TextStyle(
+                                        fontSize: 13.5,
+                                        fontWeight: isCurrent ? FontWeight.w800 : FontWeight.w600,
+                                        color: isCurrent ? const Color(0xFF92400E) : const Color(0xFF1E293B),
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                  if (isCurrent) ...[
+                                    const SizedBox(width: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFFD97706),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: const Text(
+                                        'YOU',
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 9,
+                                          fontWeight: FontWeight.w800,
+                                          letterSpacing: 0.5,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              if (_leaderboardScope == 'overall') ...[
+                                if (companyLocation.isNotEmpty || branchLocation.isNotEmpty) ...[
+                                  const SizedBox(height: 2),
+                                  Row(
+                                    children: [
+                                      if (companyLocation.isNotEmpty) ...[
+                                        const Icon(
+                                          Icons.business,
+                                          size: 11,
+                                          color: Color(0xFF94A3B8),
+                                        ),
+                                        const SizedBox(width: 2),
+                                        Flexible(
+                                          child: Text(
+                                            companyLocation,
+                                            style: const TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w600,
+                                              color: Color(0xFF475569),
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                      if (companyLocation.isNotEmpty && branchLocation.isNotEmpty)
+                                        const Padding(
+                                          padding: EdgeInsets.symmetric(horizontal: 4),
+                                          child: Text(
+                                            '•',
+                                            style: TextStyle(fontSize: 10, color: Color(0xFF94A3B8)),
+                                          ),
+                                        ),
+                                      if (branchLocation.isNotEmpty) ...[
+                                        const Icon(
+                                          Icons.location_on,
+                                          size: 11,
+                                          color: Color(0xFF94A3B8),
+                                        ),
+                                        const SizedBox(width: 2),
+                                        Flexible(
+                                          child: Text(
+                                            branchLocation,
+                                            style: const TextStyle(
+                                              fontSize: 11,
+                                              fontWeight: FontWeight.w500,
+                                              color: Color(0xFF64748B),
+                                            ),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ],
+                              ] else if (_leaderboardScope == 'company') ...[
+                                if (branchLocation.isNotEmpty) ...[
+                                  const SizedBox(height: 2),
+                                  Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.location_on,
+                                        size: 11,
+                                        color: Color(0xFF94A3B8),
+                                      ),
+                                      const SizedBox(width: 2),
+                                      Expanded(
+                                        child: Text(
+                                          branchLocation.endsWith('Branch') ? branchLocation : '$branchLocation Branch',
+                                          style: const TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w500,
+                                            color: Color(0xFF64748B),
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ] else ...[
+                                if (branchLocation.isNotEmpty) ...[
+                                  const SizedBox(height: 2),
+                                  Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.storefront,
+                                        size: 11,
+                                        color: Color(0xFF94A3B8),
+                                      ),
+                                      const SizedBox(width: 2),
+                                      Expanded(
+                                        child: Text(
+                                          branchLocation,
+                                          style: const TextStyle(
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.w500,
+                                            color: Color(0xFF64748B),
+                                          ),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ],
+                            ],
+                          ),
+                        ),
+
+                        // Grade + Score
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              '$score pts',
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800,
+                                color: _getScoreColor(score),
+                              ),
+                            ),
+                            Text(
+                              peerGrade,
+                              style: const TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF94A3B8),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
         ),
       ],
