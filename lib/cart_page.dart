@@ -6851,12 +6851,14 @@ class _CartPageState extends State<CartPage> {
   }
 
   Widget _buildPaymentChips({bool lightMode = false}) {
+    final bool isPaymentDisabled = _isComplementary;
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         _PaymentChip(
           label: 'Cash',
           icon: Icons.money,
+          enabled: !isPaymentDisabled,
           selected: _selectedPaymentMethod == 'cash',
           onTap: () => setState(() {
             _selectedPaymentMethod = _selectedPaymentMethod == 'cash'
@@ -6882,6 +6884,7 @@ class _CartPageState extends State<CartPage> {
         _PaymentChip(
           label: 'UPI',
           icon: Icons.qr_code,
+          enabled: !isPaymentDisabled,
           selected: _selectedPaymentMethod == 'upi',
           onTap: () => setState(() {
             _selectedPaymentMethod = _selectedPaymentMethod == 'upi'
@@ -6907,6 +6910,7 @@ class _CartPageState extends State<CartPage> {
         _PaymentChip(
           label: 'Card',
           icon: Icons.credit_card,
+          enabled: !isPaymentDisabled,
           selected: _selectedPaymentMethod == 'card',
           onTap: () => setState(() {
             _selectedPaymentMethod = _selectedPaymentMethod == 'card'
@@ -9765,16 +9769,16 @@ class _PaymentChip extends StatelessWidget {
     return Opacity(
       opacity: enabled ? 1.0 : 0.42,
       child: GestureDetector(
-        onTap: onTap,
+        onTap: enabled ? onTap : null,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           width: width, // 🔥 FIXED WIDTH
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
-            color: selected ? activeBackgroundColor : chipBg,
+            color: (enabled && selected) ? activeBackgroundColor : chipBg,
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: selected ? activeColor : inactiveBorderColor,
+              color: (enabled && selected) ? activeColor : inactiveBorderColor,
             ),
           ),
           child: Row(
