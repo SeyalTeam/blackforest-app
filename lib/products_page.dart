@@ -2066,6 +2066,21 @@ class _ProductsPageState extends State<ProductsPage> {
   Future<void> _addOrUpdateProduct(Map<String, dynamic> product) async {
     final productId = _productId(product);
     if (productId.isEmpty) return;
+
+    final isOutOfStock = product['isOutOfStock'] == true;
+    final stockVal = product['stock'];
+    if (isOutOfStock || (stockVal != null && (num.tryParse(stockVal.toString()) ?? 0) <= 0)) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${product['name'] ?? 'Product'} is OUT OF STOCK. Billing not allowed.'),
+            backgroundColor: Colors.redAccent,
+          ),
+        );
+      }
+      return;
+    }
+
     _dismissFocusedProductHighlightIfMatches(productId);
     final cartProvider = Provider.of<CartProvider>(context, listen: false);
     if (_isHomeMode) {

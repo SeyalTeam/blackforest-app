@@ -5375,22 +5375,62 @@ class _CartPageState extends State<CartPage> {
         }
       } else {
         String errorMessage = 'Failed: ${response.statusCode}';
+        bool isStockError = false;
         try {
           final decoded = jsonDecode(response.body);
           if (decoded is Map) {
-            final serverMessage =
+            String serverMessage =
                 decoded['message']?.toString().trim() ??
                 decoded['error']?.toString().trim() ??
                 '';
+            if (serverMessage.isEmpty && decoded['errors'] is List && (decoded['errors'] as List).isNotEmpty) {
+              final firstErr = (decoded['errors'] as List).first;
+              if (firstErr is Map && firstErr['message'] != null) {
+                serverMessage = firstErr['message'].toString().trim();
+              } else if (firstErr is String) {
+                serverMessage = firstErr.trim();
+              }
+            }
             if (serverMessage.isNotEmpty) {
               errorMessage = serverMessage;
+              if (serverMessage.toLowerCase().contains('out of stock') ||
+                  serverMessage.toLowerCase().contains('insufficient stock')) {
+                isStockError = true;
+              }
             }
           }
         } catch (_) {}
         if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(errorMessage)));
+        if (isStockError) {
+          showDialog(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              backgroundColor: const Color(0xFF1E1E1E),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: const Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.redAccent, size: 28),
+                  SizedBox(width: 8),
+                  Text('Billing Blocked', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ],
+              ),
+              content: Text(
+                errorMessage,
+                style: const TextStyle(color: Colors.white70, fontSize: 15),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('OK', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(errorMessage)));
+        }
       }
     } catch (e) {
       final processingMs = stopwatch.elapsedMilliseconds;

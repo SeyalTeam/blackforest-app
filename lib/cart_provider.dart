@@ -1415,14 +1415,31 @@ class CartProvider extends ChangeNotifier {
         );
         return invoiceNumber;
       } else {
-        throw Exception('Failed to submit billing: ${response.body}');
+        String msg = 'Failed to submit billing (${response.statusCode})';
+        try {
+          final decoded = jsonDecode(response.body);
+          if (decoded is Map) {
+            String serverMsg = decoded['message']?.toString() ?? decoded['error']?.toString() ?? '';
+            if (serverMsg.isEmpty && decoded['errors'] is List && (decoded['errors'] as List).isNotEmpty) {
+              final first = (decoded['errors'] as List).first;
+              if (first is Map && first['message'] != null) {
+                serverMsg = first['message'].toString();
+              } else if (first is String) {
+                serverMsg = first;
+              }
+            }
+            if (serverMsg.isNotEmpty) msg = serverMsg;
+          }
+        } catch (_) {}
+        throw Exception(msg);
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Error: ${e.toString().replaceAll('Exception: Failed to submit billing: ', '')}',
+            e.toString().replaceAll('Exception: ', ''),
           ),
+          backgroundColor: Colors.redAccent,
         ),
       );
       return null;
