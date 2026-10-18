@@ -14,10 +14,14 @@ import 'waiter_live_call_screen.dart';
 
 enum WaiterCallState {
   idle,
-  ringing,
   connecting,
+  ringing,
   connected,
   ended,
+  declined,
+  busy,
+  offline,
+  error,
 }
 
 class WaiterLiveCallService extends ChangeNotifier {
@@ -27,6 +31,7 @@ class WaiterLiveCallService extends ChangeNotifier {
   GlobalKey<NavigatorState>? _navigatorKey;
   StreamSubscription? _signalSub;
   final AudioPlayer _ringtonePlayer = AudioPlayer();
+  Timer? _autoCleanupTimer;
 
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
@@ -34,6 +39,9 @@ class WaiterLiveCallService extends ChangeNotifier {
 
   WaiterCallState _callState = WaiterCallState.idle;
   WaiterCallState get callState => _callState;
+
+  String? _errorMessage;
+  String? get errorMessage => _errorMessage;
 
   String? _currentCallId;
   String? get currentCallId => _currentCallId;
@@ -90,17 +98,20 @@ class WaiterLiveCallService extends ChangeNotifier {
     final myUserId = (prefs.getString('user_id') ?? prefs.getString('userId') ?? prefs.getString('employee_id') ?? '').trim();
     debugPrint('WaiterLiveCallService: signal received: $message (myRole: $role, myUserId: $myUserId)');
 
-    final targetUserId = (message['targetUserId'] ?? message['recipientUserId'])?.toString().trim();
-    if (targetUserId != null && targetUserId.isNotEmpty && myUserId.isNotEmpty && targetUserId != myUserId) {
-      debugPrint('WaiterLiveCallService: targetUserId ($targetUserId) != myUserId ($myUserId), ignoring');
-      return;
-    }
-
     final signalType = message['signalType']?.toString();
     final callId = message['callId']?.toString();
     final senderId = message['senderId']?.toString();
     final senderName = message['senderName']?.toString() ?? message['callerName']?.toString() ?? 'Admin';
     final senderRole = message['senderRole']?.toString() ?? message['callerRole']?.toString() ?? 'Super Admin';
+
+    // Discard signals not intended for us, except user_offline signals which inform caller
+    if (signalType != 'user_offline') {
+      final targetUserId = (message['targetUserId'] ?? message['recipientUserId'])?.toString().trim();
+      if (targetUserId != null && targetUserId.isNotEmpty && myUserId.isNotEmpty && targetUserId != myUserId) {
+        debugPrint('WaiterLiveCallService: targetUserId ($targetUserId) != myUserId ($myUserId), ignoring');
+        return;
+      }
+    }
 
     if (signalType == 'offer') {
       if (_callState != WaiterCallState.idle) {
@@ -116,12 +127,14 @@ class WaiterLiveCallService extends ChangeNotifier {
         return;
       }
 
+      _autoCleanupTimer?.cancel();
       _isOutgoing = false;
       _currentCallId = callId;
       _callerUserId = senderId;
       _callerName = senderName;
       _pendingOfferSdp = message['sdp'];
       _callState = WaiterCallState.ringing;
+      _errorMessage = null;
       _durationSeconds = 0;
       _isMuted = false;
       _isSpeakerOn = false;
@@ -174,12 +187,63 @@ class WaiterLiveCallService extends ChangeNotifier {
       if (_currentCallId == callId) {
         await _handleRemoteIceCandidate(message['candidate']);
       }
-    } else if (signalType == 'end' ||
-        signalType == 'reject' ||
-        signalType == 'busy' ||
-        signalType == 'user_offline') {
+    } else if (signalType == 'reject') {
       if (_currentCallId == callId || _callState != WaiterCallState.idle) {
-        await _terminateCallLocally();
+        await _stopRingtone();
+        _callState = WaiterCallState.declined;
+        _errorMessage = 'Call declined by Admin';
+        notifyListeners();
+        if (_currentCallId != null) {
+          unawaited(WaiterCallHistoryService.updateVoiceCallStatus(
+            callId: _currentCallId!,
+            status: 'declined',
+          ));
+        }
+        _scheduleAutoCleanup();
+      }
+    } else if (signalType == 'busy') {
+      if (_currentCallId == callId || _callState != WaiterCallState.idle) {
+        await _stopRingtone();
+        _callState = WaiterCallState.busy;
+        _errorMessage = 'Admin line is busy';
+        notifyListeners();
+        if (_currentCallId != null) {
+          unawaited(WaiterCallHistoryService.updateVoiceCallStatus(
+            callId: _currentCallId!,
+            status: 'missed',
+          ));
+        }
+        _scheduleAutoCleanup();
+      }
+    } else if (signalType == 'user_offline') {
+      if (_currentCallId == callId || _callState != WaiterCallState.idle) {
+        await _stopRingtone();
+        _callState = WaiterCallState.offline;
+        _errorMessage = 'Super Admin is currently offline';
+        notifyListeners();
+        if (_currentCallId != null) {
+          unawaited(WaiterCallHistoryService.updateVoiceCallStatus(
+            callId: _currentCallId!,
+            status: 'missed',
+          ));
+        }
+        _scheduleAutoCleanup();
+      }
+    } else if (signalType == 'end') {
+      if (_currentCallId == callId || _callState != WaiterCallState.idle) {
+        await _stopRingtone();
+        final wasConnected = _durationSeconds > 0;
+        _callState = WaiterCallState.ended;
+        _errorMessage = 'Call ended';
+        notifyListeners();
+        if (_currentCallId != null) {
+          unawaited(WaiterCallHistoryService.updateVoiceCallStatus(
+            callId: _currentCallId!,
+            status: wasConnected ? 'accepted' : 'missed',
+            durationSeconds: _durationSeconds,
+          ));
+        }
+        _scheduleAutoCleanup();
       }
     }
   }
@@ -387,23 +451,38 @@ class WaiterLiveCallService extends ChangeNotifier {
   }) async {
     if (_callState != WaiterCallState.idle) return;
 
+    final prefs = await SharedPreferences.getInstance();
+    final myUserId = (prefs.getString('user_id') ?? prefs.getString('userId'))?.trim() ?? '';
+
+    // Safety: ensure waiter never calls himself
+    if (adminUserId.isEmpty || adminUserId == myUserId) {
+      final resolvedId = await WaiterCallHistoryService.getLastAdminUserId();
+      if (resolvedId != null && resolvedId.isNotEmpty && resolvedId != myUserId) {
+        adminUserId = resolvedId;
+      } else {
+        debugPrint('WaiterLiveCallService: Cannot call admin - target ID matches myUserId or is invalid');
+        throw Exception('Admin contact is unavailable. Please try again later.');
+      }
+    }
+
     final micStatus = await Permission.microphone.request();
     if (!micStatus.isGranted) {
       debugPrint('WaiterLiveCallService: microphone permission denied');
       return;
     }
 
-    final prefs = await SharedPreferences.getInstance();
     final myName = prefs.getString('user_name') ??
         prefs.getString('name') ??
         prefs.getString('email') ??
         'Waiter';
 
+    _autoCleanupTimer?.cancel();
     _isOutgoing = true;
     _currentCallId = 'call_${DateTime.now().millisecondsSinceEpoch}';
     _callerUserId = adminUserId;
     _callerName = adminName;
     _callState = WaiterCallState.connecting;
+    _errorMessage = null;
     _durationSeconds = 0;
     _isMuted = false;
     _isSpeakerOn = false;
@@ -490,13 +569,17 @@ class WaiterLiveCallService extends ChangeNotifier {
       });
     } catch (e) {
       debugPrint('WaiterLiveCallService: error starting call to admin: $e');
-      await endCall();
+      _callState = WaiterCallState.error;
+      _errorMessage = 'Call failed to connect';
+      notifyListeners();
+      _scheduleAutoCleanup();
     }
   }
 
   void _onConnected() {
     if (_callState == WaiterCallState.connected) return;
     _callState = WaiterCallState.connected;
+    _errorMessage = null;
     _isSpeakerOn = false;
     _durationSeconds = 0;
     _durationTimer?.cancel();
@@ -549,7 +632,11 @@ class WaiterLiveCallService extends ChangeNotifier {
         status: 'declined',
       ));
     }
+    _callState = WaiterCallState.declined;
+    _errorMessage = 'Call declined';
+    notifyListeners();
     await _cleanupWebrtc();
+    _popScreenImmediately();
   }
 
   Future<void> endCall() async {
@@ -562,11 +649,6 @@ class WaiterLiveCallService extends ChangeNotifier {
         'targetUserId': _callerUserId,
       });
     }
-    await _terminateCallLocally();
-  }
-
-  Future<void> _terminateCallLocally() async {
-    await _stopRingtone();
     if (_currentCallId != null) {
       unawaited(WaiterCallHistoryService.updateVoiceCallStatus(
         callId: _currentCallId!,
@@ -575,17 +657,25 @@ class WaiterLiveCallService extends ChangeNotifier {
       ));
     }
     _callState = WaiterCallState.ended;
+    _errorMessage = 'Call ended';
     notifyListeners();
-
-    // Close call screen after 1.8 seconds so user sees call ended
-    Future.delayed(const Duration(milliseconds: 1800), () {
-      _navigatorKey?.currentState?.popUntil((route) {
-        return route.settings.name != 'waiter_live_call_screen' &&
-            route.settings.name != 'incoming_call_dialog';
-      });
-    });
-
     await _cleanupWebrtc();
+    _popScreenImmediately();
+  }
+
+  void _popScreenImmediately() {
+    _navigatorKey?.currentState?.popUntil((route) {
+      return route.settings.name != 'waiter_live_call_screen' &&
+          route.settings.name != 'incoming_call_dialog';
+    });
+  }
+
+  void _scheduleAutoCleanup({Duration delay = const Duration(milliseconds: 2800)}) {
+    _autoCleanupTimer?.cancel();
+    _autoCleanupTimer = Timer(delay, () async {
+      await _cleanupWebrtc();
+      _popScreenImmediately();
+    });
   }
 
   Future<void> toggleMute() async {
@@ -609,6 +699,8 @@ class WaiterLiveCallService extends ChangeNotifier {
   }
 
   Future<void> _cleanupWebrtc() async {
+    _autoCleanupTimer?.cancel();
+    _autoCleanupTimer = null;
     _durationTimer?.cancel();
     _durationTimer = null;
 
@@ -638,6 +730,7 @@ class WaiterLiveCallService extends ChangeNotifier {
     _currentCallId = null;
     _callerUserId = null;
     _pendingOfferSdp = null;
+    _errorMessage = null;
     notifyListeners();
   }
 }

@@ -393,6 +393,7 @@ class WaiterCallHistoryService {
             }
 
             final isCaller = (myUserId.isNotEmpty && callerId == myUserId);
+            final otherUserId = isCaller ? receiverId : callerId;
             final displayName = isCaller
                 ? (doc['receiverName']?.toString().trim().isNotEmpty == true
                     ? doc['receiverName'].toString().trim()
@@ -427,7 +428,7 @@ class WaiterCallHistoryService {
               callType: 'admin_call',
               durationSeconds: durationSec,
               callerRole: role,
-              callerUserId: callerId.isNotEmpty ? callerId : null,
+              callerUserId: otherUserId.isNotEmpty ? otherUserId : null,
               acknowledgedBy: displayName,
               acknowledgedAtIso: endedAt,
             );
@@ -439,7 +440,7 @@ class WaiterCallHistoryService {
               merged[callId] = existing.copyWith(
                 customerName: displayName.isNotEmpty ? displayName : existing.customerName,
                 callerRole: role.isNotEmpty ? role : existing.callerRole,
-                callerUserId: callerId.isNotEmpty ? callerId : existing.callerUserId,
+                callerUserId: otherUserId.isNotEmpty ? otherUserId : existing.callerUserId,
                 status: existing.isAccepted ? 'accepted' : status,
                 durationSeconds: bestDuration,
                 callType: 'admin_call',
@@ -449,11 +450,12 @@ class WaiterCallHistoryService {
               merged[callId] = entry;
             }
 
-            // Cache last admin caller user id for callback
-            if (callerId.isNotEmpty &&
+            // Cache last admin caller user id for callback (never cache own waiter ID)
+            if (otherUserId.isNotEmpty &&
+                otherUserId != myUserId &&
                 (role.toLowerCase().contains('admin') ||
                     displayName.toLowerCase().contains('admin'))) {
-              await prefs.setString('last_admin_caller_user_id', callerId);
+              await prefs.setString('last_admin_caller_user_id', otherUserId);
               await prefs.setString('last_admin_caller_name', displayName);
             }
           }
@@ -571,10 +573,12 @@ class WaiterCallHistoryService {
     final prefs = await SharedPreferences.getInstance();
     final key = _resolveStorageKey(prefs);
 
-    if (callerUserId != null && callerUserId.trim().isNotEmpty) {
+    final myUserId = (prefs.getString('user_id') ?? prefs.getString('userId'))?.trim() ?? '';
+
+    if (callerUserId != null && callerUserId.trim().isNotEmpty && callerUserId.trim() != myUserId) {
       await prefs.setString('last_admin_caller_user_id', callerUserId.trim());
     }
-    if (callerName.trim().isNotEmpty) {
+    if (callerName.trim().isNotEmpty && !callerName.toLowerCase().contains('waiter')) {
       await prefs.setString('last_admin_caller_name', callerName.trim());
     }
 
@@ -628,20 +632,23 @@ class WaiterCallHistoryService {
   }
 
   static Future<String?> getLastAdminUserId() async {
-    // 1. Check SharedPreferences cached last admin user id
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final id = prefs.getString('last_admin_caller_user_id')?.trim();
-      if (id != null && id.isNotEmpty) return id;
-    } catch (_) {}
+    final prefs = await SharedPreferences.getInstance();
+    final myUserId = (prefs.getString('user_id') ?? prefs.getString('userId'))?.trim() ?? '';
 
-    // 2. Check existing call history entries for any callerUserId
+    // If last_admin_caller_user_id was mistakenly set to myUserId, clear it
+    final cachedId = prefs.getString('last_admin_caller_user_id')?.trim();
+    if (cachedId != null && (cachedId == myUserId || cachedId.isEmpty)) {
+      await prefs.remove('last_admin_caller_user_id');
+    } else if (cachedId != null && cachedId.isNotEmpty) {
+      return cachedId;
+    }
+
+    // 2. Check existing call history entries for any callerUserId != myUserId
     try {
-      final entries = await readHistory();
+      final entries = await readHistory(syncRemote: false);
       for (final e in entries) {
         final id = e.callerUserId?.trim();
-        if (id != null && id.isNotEmpty) {
-          final prefs = await SharedPreferences.getInstance();
+        if (id != null && id.isNotEmpty && id != myUserId) {
           await prefs.setString('last_admin_caller_user_id', id);
           return id;
         }
@@ -650,7 +657,6 @@ class WaiterCallHistoryService {
 
     // 3. Resolve Admin/Superadmin via API
     try {
-      final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token')?.trim();
       if (token != null && token.isNotEmpty) {
         final uri = Uri.parse(
@@ -665,14 +671,11 @@ class WaiterCallHistoryService {
           final decoded = jsonDecode(utf8.decode(res.bodyBytes));
           final docs = decoded['docs'] as List?;
           if (docs != null && docs.isNotEmpty) {
-            dynamic selectedDoc = docs.firstWhere(
-              (d) => d is Map && d['role'] == 'superadmin',
-              orElse: () => docs.first,
-            );
-            if (selectedDoc is Map) {
-              final adminId = (selectedDoc['id'] ?? selectedDoc['_id'])?.toString().trim();
-              final adminName = (selectedDoc['name'] ?? selectedDoc['username'] ?? 'Super Admin').toString();
-              if (adminId != null && adminId.isNotEmpty) {
+            for (final d in docs) {
+              if (d is! Map) continue;
+              final adminId = (d['id'] ?? d['_id'])?.toString().trim();
+              if (adminId != null && adminId.isNotEmpty && adminId != myUserId) {
+                final adminName = (d['name'] ?? d['username'] ?? 'Super Admin').toString();
                 await prefs.setString('last_admin_caller_user_id', adminId);
                 await prefs.setString('last_admin_caller_name', adminName);
                 debugPrint('WaiterCallHistoryService: fetched admin user ID via API: $adminId ($adminName)');
@@ -688,9 +691,7 @@ class WaiterCallHistoryService {
 
     // 4. Fallback: Check message threads & messages
     try {
-      final prefs = await SharedPreferences.getInstance();
       final token = prefs.getString('token')?.trim();
-      final myUserId = (prefs.getString('user_id') ?? prefs.getString('userId'))?.trim() ?? '';
       if (token != null && token.isNotEmpty) {
         final threadUrl = Uri.parse(
           '${ApiConfig.baseUrl}/message-threads?limit=1&depth=0${myUserId.isNotEmpty ? "&where[staffUser][equals]=$myUserId" : ""}',
@@ -720,7 +721,7 @@ class WaiterCallHistoryService {
                     if (role == 'admin' || role == 'superadmin') {
                       final sUser = m['senderUser'];
                       final sId = sUser is Map ? (sUser['id'] ?? sUser['_id'])?.toString() : sUser?.toString();
-                      if (sId != null && sId.isNotEmpty) {
+                      if (sId != null && sId.isNotEmpty && sId != myUserId) {
                         await prefs.setString('last_admin_caller_user_id', sId);
                         return sId;
                       }

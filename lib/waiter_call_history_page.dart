@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'waiter_call_history_service.dart';
 import 'waiter_live_call_service.dart';
@@ -374,11 +375,14 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
   }
 
   Future<void> _callBackAdmin(WaiterCallHistoryEntry entry) async {
+    final prefs = await SharedPreferences.getInstance();
+    final myUserId = (prefs.getString('user_id') ?? prefs.getString('userId'))?.trim() ?? '';
+
     String? adminId = entry.callerUserId;
-    if (adminId == null || adminId.isEmpty) {
+    if (adminId == null || adminId.isEmpty || adminId == myUserId) {
       adminId = await WaiterCallHistoryService.getLastAdminUserId();
     }
-    if (adminId == null || adminId.isEmpty) {
+    if (adminId == null || adminId.isEmpty || adminId == myUserId) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(

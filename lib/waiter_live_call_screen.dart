@@ -30,6 +30,19 @@ class _WaiterLiveCallScreenState extends State<WaiterLiveCallScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     )..repeat(reverse: true);
+
+    final state = _callService.callState;
+    if (state == WaiterCallState.ended ||
+        state == WaiterCallState.declined ||
+        state == WaiterCallState.busy ||
+        state == WaiterCallState.offline ||
+        state == WaiterCallState.error) {
+      _autoCloseTimer = Timer(const Duration(milliseconds: 2800), () {
+        if (mounted && Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+        }
+      });
+    }
   }
 
   @override
@@ -45,9 +58,13 @@ class _WaiterLiveCallScreenState extends State<WaiterLiveCallScreen>
     setState(() {});
 
     final state = _callService.callState;
-    if (state == WaiterCallState.ended || state == WaiterCallState.idle) {
+    if (state == WaiterCallState.ended ||
+        state == WaiterCallState.declined ||
+        state == WaiterCallState.busy ||
+        state == WaiterCallState.offline ||
+        state == WaiterCallState.error) {
       _autoCloseTimer?.cancel();
-      _autoCloseTimer = Timer(const Duration(milliseconds: 1800), () {
+      _autoCloseTimer = Timer(const Duration(milliseconds: 2800), () {
         if (mounted && Navigator.of(context).canPop()) {
           Navigator.of(context).pop();
         }
@@ -56,18 +73,27 @@ class _WaiterLiveCallScreenState extends State<WaiterLiveCallScreen>
   }
 
   String _getStatusText() {
-    final isOutgoing = _callService.isOutgoing;
+    if (!_callService.isOutgoing && _callService.callState == WaiterCallState.ringing) {
+      return 'Incoming Call from Super Admin...';
+    }
     switch (_callService.callState) {
       case WaiterCallState.idle:
-        return isOutgoing ? 'Calling Super Admin...' : 'Connecting...';
-      case WaiterCallState.ringing:
-        return isOutgoing ? 'Admin Phone Ringing...' : 'Incoming Audio Call...';
       case WaiterCallState.connecting:
-        return isOutgoing ? 'Connecting...' : 'Connecting...';
+        return _callService.isOutgoing ? 'Calling Super Admin...' : 'Connecting...';
+      case WaiterCallState.ringing:
+        return _callService.isOutgoing ? 'Admin Phone Ringing...' : 'Incoming Audio Call...';
       case WaiterCallState.connected:
         return _callService.formattedDuration;
       case WaiterCallState.ended:
-        return 'Call ended';
+        return _callService.errorMessage ?? 'Call ended';
+      case WaiterCallState.declined:
+        return _callService.errorMessage ?? 'Call declined by Admin';
+      case WaiterCallState.busy:
+        return _callService.errorMessage ?? 'Admin line is busy';
+      case WaiterCallState.offline:
+        return _callService.errorMessage ?? 'Super Admin is currently offline';
+      case WaiterCallState.error:
+        return _callService.errorMessage ?? 'Call failed';
     }
   }
 
@@ -76,7 +102,11 @@ class _WaiterLiveCallScreenState extends State<WaiterLiveCallScreen>
       case WaiterCallState.connected:
         return const Color(0xFF25D366);
       case WaiterCallState.ended:
-        return Colors.redAccent;
+      case WaiterCallState.declined:
+      case WaiterCallState.busy:
+      case WaiterCallState.offline:
+      case WaiterCallState.error:
+        return const Color(0xFFF87171);
       default:
         return Colors.white70;
     }
@@ -222,11 +252,16 @@ class _WaiterLiveCallScreenState extends State<WaiterLiveCallScreen>
               AnimatedBuilder(
                 animation: _pulseController,
                 builder: (context, child) {
-                  final scale = isConnected
+                  final isTerminal = state == WaiterCallState.ended ||
+                      state == WaiterCallState.declined ||
+                      state == WaiterCallState.busy ||
+                      state == WaiterCallState.offline ||
+                      state == WaiterCallState.error;
+                  final scale = (isConnected || isTerminal)
                       ? 1.0
                       : 1.0 + (_pulseController.value * 0.08);
                   final glow =
-                      isConnected ? 0.0 : _pulseController.value * 12.0;
+                      (isConnected || isTerminal) ? 0.0 : _pulseController.value * 12.0;
 
                   return Transform.scale(
                     scale: scale,
