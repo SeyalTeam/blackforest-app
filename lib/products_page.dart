@@ -198,6 +198,9 @@ class ProductsPage extends StatefulWidget {
       'product': p['product'] is Map
           ? {'id': p['product']['id'], '_id': p['product']['_id']}
           : p['product'],
+      'isOutOfStock': p['isOutOfStock'],
+      'allowZeroStockBilling': p['allowZeroStockBilling'],
+      'stock': p['stock'],
     };
   }
 
@@ -1417,7 +1420,6 @@ class _ProductsPageState extends State<ProductsPage> {
                 final status = item['status'];
                 if (status == 'inactive') return false;
                 if (item['isAvailable'] == false) return false;
-                if (item['isOutOfStock'] == true && item['allowZeroStockBilling'] != true) return false;
                 return true;
               })
               .toList(growable: false);
@@ -1928,6 +1930,29 @@ class _ProductsPageState extends State<ProductsPage> {
     const actionFontSize = 21.0;
     const qtyFontSize = 18.0;
 
+    final isOutOfStock = _isProductOutOfStock(product);
+    if (isOutOfStock) {
+      return SizedBox(
+        height: addControlHeight,
+        child: Container(
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: Colors.grey.shade200,
+            borderRadius: buttonBorder,
+            border: Border.all(color: Colors.grey.shade300),
+          ),
+          child: Text(
+            'OUT',
+            style: TextStyle(
+              color: Colors.red.shade700,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ),
+      );
+    }
+
     if (qty <= 0) {
       return SizedBox(
         height: addControlHeight,
@@ -2062,17 +2087,23 @@ class _ProductsPageState extends State<ProductsPage> {
     cartProvider.updateQuantity(productId, currentQty - 1);
   }
 
+  bool _isProductOutOfStock(Map<String, dynamic> product) {
+    final allowZeroStockBilling = product['allowZeroStockBilling'] == true;
+    if (allowZeroStockBilling) return false;
+
+    final isOutOfStock = product['isOutOfStock'] == true;
+    final stockVal = product['stock'];
+    final isZeroStock = (stockVal != null && (num.tryParse(stockVal.toString()) ?? 0) <= 0);
+
+    return isOutOfStock || isZeroStock;
+  }
+
   /// Add or update product in cart
   Future<void> _addOrUpdateProduct(Map<String, dynamic> product) async {
     final productId = _productId(product);
     if (productId.isEmpty) return;
 
-    final allowZeroStockBilling = product['allowZeroStockBilling'] == true;
-    final isOutOfStock = product['isOutOfStock'] == true;
-    final stockVal = product['stock'];
-    final isZeroStock = (stockVal != null && (num.tryParse(stockVal.toString()) ?? 0) <= 0);
-
-    if (!allowZeroStockBilling && (isOutOfStock || isZeroStock)) {
+    if (_isProductOutOfStock(product)) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -2791,6 +2822,7 @@ class _ProductsPageState extends State<ProductsPage> {
         final price = _readProductPrice(product, cartProvider: cartProvider);
         final qty = _qtyInCart(cartProvider, productId);
         final isFavorite = _favoriteProductIds.contains(productId);
+        final isOutOfStock = _isProductOutOfStock(product);
         final showFocusHighlight =
             isFocused && _showFocusedProductHighlight && qty <= 0;
 
@@ -2820,7 +2852,7 @@ class _ProductsPageState extends State<ProductsPage> {
                 : const [],
           ),
           child: GestureDetector(
-            onTap: () => _addOrUpdateProduct(product),
+            onTap: isOutOfStock ? null : () => _addOrUpdateProduct(product),
             behavior: HitTestBehavior.opaque,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2858,6 +2890,32 @@ class _ProductsPageState extends State<ProductsPage> {
                                       ),
                                 ),
                         ),
+                        if (isOutOfStock)
+                          Positioned.fill(
+                            child: Container(
+                              color: Colors.black.withValues(alpha: 0.55),
+                              alignment: Alignment.center,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 3,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: Colors.red.shade700,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: const Text(
+                                  'OUT OF STOCK',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 10,
+                                    letterSpacing: 0.4,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
                         Positioned(
                           top: 8,
                           right: 8,
@@ -3061,8 +3119,10 @@ class _ProductsPageState extends State<ProductsPage> {
       itemCount: products.length,
       itemBuilder: (context, index) {
         final product = products[index];
-        final id = _productId(product);
-        final name = product['name']?.toString() ?? 'Unknown';
+        final productMap = Map<String, dynamic>.from(product is Map ? product : {});
+        final id = _productId(productMap);
+        final name = productMap['name']?.toString() ?? 'Unknown';
+        final isOutOfStock = _isProductOutOfStock(productMap);
 
         final matching =
             cartProvider.cartItems.where((i) => i.id == id).toList();
@@ -3073,24 +3133,28 @@ class _ProductsPageState extends State<ProductsPage> {
             : qtyNum.toStringAsFixed(2);
 
         final resolvedPrice = _readProductPrice(
-          product,
+          productMap,
           cartProvider: cartProvider,
         );
         final price = _formatCompactPrice(resolvedPrice);
 
-        final isWeightBased = _isWeightBasedProduct(product);
-        final rawUnit = product['defaultPriceDetails']?['unit']?.toString() ?? '';
+        final isWeightBased = _isWeightBasedProduct(productMap);
+        final rawUnit = productMap['defaultPriceDetails']?['unit']?.toString() ?? '';
         final unit = rawUnit.isNotEmpty ? rawUnit : (isWeightBased ? 'kg' : 'pcs');
 
-        String? imageUrl = _resolveProductImage(product);
+        String? imageUrl = _resolveProductImage(productMap);
 
         return Container(
           margin: const EdgeInsets.symmetric(vertical: 3),
           decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFFF1F8E9) : Colors.white,
+            color: isOutOfStock
+                ? Colors.grey.shade100
+                : (isSelected ? const Color(0xFFF1F8E9) : Colors.white),
             borderRadius: BorderRadius.circular(10),
             border: Border.all(
-              color: isSelected ? Colors.green.shade400 : Colors.grey.shade200,
+              color: isOutOfStock
+                  ? Colors.grey.shade300
+                  : (isSelected ? Colors.green.shade400 : Colors.grey.shade200),
               width: isSelected ? 1.5 : 1,
             ),
           ),
@@ -3098,38 +3162,43 @@ class _ProductsPageState extends State<ProductsPage> {
             dense: true,
             contentPadding:
                 const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            onTap: () async {
-              await _addOrUpdateProduct(product);
-            },
+            onTap: isOutOfStock
+                ? null
+                : () async {
+                    await _addOrUpdateProduct(productMap);
+                  },
             leading: Stack(
               alignment: Alignment.center,
               children: [
                 if (imageUrl != null)
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: CachedNetworkImage(
-                      imageUrl: imageUrl,
-                      width: 40,
-                      height: 40,
-                      fit: BoxFit.cover,
-                      placeholder: (_, __) => Container(
+                  Opacity(
+                    opacity: isOutOfStock ? 0.4 : 1.0,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: CachedNetworkImage(
+                        imageUrl: imageUrl,
                         width: 40,
                         height: 40,
-                        color: Colors.grey.shade100,
-                        child: const Icon(
-                          Icons.search,
-                          size: 20,
-                          color: Colors.grey,
+                        fit: BoxFit.cover,
+                        placeholder: (_, __) => Container(
+                          width: 40,
+                          height: 40,
+                          color: Colors.grey.shade100,
+                          child: const Icon(
+                            Icons.search,
+                            size: 20,
+                            color: Colors.grey,
+                          ),
                         ),
-                      ),
-                      errorWidget: (_, __, ___) => Container(
-                        width: 40,
-                        height: 40,
-                        color: Colors.grey.shade100,
-                        child: const Icon(
-                          Icons.search,
-                          size: 20,
-                          color: Colors.grey,
+                        errorWidget: (_, __, ___) => Container(
+                          width: 40,
+                          height: 40,
+                          color: Colors.grey.shade100,
+                          child: const Icon(
+                            Icons.search,
+                            size: 20,
+                            color: Colors.grey,
+                          ),
                         ),
                       ),
                     ),
@@ -3156,74 +3225,100 @@ class _ProductsPageState extends State<ProductsPage> {
                   ),
               ],
             ),
-            title: _buildHighlightedText(name, query),
-            subtitle: Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text(
-                price,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey.shade700,
+            title: Opacity(
+              opacity: isOutOfStock ? 0.5 : 1.0,
+              child: _buildHighlightedText(name, query),
+            ),
+            subtitle: Opacity(
+              opacity: isOutOfStock ? 0.5 : 1.0,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text(
+                  price,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey.shade700,
+                  ),
                 ),
               ),
             ),
-            trailing: isSelected
+            trailing: isOutOfStock
                 ? Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
+                      horizontal: 8,
+                      vertical: 4,
                     ),
                     decoration: BoxDecoration(
-                      color: Colors.green.shade700,
-                      borderRadius: BorderRadius.circular(14),
+                      color: Colors.red.shade50,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.red.shade200),
                     ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(
-                          "$qtyText $unit",
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        const Icon(Icons.edit, color: Colors.white, size: 12),
-                      ],
+                    child: Text(
+                      "OUT OF STOCK",
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.red.shade700,
+                      ),
                     ),
                   )
-                : Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
-                    ),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey.shade300),
-                      borderRadius: BorderRadius.circular(14),
-                      color: Colors.grey.shade50,
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          Icons.add,
-                          size: 14,
-                          color: Colors.grey.shade700,
+                : isSelected
+                    ? Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
                         ),
-                        const SizedBox(width: 2),
-                        Text(
-                          "Add",
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: Colors.grey.shade800,
-                          ),
+                        decoration: BoxDecoration(
+                          color: Colors.green.shade700,
+                          borderRadius: BorderRadius.circular(14),
                         ),
-                      ],
-                    ),
-                  ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              "$qtyText $unit",
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            const Icon(Icons.edit, color: Colors.white, size: 12),
+                          ],
+                        ),
+                      )
+                    : Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 5,
+                        ),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey.shade300),
+                          borderRadius: BorderRadius.circular(14),
+                          color: Colors.grey.shade50,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.add,
+                              size: 14,
+                              color: Colors.grey.shade700,
+                            ),
+                            const SizedBox(width: 2),
+                            Text(
+                              "Add",
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: Colors.grey.shade800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
           ),
         );
       },
@@ -3277,11 +3372,12 @@ class _ProductsPageState extends State<ProductsPage> {
             itemBuilder: (context, index) {
               final product = visibleProducts[index];
               final productMap = Map<String, dynamic>.from(product);
+              final isOutOfStock = _isProductOutOfStock(productMap);
               String? imageUrl = _resolveProductImage(productMap);
               imageUrl ??= 'https://via.placeholder.com/150?text=No+Image';
 
               return GestureDetector(
-                onTap: () => _addOrUpdateProduct(productMap),
+                onTap: isOutOfStock ? null : () => _addOrUpdateProduct(productMap),
                 child: Consumer<CartProvider>(
                   builder: (context, cartProvider, child) {
                     final resolvedPrice = _readProductPrice(
@@ -3426,6 +3522,35 @@ class _ProductsPageState extends State<ProductsPage> {
                                       color: Colors.white,
                                       fontSize: 16,
                                       fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          if (isOutOfStock)
+                            Positioned.fill(
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Container(
+                                  color: Colors.black.withValues(alpha: 0.65),
+                                  alignment: Alignment.center,
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: Colors.red.shade700,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: const Text(
+                                      'OUT OF STOCK',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 10,
+                                        letterSpacing: 0.4,
+                                      ),
                                     ),
                                   ),
                                 ),
