@@ -16,6 +16,7 @@ class WaiterCallHistoryEntry {
     this.callType = 'table', // 'table' | 'admin_call'
     this.durationSeconds = 0,
     this.callerRole,
+    this.callerUserId,
     this.acknowledgedBy,
     this.acknowledgedAtIso,
   });
@@ -31,6 +32,7 @@ class WaiterCallHistoryEntry {
   final String callType; // 'table' | 'admin_call'
   final int durationSeconds;
   final String? callerRole;
+  final String? callerUserId;
   final String? acknowledgedBy;
   final String? acknowledgedAtIso;
 
@@ -66,6 +68,7 @@ class WaiterCallHistoryEntry {
     String? callType,
     int? durationSeconds,
     String? callerRole,
+    String? callerUserId,
     String? acknowledgedBy,
     String? acknowledgedAtIso,
   }) {
@@ -81,6 +84,7 @@ class WaiterCallHistoryEntry {
       callType: callType ?? this.callType,
       durationSeconds: durationSeconds ?? this.durationSeconds,
       callerRole: callerRole ?? this.callerRole,
+      callerUserId: callerUserId ?? this.callerUserId,
       acknowledgedBy: acknowledgedBy ?? this.acknowledgedBy,
       acknowledgedAtIso: acknowledgedAtIso ?? this.acknowledgedAtIso,
     );
@@ -99,6 +103,7 @@ class WaiterCallHistoryEntry {
       'callType': callType,
       'durationSeconds': durationSeconds,
       'callerRole': callerRole,
+      'callerUserId': callerUserId,
       'acknowledgedBy': acknowledgedBy,
       'acknowledgedAtIso': acknowledgedAtIso,
     };
@@ -118,6 +123,7 @@ class WaiterCallHistoryEntry {
     final callType = text(raw['callType']).isEmpty ? 'table' : text(raw['callType']);
     final durationSeconds = (raw['durationSeconds'] as num?)?.toInt() ?? 0;
     final callerRole = text(raw['callerRole']);
+    final callerUserId = text(raw['callerUserId']);
     final acknowledgedBy = text(raw['acknowledgedBy']);
     final acknowledgedAtIso = text(raw['acknowledgedAtIso']);
 
@@ -137,6 +143,7 @@ class WaiterCallHistoryEntry {
       callType: callType,
       durationSeconds: durationSeconds,
       callerRole: callerRole.isEmpty ? null : callerRole,
+      callerUserId: callerUserId.isEmpty ? null : callerUserId,
       acknowledgedBy: acknowledgedBy.isEmpty ? null : acknowledgedBy,
       acknowledgedAtIso: acknowledgedAtIso.isEmpty ? null : acknowledgedAtIso,
     );
@@ -286,12 +293,20 @@ class WaiterCallHistoryService {
     required String callId,
     required String callerName,
     String? callerRole,
+    String? callerUserId,
     String status = 'missed',
     int durationSeconds = 0,
     String? callTimestampIso,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final key = _resolveStorageKey(prefs);
+
+    if (callerUserId != null && callerUserId.trim().isNotEmpty) {
+      await prefs.setString('last_admin_caller_user_id', callerUserId.trim());
+    }
+    if (callerName.trim().isNotEmpty) {
+      await prefs.setString('last_admin_caller_name', callerName.trim());
+    }
 
     final entries = _readEntriesFromPrefs(prefs, key).toList(growable: true);
     final index = entries.indexWhere((entry) => entry.eventKey == callId);
@@ -302,6 +317,7 @@ class WaiterCallHistoryService {
       entries[index] = entries[index].copyWith(
         customerName: normalizedCaller,
         callerRole: callerRole ?? 'Super Admin',
+        callerUserId: callerUserId ?? entries[index].callerUserId,
         status: status,
         durationSeconds: durationSeconds,
         callType: 'admin_call',
@@ -321,11 +337,21 @@ class WaiterCallHistoryService {
           callType: 'admin_call',
           durationSeconds: durationSeconds,
           callerRole: callerRole ?? 'Super Admin',
+          callerUserId: callerUserId,
         ),
       );
     }
 
     await _saveEntriesToPrefs(prefs: prefs, key: key, entries: entries);
+  }
+
+  static Future<String?> getLastAdminUserId() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final id = prefs.getString('last_admin_caller_user_id')?.trim();
+      if (id != null && id.isNotEmpty) return id;
+    } catch (_) {}
+    return null;
   }
 
   static Future<void> updateVoiceCallStatus({

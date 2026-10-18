@@ -52,6 +52,9 @@ class WaiterLiveCallService extends ChangeNotifier {
   bool _isSpeakerOn = false;
   bool get isSpeakerOn => _isSpeakerOn;
 
+  bool _isOutgoing = false;
+  bool get isOutgoing => _isOutgoing;
+
   Timer? _durationTimer;
   int _durationSeconds = 0;
   int get durationSeconds => _durationSeconds;
@@ -113,6 +116,7 @@ class WaiterLiveCallService extends ChangeNotifier {
         return;
       }
 
+      _isOutgoing = false;
       _currentCallId = callId;
       _callerUserId = senderId;
       _callerName = senderName;
@@ -151,16 +155,29 @@ class WaiterLiveCallService extends ChangeNotifier {
         callId: callId ?? 'call_${DateTime.now().millisecondsSinceEpoch}',
         callerName: senderName,
         callerRole: senderRole,
+        callerUserId: senderId,
         status: 'missed',
       ));
 
       // Open Waiter Live Call Screen directly (Full screen UI matching Admin app)
       _showIncomingCallScreen();
+    } else if (signalType == 'ringing') {
+      if (_currentCallId == callId && _callState == WaiterCallState.connecting) {
+        _callState = WaiterCallState.ringing;
+        notifyListeners();
+      }
+    } else if (signalType == 'answer') {
+      if (_currentCallId == callId) {
+        await _handleRemoteAnswer(message['sdp']);
+      }
     } else if (signalType == 'ice_candidate') {
       if (_currentCallId == callId) {
         await _handleRemoteIceCandidate(message['candidate']);
       }
-    } else if (signalType == 'end' || signalType == 'reject') {
+    } else if (signalType == 'end' ||
+        signalType == 'reject' ||
+        signalType == 'busy' ||
+        signalType == 'user_offline') {
       if (_currentCallId == callId || _callState != WaiterCallState.idle) {
         await _terminateCallLocally();
       }
@@ -344,6 +361,136 @@ class WaiterLiveCallService extends ChangeNotifier {
       await _peerConnection!.addCandidate(candidate);
     } catch (e) {
       debugPrint('WaiterLiveCallService: error adding ice candidate: $e');
+    }
+  }
+
+  Future<void> _handleRemoteAnswer(dynamic sdpData) async {
+    if (_peerConnection == null || sdpData == null) return;
+    try {
+      final sdpMap = sdpData is Map
+          ? Map<String, dynamic>.from(sdpData)
+          : jsonDecode(sdpData.toString());
+      final description = RTCSessionDescription(
+        sdpMap['sdp']?.toString() ?? '',
+        sdpMap['type']?.toString() ?? 'answer',
+      );
+      await _peerConnection!.setRemoteDescription(description);
+      _onConnected();
+    } catch (e) {
+      debugPrint('WaiterLiveCallService: error setting remote answer: $e');
+    }
+  }
+
+  Future<void> startCallToAdmin({
+    required String adminUserId,
+    String adminName = 'Super Admin',
+  }) async {
+    if (_callState != WaiterCallState.idle) return;
+
+    final micStatus = await Permission.microphone.request();
+    if (!micStatus.isGranted) {
+      debugPrint('WaiterLiveCallService: microphone permission denied');
+      return;
+    }
+
+    final prefs = await SharedPreferences.getInstance();
+    final myName = prefs.getString('user_name') ??
+        prefs.getString('name') ??
+        prefs.getString('email') ??
+        'Waiter';
+
+    _isOutgoing = true;
+    _currentCallId = 'call_${DateTime.now().millisecondsSinceEpoch}';
+    _callerUserId = adminUserId;
+    _callerName = adminName;
+    _callState = WaiterCallState.connecting;
+    _durationSeconds = 0;
+    _isMuted = false;
+    _isSpeakerOn = false;
+    notifyListeners();
+
+    // Show call screen immediately
+    _showIncomingCallScreen();
+
+    // Record outgoing call in history
+    unawaited(WaiterCallHistoryService.recordVoiceCall(
+      callId: _currentCallId!,
+      callerName: adminName,
+      callerRole: 'Super Admin',
+      callerUserId: adminUserId,
+      status: 'missed',
+    ));
+
+    try {
+      await Helper.setSpeakerphoneOn(false);
+
+      _peerConnection = await createPeerConnection(_iceConfig);
+
+      final constraints = <String, dynamic>{
+        'audio': {
+          'echoCancellation': true,
+          'noiseSuppression': true,
+          'autoGainControl': true,
+        },
+        'video': false,
+      };
+
+      _localStream = await navigator.mediaDevices.getUserMedia(constraints);
+      for (final track in _localStream!.getAudioTracks()) {
+        await _peerConnection!.addTrack(track, _localStream!);
+      }
+
+      _peerConnection!.onIceCandidate = (candidate) {
+        if (candidate.candidate != null) {
+          GlobalKotRealtimeService.instance.sendJsonMessage({
+            'action': 'call_signal',
+            'callId': _currentCallId,
+            'signalType': 'ice_candidate',
+            'targetUserId': adminUserId,
+            'candidate': candidate.toMap(),
+          });
+        }
+      };
+
+      _peerConnection!.onTrack = (event) {
+        if (event.streams.isNotEmpty) {
+          _remoteStream = event.streams[0];
+          _applyAudioRouting();
+          notifyListeners();
+        }
+      };
+
+      _peerConnection!.onConnectionState = (state) {
+        debugPrint('WaiterLiveCallService: connection state: $state');
+        if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+          _onConnected();
+        } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+            state == RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+            state == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
+          if (_callState == WaiterCallState.connected) {
+            endCall();
+          }
+        }
+      };
+
+      final offer = await _peerConnection!.createOffer({
+        'offerToReceiveAudio': 1,
+        'offerToReceiveVideo': 0,
+      });
+      await _peerConnection!.setLocalDescription(offer);
+
+      GlobalKotRealtimeService.instance.sendJsonMessage({
+        'action': 'call_signal',
+        'callId': _currentCallId,
+        'signalType': 'offer',
+        'targetUserId': adminUserId,
+        'sdp': offer.toMap(),
+        'callerName': myName,
+        'callerRole': 'waiter',
+      });
+    } catch (e) {
+      debugPrint('WaiterLiveCallService: error starting call to admin: $e');
+      await endCall();
     }
   }
 

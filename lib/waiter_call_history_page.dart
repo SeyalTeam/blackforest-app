@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 import 'waiter_call_history_service.dart';
+import 'waiter_live_call_service.dart';
 
 enum _WaiterCallFilter {
   all,
@@ -318,13 +319,79 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
             ],
           ),
         ),
-        trailing: Icon(
-          isTable ? Icons.room_service_outlined : Icons.phone_enabled_rounded,
-          color: const Color(0xFF94A3B8),
-          size: 22,
-        ),
+        onTap: !isTable ? () => _callBackAdmin(entry) : null,
+        trailing: !isTable
+            ? InkWell(
+                onTap: () => _callBackAdmin(entry),
+                borderRadius: BorderRadius.circular(20),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEAF8F1),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: const Color(0xFF86EFAC)),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Icon(
+                        Icons.call_rounded,
+                        color: Color(0xFF15803D),
+                        size: 15,
+                      ),
+                      SizedBox(width: 4),
+                      Text(
+                        'Call',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF15803D),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            : Icon(
+                Icons.room_service_outlined,
+                color: const Color(0xFF94A3B8),
+                size: 22,
+              ),
       ),
     );
+  }
+
+  Future<void> _callBackAdmin(WaiterCallHistoryEntry entry) async {
+    String? adminId = entry.callerUserId;
+    if (adminId == null || adminId.isEmpty) {
+      adminId = await WaiterCallHistoryService.getLastAdminUserId();
+    }
+    if (adminId == null || adminId.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cannot call back: Admin contact ID unavailable.'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+      return;
+    }
+
+    final adminName = entry.customerName.isNotEmpty ? entry.customerName : 'Super Admin';
+    try {
+      await WaiterLiveCallService.instance.startCallToAdmin(
+        adminUserId: adminId,
+        adminName: adminName,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Call failed: $e'),
+          backgroundColor: Colors.redAccent,
+        ),
+      );
+    }
   }
 
   Widget _buildTopFilterButton({

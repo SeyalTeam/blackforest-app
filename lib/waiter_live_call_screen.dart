@@ -56,13 +56,14 @@ class _WaiterLiveCallScreenState extends State<WaiterLiveCallScreen>
   }
 
   String _getStatusText() {
+    final isOutgoing = _callService.isOutgoing;
     switch (_callService.callState) {
       case WaiterCallState.idle:
-        return 'Connecting...';
+        return isOutgoing ? 'Calling Super Admin...' : 'Connecting...';
       case WaiterCallState.ringing:
-        return 'Incoming Audio Call...';
+        return isOutgoing ? 'Admin Phone Ringing...' : 'Incoming Audio Call...';
       case WaiterCallState.connecting:
-        return 'Connecting...';
+        return isOutgoing ? 'Connecting...' : 'Connecting...';
       case WaiterCallState.connected:
         return _callService.formattedDuration;
       case WaiterCallState.ended:
@@ -86,13 +87,14 @@ class _WaiterLiveCallScreenState extends State<WaiterLiveCallScreen>
     final state = _callService.callState;
     final isConnected = state == WaiterCallState.connected;
     final isRinging = state == WaiterCallState.ringing;
+    final showAnswerDecline = isRinging && !_callService.isOutgoing;
 
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
         final nav = Navigator.of(context);
-        if (isRinging) {
+        if (showAnswerDecline) {
           await _callService.declineCall();
           if (nav.canPop()) {
             nav.pop();
@@ -141,6 +143,7 @@ class _WaiterLiveCallScreenState extends State<WaiterLiveCallScreen>
             }
           }
         } else {
+          await _callService.endCall();
           if (nav.canPop()) {
             nav.pop();
           }
@@ -304,7 +307,7 @@ class _WaiterLiveCallScreenState extends State<WaiterLiveCallScreen>
                   borderRadius: BorderRadius.circular(32),
                   border: Border.all(color: Colors.white10),
                 ),
-                child: isRinging
+                child: showAnswerDecline
                     ? Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
