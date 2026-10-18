@@ -104,13 +104,11 @@ class WaiterLiveCallService extends ChangeNotifier {
     final senderName = message['senderName']?.toString() ?? message['callerName']?.toString() ?? 'Admin';
     final senderRole = message['senderRole']?.toString() ?? message['callerRole']?.toString() ?? 'Super Admin';
 
-    // Discard signals not intended for us, except user_offline signals which inform caller
-    if (signalType != 'user_offline') {
-      final targetUserId = (message['targetUserId'] ?? message['recipientUserId'])?.toString().trim();
-      if (targetUserId != null && targetUserId.isNotEmpty && myUserId.isNotEmpty && targetUserId != myUserId) {
-        debugPrint('WaiterLiveCallService: targetUserId ($targetUserId) != myUserId ($myUserId), ignoring');
-        return;
-      }
+    // Discard signals not intended for us
+    final targetUserId = (message['targetUserId'] ?? message['recipientUserId'])?.toString().trim();
+    if (targetUserId != null && targetUserId.isNotEmpty && myUserId.isNotEmpty && targetUserId != myUserId) {
+      debugPrint('WaiterLiveCallService: targetUserId ($targetUserId) != myUserId ($myUserId), ignoring');
+      return;
     }
 
     if (signalType == 'offer') {
@@ -216,7 +214,7 @@ class WaiterLiveCallService extends ChangeNotifier {
         _scheduleAutoCleanup();
       }
     } else if (signalType == 'user_offline') {
-      if (_currentCallId == callId || _callState != WaiterCallState.idle) {
+      if (_isOutgoing && (_currentCallId == callId || _callState == WaiterCallState.connecting || _callState == WaiterCallState.ringing)) {
         await _stopRingtone();
         _callState = WaiterCallState.offline;
         _errorMessage = 'Super Admin is currently offline';
