@@ -47,6 +47,8 @@ class ContactItem {
   bool get isKitchen =>
       role.trim().toLowerCase() == 'kitchen' || role.trim().toLowerCase() == 'chef';
   bool get isSupervisor => role.trim().toLowerCase() == 'supervisor';
+  bool get isDriver =>
+      role.trim().toLowerCase() == 'driver' || role.trim().toLowerCase() == 'delivery';
   bool get isManager => role.trim().toLowerCase() == 'manager';
 
   ContactItem copyWith({bool? isPunchedIn}) {
@@ -240,15 +242,13 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
       // 1. Fetch today's attendances to identify live punched-in staff
       final activePunchedInUserIds = <String>{};
       final attendedBranchUserIds = <String>{};
+      final userPunchedInBranchMap = <String, String>{};
 
       try {
         final attUrl = Uri.parse(
           '${ApiConfig.baseUrl}/attendance?where[dateString][equals]=$today&limit=500&depth=1',
         );
-        final attRes = await http.get(attUrl, headers: {
-          'Authorization': 'Bearer $token',
-          'Accept': 'application/json',
-        });
+        final attRes = await http.get(attUrl, headers: ApiConfig.getHeaders(token));
 
         if (attRes.statusCode == 200) {
           final attData = jsonDecode(utf8.decode(attRes.bodyBytes));
@@ -257,27 +257,42 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
           for (final doc in attDocs) {
             if (doc is! Map) continue;
             final uId = ContactItem._relId(doc['user']);
+            final empId = ContactItem._relId(doc['employee']);
             final logBranchId = ContactItem._relId(doc['loginBranch']);
+
+            final activities = (doc['activities'] as List?) ?? [];
+            final sessions = activities.where((a) {
+              if (a is! Map) return false;
+              final type = a['type']?.toString();
+              return type == null || type == 'session';
+            }).toList();
+
+            bool isCurrentlyPunchedIn = false;
+            if (sessions.isNotEmpty) {
+              final lastSession = sessions.last as Map;
+              final status = lastSession['status']?.toString().toLowerCase();
+              final punchOut = lastSession['punchOut'];
+              final hasNoPunchOut = punchOut == null || punchOut.toString().trim().isEmpty;
+              isCurrentlyPunchedIn = (status != 'closed') && hasNoPunchOut;
+            }
+
+            if (isCurrentlyPunchedIn) {
+              if (uId != null && uId.isNotEmpty) {
+                activePunchedInUserIds.add(uId);
+                if (logBranchId != null) userPunchedInBranchMap[uId] = logBranchId;
+              }
+              if (empId != null && empId.isNotEmpty) {
+                activePunchedInUserIds.add(empId);
+                if (logBranchId != null) userPunchedInBranchMap[empId] = logBranchId;
+              }
+            }
 
             if (branchId != null &&
                 branchId.isNotEmpty &&
                 logBranchId != null &&
-                logBranchId == branchId &&
-                uId != null) {
-              attendedBranchUserIds.add(uId);
-            }
-
-            final activities = doc['activities'] as List? ?? [];
-            final isCurrentlyPunchedIn = activities.any((a) {
-              if (a is! Map) return false;
-              final type = a['type']?.toString();
-              if (type != null && type != 'session') return false;
-              final punchOut = a['punchOut'];
-              return punchOut == null || punchOut.toString().trim().isEmpty;
-            });
-
-            if (isCurrentlyPunchedIn && uId != null) {
-              activePunchedInUserIds.add(uId);
+                logBranchId == branchId) {
+              if (uId != null) attendedBranchUserIds.add(uId);
+              if (empId != null) attendedBranchUserIds.add(empId);
             }
           }
         }
@@ -287,10 +302,7 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
 
       // 2. Fetch all staff users
       final usersUrl = Uri.parse('${ApiConfig.baseUrl}/users?limit=1000&depth=1&sort=name');
-      final usersRes = await http.get(usersUrl, headers: {
-        'Authorization': 'Bearer $token',
-        'Accept': 'application/json',
-      });
+      final usersRes = await http.get(usersUrl, headers: ApiConfig.getHeaders(token));
 
       if (usersRes.statusCode != 200) {
         throw Exception('Failed to load contacts (${usersRes.statusCode})');
@@ -303,15 +315,26 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
       for (final doc in docs) {
         if (doc is! Map) continue;
         final uId = ContactItem._relId(doc['id'] ?? doc['_id']);
+        final empId = ContactItem._relId(
+          doc['employee'] is Map ? doc['employee']['id'] ?? doc['employee']['_id'] : doc['employee'],
+        );
 
         // Exclude currently logged in user from their own contact book
         if (uId == null || (myUserId.isNotEmpty && uId == myUserId)) continue;
+
+        // REQUIREMENT: ONLY SHOW STAFF WHO ARE CURRENTLY PUNCHED IN!
+        // If they did not punch in or if they have punched out, DO NOT SHOW THEM (they left the branch)
+        final isPunchedIn = activePunchedInUserIds.contains(uId) ||
+            (empId != null && activePunchedInUserIds.contains(empId));
+        if (!isPunchedIn) continue;
 
         // Check if user belongs to this branch
         bool belongsToBranch = false;
         if (branchId == null || branchId.isEmpty) {
           belongsToBranch = true; // Show all if branch is not scoped
         } else {
+          final punchedInBranch = userPunchedInBranchMap[uId] ??
+              (empId != null ? userPunchedInBranchMap[empId] : null);
           final userBranch = ContactItem._relId(doc['branch']);
           final lastBranch = ContactItem._relId(doc['lastLoginBranch']);
           final empBranch = ContactItem._relId(doc['employee'] is Map ? doc['employee']['branch'] : null);
@@ -319,11 +342,13 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
           final isKitchenBranchMatch = kitchenBranches is List &&
               kitchenBranches.any((kb) => ContactItem._relId(kb) == branchId);
 
-          if (userBranch == branchId ||
+          if (punchedInBranch == branchId ||
+              userBranch == branchId ||
               lastBranch == branchId ||
               empBranch == branchId ||
               isKitchenBranchMatch ||
-              attendedBranchUserIds.contains(uId)) {
+              attendedBranchUserIds.contains(uId) ||
+              (empId != null && attendedBranchUserIds.contains(empId))) {
             belongsToBranch = true;
           }
         }
@@ -412,6 +437,8 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
         if (!c.isKitchen) return false;
       } else if (_selectedRoleFilter == 'SUPERVISOR') {
         if (!c.isSupervisor) return false;
+      } else if (_selectedRoleFilter == 'DRIVER') {
+        if (!c.isDriver) return false;
       } else if (_selectedRoleFilter == 'MANAGER') {
         if (!c.isManager) return false;
       }
@@ -569,7 +596,6 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
 
   @override
   Widget build(BuildContext context) {
-    final onDutyCount = _contacts.where((c) => c.isPunchedIn).length;
     final dialedCount = _allEntries.where((e) => e.isDialed).length;
     final receivedCount = _allEntries.where((e) => e.isReceived).length;
     final missedCount = _allEntries.where((e) => e.isIncomingMissed).length;
@@ -770,11 +796,11 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
                     child: Row(
                       children: [
                         _buildRoleChip('ALL', 'All'),
-                        _buildRoleChip('ON_DUTY', 'Punched In ($onDutyCount)'),
                         _buildRoleChip('WAITER', 'Waiters'),
                         _buildRoleChip('CASHIER', 'Cashiers'),
                         _buildRoleChip('SUPERVISOR', 'Supervisors'),
                         _buildRoleChip('KITCHEN', 'Kitchen'),
+                        _buildRoleChip('DRIVER', 'Drivers'),
                         _buildRoleChip('MANAGER', 'Managers'),
                       ],
                     ),
@@ -1029,9 +1055,7 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
             const SizedBox(height: 12),
             Text(
               _searchController.text.isEmpty
-                  ? (_selectedRoleFilter == 'ON_DUTY'
-                      ? 'No employees are currently punched in'
-                      : 'No branch contacts found')
+                  ? 'No employees are currently punched in'
                   : 'No contacts match "${_searchController.text}"',
               style: const TextStyle(
                 fontSize: 15,
