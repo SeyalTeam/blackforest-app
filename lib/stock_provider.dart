@@ -563,12 +563,14 @@ class StockProvider extends ChangeNotifier {
       for (var entry in _selected.entries) {
         if (entry.value) {
           final pid = entry.key;
+          final name = _productNames[pid] ?? "Item";
           items.add({
             "product": pid,
+            "name": name,
             "inStock": _inStock[pid] ?? 0.0,
             "requiredQty": _requiredQty[pid] ?? 0.0,
           });
-          tempNames[pid] = _productNames[pid] ?? "Item";
+          tempNames[pid] = name;
           tempPrices[pid] = _prices[pid] ?? 0.0;
         }
       }
@@ -637,6 +639,7 @@ class StockProvider extends ChangeNotifier {
 
       final body = jsonEncode({
         "branch": targetBranchId,
+        if (_companyId != null && _companyId!.isNotEmpty) "company": _companyId,
         "cashierId": cashierId,
         "cashierName": cashierName,
         "deliveryDate": _deliveryDate!.toUtc().toIso8601String(),

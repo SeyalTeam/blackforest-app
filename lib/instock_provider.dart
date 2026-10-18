@@ -667,6 +667,7 @@ class InstockProvider extends ChangeNotifier {
 
       final payload = jsonEncode({
         "branch": _branchId,
+        if (_companyId != null && _companyId!.isNotEmpty) "company": _companyId,
         "cashierId": cashierId,
         "cashierName": cashierName,
         "date": now.toUtc().toIso8601String(),
@@ -700,8 +701,27 @@ class InstockProvider extends ChangeNotifier {
         _selectedCategoryId = null;
         await _loadCategories();
       } else {
+        String errMsg = "Failed: ${res.statusCode}";
+        try {
+          final errBody = jsonDecode(res.body);
+          if (errBody is Map) {
+            if (errBody['errors'] is List && (errBody['errors'] as List).isNotEmpty) {
+              final first = (errBody['errors'] as List)[0];
+              if (first is Map && first['message'] != null) {
+                errMsg = first['message'].toString();
+              }
+            } else if (errBody['message'] != null) {
+              errMsg = errBody['message'].toString();
+            }
+          }
+        } catch (_) {}
+        debugPrint("Instock submission error ${res.statusCode}: ${res.body}");
         messenger.showSnackBar(
-          SnackBar(content: Text("Failed: ${res.statusCode} - ${res.body}")),
+          SnackBar(
+            content: Text(errMsg),
+            backgroundColor: Colors.redAccent,
+            duration: const Duration(seconds: 4),
+          ),
         );
       }
     } catch (e) {
