@@ -276,6 +276,14 @@ class WaiterCallHistoryService {
     return cached;
   }
 
+  static Future<void> clearHistory() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = _resolveStorageKey(prefs);
+      await prefs.remove(key);
+    } catch (_) {}
+  }
+
   /// Syncs permanent call history (both Table Calls and Voice Calls) from MongoDB backend.
   /// Merges remote docs with local cache so history is NEVER lost upon app reinstallation.
   static Future<List<WaiterCallHistoryEntry>> syncHistoryFromBackend() async {

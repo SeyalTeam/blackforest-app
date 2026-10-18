@@ -25,6 +25,7 @@ import 'package:blackforest_app/global_kot_realtime_service.dart';
 import 'package:blackforest_app/employee.dart';
 import 'package:blackforest_app/attendance_manager.dart';
 import 'package:blackforest_app/waiter_live_call_service.dart';
+import 'package:blackforest_app/waiter_call_history_page.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -151,7 +152,22 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     }
   }
 
+  String? _lastHandledPayload;
+  DateTime? _lastHandledPayloadTime;
+
   void _handleNotificationClick(String payload) {
+    final trimmedPayload = payload.trim();
+    if (trimmedPayload.isEmpty) return;
+
+    final now = DateTime.now();
+    if (_lastHandledPayload == trimmedPayload &&
+        _lastHandledPayloadTime != null &&
+        now.difference(_lastHandledPayloadTime!).inMilliseconds < 1500) {
+      return;
+    }
+    _lastHandledPayload = trimmedPayload;
+    _lastHandledPayloadTime = now;
+
     // We need a context that has the CartProvider
     // The navigatorKey's currentContext is usually the root of the app
     final context = _navigatorKey.currentContext;
@@ -163,14 +179,26 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         );
         return;
       }
-      if (payload.startsWith('chat:')) {
+      if (trimmedPayload.startsWith('chat:') || trimmedPayload == 'chat') {
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (context) => const ChatPage()),
           (route) => false,
         );
+      } else if (trimmedPayload == 'call_incoming' || trimmedPayload.startsWith('call_')) {
+        if (WaiterLiveCallService.instance.callState != WaiterCallState.idle) {
+          WaiterLiveCallService.instance.showIncomingCallScreen();
+        } else {
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (context) => const WaiterCallHistoryPage()),
+          );
+        }
+      } else if (trimmedPayload == 'auto_punch_in' || trimmedPayload == 'profile') {
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (context) => const EmployeePage()),
+        );
       } else {
         final cartProvider = Provider.of<CartProvider>(context, listen: false);
-        cartProvider.openBillAndNavigate(context, payload);
+        cartProvider.openBillAndNavigate(context, trimmedPayload);
       }
     }
   }

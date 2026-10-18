@@ -52,6 +52,9 @@ class WaiterLiveCallService extends ChangeNotifier {
   String _callerName = 'Admin';
   String get callerName => _callerName;
 
+  String _callerRole = 'Super Admin';
+  String get callerRole => _callerRole;
+
   dynamic _pendingOfferSdp;
 
   bool _isMuted = false;
@@ -130,6 +133,7 @@ class WaiterLiveCallService extends ChangeNotifier {
       _currentCallId = callId;
       _callerUserId = senderId;
       _callerName = senderName;
+      _callerRole = senderRole;
       _pendingOfferSdp = message['sdp'];
       _callState = WaiterCallState.ringing;
       _errorMessage = null;
@@ -189,7 +193,7 @@ class WaiterLiveCallService extends ChangeNotifier {
       if (_currentCallId == callId || _callState != WaiterCallState.idle) {
         await _stopRingtone();
         _callState = WaiterCallState.declined;
-        _errorMessage = 'Call declined by Admin';
+        _errorMessage = 'Call declined by $_callerName';
         notifyListeners();
         if (_currentCallId != null) {
           unawaited(WaiterCallHistoryService.updateVoiceCallStatus(
@@ -203,7 +207,7 @@ class WaiterLiveCallService extends ChangeNotifier {
       if (_currentCallId == callId || _callState != WaiterCallState.idle) {
         await _stopRingtone();
         _callState = WaiterCallState.busy;
-        _errorMessage = 'Admin line is busy';
+        _errorMessage = '$_callerName line is busy';
         notifyListeners();
         if (_currentCallId != null) {
           unawaited(WaiterCallHistoryService.updateVoiceCallStatus(
@@ -217,7 +221,7 @@ class WaiterLiveCallService extends ChangeNotifier {
       if (_isOutgoing && (_currentCallId == callId || _callState == WaiterCallState.connecting || _callState == WaiterCallState.ringing)) {
         await _stopRingtone();
         _callState = WaiterCallState.offline;
-        _errorMessage = 'Super Admin is currently offline';
+        _errorMessage = '$_callerName is currently offline';
         notifyListeners();
         if (_currentCallId != null) {
           unawaited(WaiterCallHistoryService.updateVoiceCallStatus(
@@ -296,6 +300,8 @@ class WaiterLiveCallService extends ChangeNotifier {
 
     WidgetsBinding.instance.addPostFrameCallback((_) => push());
   }
+
+  void showIncomingCallScreen() => _showIncomingCallScreen();
 
   Future<void> acceptCall() async {
     await _stopRingtone();
@@ -443,24 +449,20 @@ class WaiterLiveCallService extends ChangeNotifier {
     }
   }
 
-  Future<void> startCallToAdmin({
-    required String adminUserId,
-    String adminName = 'Super Admin',
+  Future<void> startCallToUser({
+    required String targetUserId,
+    required String targetName,
+    String targetRole = 'Staff',
   }) async {
     if (_callState != WaiterCallState.idle) return;
 
     final prefs = await SharedPreferences.getInstance();
     final myUserId = (prefs.getString('user_id') ?? prefs.getString('userId'))?.trim() ?? '';
 
-    // Safety: ensure waiter never calls himself
-    if (adminUserId.isEmpty || adminUserId == myUserId) {
-      final resolvedId = await WaiterCallHistoryService.getLastAdminUserId();
-      if (resolvedId != null && resolvedId.isNotEmpty && resolvedId != myUserId) {
-        adminUserId = resolvedId;
-      } else {
-        debugPrint('WaiterLiveCallService: Cannot call admin - target ID matches myUserId or is invalid');
-        throw Exception('Admin contact is unavailable. Please try again later.');
-      }
+    // Safety: ensure staff never calls himself
+    if (targetUserId.isEmpty || targetUserId == myUserId) {
+      debugPrint('WaiterLiveCallService: Cannot call user - target ID matches myUserId or is empty');
+      throw Exception('Target contact is unavailable.');
     }
 
     final micStatus = await Permission.microphone.request();
@@ -470,15 +472,18 @@ class WaiterLiveCallService extends ChangeNotifier {
     }
 
     final myName = prefs.getString('user_name') ??
+        prefs.getString('userName') ??
         prefs.getString('name') ??
         prefs.getString('email') ??
-        'Waiter';
+        'Staff';
+    final myRole = (prefs.getString('role') ?? prefs.getString('userRole') ?? 'waiter').trim().toLowerCase();
 
     _autoCleanupTimer?.cancel();
     _isOutgoing = true;
     _currentCallId = 'call_${DateTime.now().millisecondsSinceEpoch}';
-    _callerUserId = adminUserId;
-    _callerName = adminName;
+    _callerUserId = targetUserId;
+    _callerName = targetName;
+    _callerRole = targetRole;
     _callState = WaiterCallState.connecting;
     _errorMessage = null;
     _durationSeconds = 0;
@@ -492,9 +497,9 @@ class WaiterLiveCallService extends ChangeNotifier {
     // Record outgoing call in history
     unawaited(WaiterCallHistoryService.recordVoiceCall(
       callId: _currentCallId!,
-      callerName: adminName,
-      callerRole: 'Super Admin',
-      callerUserId: adminUserId,
+      callerName: targetName,
+      callerRole: targetRole,
+      callerUserId: targetUserId,
       status: 'missed',
       direction: 'outgoing',
     ));
@@ -524,7 +529,7 @@ class WaiterLiveCallService extends ChangeNotifier {
             'action': 'call_signal',
             'callId': _currentCallId,
             'signalType': 'ice_candidate',
-            'targetUserId': adminUserId,
+            'targetUserId': targetUserId,
             'candidate': candidate.toMap(),
           });
         }
@@ -561,18 +566,42 @@ class WaiterLiveCallService extends ChangeNotifier {
         'action': 'call_signal',
         'callId': _currentCallId,
         'signalType': 'offer',
-        'targetUserId': adminUserId,
+        'targetUserId': targetUserId,
         'sdp': offer.toMap(),
         'callerName': myName,
-        'callerRole': 'waiter',
+        'callerRole': myRole,
       });
     } catch (e) {
-      debugPrint('WaiterLiveCallService: error starting call to admin: $e');
+      debugPrint('WaiterLiveCallService: error starting call to user: $e');
       _callState = WaiterCallState.error;
       _errorMessage = 'Call failed to connect';
       notifyListeners();
       _scheduleAutoCleanup();
     }
+  }
+
+  Future<void> startCallToAdmin({
+    required String adminUserId,
+    String adminName = 'Super Admin',
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final myUserId = (prefs.getString('user_id') ?? prefs.getString('userId'))?.trim() ?? '';
+
+    String targetId = adminUserId;
+    if (targetId.isEmpty || targetId == myUserId) {
+      final resolvedId = await WaiterCallHistoryService.getLastAdminUserId();
+      if (resolvedId != null && resolvedId.isNotEmpty && resolvedId != myUserId) {
+        targetId = resolvedId;
+      } else {
+        throw Exception('Admin contact is unavailable. Please try again later.');
+      }
+    }
+
+    return startCallToUser(
+      targetUserId: targetId,
+      targetName: adminName,
+      targetRole: 'Super Admin',
+    );
   }
 
   void _onConnected() {

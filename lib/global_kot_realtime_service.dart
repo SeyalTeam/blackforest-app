@@ -352,7 +352,7 @@ class GlobalKotRealtimeService {
           id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
           title: senderName.isNotEmpty ? senderName : 'New Message',
           body: text.isNotEmpty ? text : 'New message received',
-          payload: threadId,
+          payload: 'chat:$threadId',
         );
       } catch (e) {
         debugPrint('Failed to display chat notification: $e');

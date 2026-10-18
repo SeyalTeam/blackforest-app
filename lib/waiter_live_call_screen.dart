@@ -73,25 +73,29 @@ class _WaiterLiveCallScreenState extends State<WaiterLiveCallScreen>
   }
 
   String _getStatusText() {
+    final displayName = _callService.callerName.isNotEmpty
+        ? _callService.callerName
+        : (widget.callerName.isNotEmpty ? widget.callerName : 'Staff');
+
     if (!_callService.isOutgoing && _callService.callState == WaiterCallState.ringing) {
-      return 'Incoming Call from Super Admin...';
+      return 'Incoming Call from $displayName...';
     }
     switch (_callService.callState) {
       case WaiterCallState.idle:
       case WaiterCallState.connecting:
-        return _callService.isOutgoing ? 'Calling Super Admin...' : 'Connecting...';
+        return _callService.isOutgoing ? 'Calling $displayName...' : 'Connecting...';
       case WaiterCallState.ringing:
-        return _callService.isOutgoing ? 'Admin Phone Ringing...' : 'Incoming Audio Call...';
+        return _callService.isOutgoing ? 'Ringing...' : 'Incoming Audio Call...';
       case WaiterCallState.connected:
         return _callService.formattedDuration;
       case WaiterCallState.ended:
         return _callService.errorMessage ?? 'Call ended';
       case WaiterCallState.declined:
-        return _callService.errorMessage ?? 'Call declined by Admin';
+        return _callService.errorMessage ?? 'Call declined by $displayName';
       case WaiterCallState.busy:
-        return _callService.errorMessage ?? 'Admin line is busy';
+        return _callService.errorMessage ?? '$displayName line is busy';
       case WaiterCallState.offline:
-        return _callService.errorMessage ?? 'Super Admin is currently offline';
+        return _callService.errorMessage ?? '$displayName is currently offline';
       case WaiterCallState.error:
         return _callService.errorMessage ?? 'Call failed';
     }
@@ -142,7 +146,7 @@ class _WaiterLiveCallScreenState extends State<WaiterLiveCallScreen>
                 style: TextStyle(color: Colors.white),
               ),
               content: const Text(
-                'Do you want to hang up this live call with Admin?',
+                'Do you want to hang up this live call?',
                 style: TextStyle(color: Colors.white70),
               ),
               actions: [
@@ -207,9 +211,9 @@ class _WaiterLiveCallScreenState extends State<WaiterLiveCallScreen>
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: Text(
-                  widget.callerName.isNotEmpty
-                      ? widget.callerName
-                      : 'Super Admin',
+                  _callService.callerName.isNotEmpty
+                      ? _callService.callerName
+                      : (widget.callerName.isNotEmpty ? widget.callerName : 'Staff'),
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     fontSize: 26,
@@ -220,9 +224,11 @@ class _WaiterLiveCallScreenState extends State<WaiterLiveCallScreen>
                 ),
               ),
               const SizedBox(height: 6),
-              const Text(
-                'SUPER ADMIN',
-                style: TextStyle(
+              Text(
+                _callService.callerRole.isNotEmpty
+                    ? _callService.callerRole.toUpperCase()
+                    : 'STAFF LIVE CALL',
+                style: const TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
                   color: Color(0xFF25D366),

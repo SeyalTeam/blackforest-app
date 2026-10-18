@@ -2184,6 +2184,21 @@ class CartProvider extends ChangeNotifier {
   }
 
   Future<void> openBillAndNavigate(BuildContext context, String billId) async {
+    final trimmedBillId = billId.trim();
+    const nonBillPayloads = {
+      'call_incoming',
+      'auto_punch_in',
+      'profile',
+      'chat',
+    };
+    if (trimmedBillId.isEmpty ||
+        nonBillPayloads.contains(trimmedBillId) ||
+        trimmedBillId.startsWith('call_') ||
+        trimmedBillId.startsWith('chat:')) {
+      debugPrint("Ignoring invalid billId in openBillAndNavigate: $billId");
+      return;
+    }
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -2191,7 +2206,7 @@ class CartProvider extends ChangeNotifier {
     );
 
     try {
-      await loadBillFromServer(billId);
+      await loadBillFromServer(trimmedBillId);
 
       if (!context.mounted) return;
       Navigator.pop(context); // Close loading
@@ -2211,12 +2226,27 @@ class CartProvider extends ChangeNotifier {
   }
 
   Future<void> loadBillFromServer(String billId) async {
+    final trimmedBillId = billId.trim();
+    const nonBillPayloads = {
+      'call_incoming',
+      'auto_punch_in',
+      'profile',
+      'chat',
+    };
+    if (trimmedBillId.isEmpty ||
+        nonBillPayloads.contains(trimmedBillId) ||
+        trimmedBillId.startsWith('call_') ||
+        trimmedBillId.startsWith('chat:')) {
+      debugPrint("Skipping invalid billId for loadBillFromServer: $billId");
+      return;
+    }
+
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('token');
     if (token == null) throw Exception("No token");
 
     final response = await http.get(
-      Uri.parse('https://admin.theblackforestcakes.com/api/billings/$billId?depth=3'),
+      Uri.parse('https://admin.theblackforestcakes.com/api/billings/$trimmedBillId?depth=3'),
       headers: {'Authorization': 'Bearer $token'},
     );
 
