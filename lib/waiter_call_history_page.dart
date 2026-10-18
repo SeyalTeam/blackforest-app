@@ -1,6 +1,14 @@
-import 'package:blackforest_app/waiter_call_history_service.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+
+import 'waiter_call_history_service.dart';
+
+enum _WaiterCallFilter {
+  all,
+  missed,
+  received,
+  tableOnly,
+}
 
 class WaiterCallHistoryPage extends StatefulWidget {
   const WaiterCallHistoryPage({super.key});
@@ -12,7 +20,9 @@ class WaiterCallHistoryPage extends StatefulWidget {
 class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
   bool _isLoading = true;
   String? _error;
-  List<WaiterCallHistoryEntry> _entries = const <WaiterCallHistoryEntry>[];
+  List<WaiterCallHistoryEntry> _allEntries = const <WaiterCallHistoryEntry>[];
+  _WaiterCallFilter _activeFilter = _WaiterCallFilter.all;
+  DateTime? _selectedDateFilter;
 
   @override
   void initState() {
@@ -31,7 +41,7 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
       final entries = await WaiterCallHistoryService.readHistory();
       if (!mounted) return;
       setState(() {
-        _entries = entries;
+        _allEntries = entries;
         _isLoading = false;
       });
     } catch (_) {
@@ -43,6 +53,39 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
     }
   }
 
+  List<WaiterCallHistoryEntry> get _filteredEntries {
+    return _allEntries.where((entry) {
+      // 1. Filter by top category buttons
+      switch (_activeFilter) {
+        case _WaiterCallFilter.all:
+          break;
+        case _WaiterCallFilter.missed:
+          if (!entry.isMissed) return false;
+          break;
+        case _WaiterCallFilter.received:
+          if (!entry.isAccepted) return false;
+          break;
+        case _WaiterCallFilter.tableOnly:
+          if (!entry.isTableCall) return false;
+          break;
+      }
+
+      // 2. Filter by date if selected
+      if (_selectedDateFilter != null) {
+        final callTime = entry.callTime ?? entry.createdAt;
+        if (callTime == null) return false;
+        final target = _selectedDateFilter!;
+        if (callTime.year != target.year ||
+            callTime.month != target.month ||
+            callTime.day != target.day) {
+          return false;
+        }
+      }
+
+      return true;
+    }).toList();
+  }
+
   String _groupLabel(DateTime date) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -50,31 +93,72 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
     final diffDays = today.difference(day).inDays;
     if (diffDays == 0) return 'Today';
     if (diffDays == 1) return 'Yesterday';
-    return DateFormat('dd MMM yyyy').format(date);
+    return DateFormat('dd MMMM yyyy').format(date);
   }
 
   String _clockText(DateTime date) {
     return DateFormat('h:mm a').format(date);
   }
 
+  Future<void> _pickDateFilter() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDateFilter ?? now,
+      firstDate: DateTime(now.year - 1),
+      lastDate: now,
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: Color(0xFF0F766E),
+              onPrimary: Colors.white,
+              onSurface: Color(0xFF1E293B),
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null) {
+      setState(() {
+        _selectedDateFilter = picked;
+      });
+    }
+  }
+
   List<Widget> _buildHistoryList() {
     final children = <Widget>[];
+    final entries = _filteredEntries;
     String? lastGroup;
 
-    for (final entry in _entries) {
+    for (final entry in entries) {
       final callTime = entry.callTime ?? entry.createdAt ?? DateTime.now();
       final group = _groupLabel(callTime);
       if (group != lastGroup) {
         children.add(
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
-            child: Text(
-              group,
-              style: const TextStyle(
-                color: Color(0xFF53657D),
-                fontSize: 15,
-                fontWeight: FontWeight.w700,
-              ),
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+            child: Row(
+              children: [
+                Text(
+                  group,
+                  style: const TextStyle(
+                    color: Color(0xFF475569),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.2,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Divider(
+                    thickness: 1,
+                    color: Colors.grey.shade300,
+                  ),
+                ),
+              ],
             ),
           ),
         );
@@ -87,57 +171,113 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
 
   Widget _buildHistoryCard(WaiterCallHistoryEntry entry) {
     final callTime = entry.callTime ?? entry.createdAt ?? DateTime.now();
-    final statusColor = entry.isAccepted
-        ? const Color(0xFF14804A)
-        : entry.isDeclined
-        ? const Color(0xFFC53030)
-        : const Color(0xFFB26B00);
-    final statusText = entry.isAccepted
-        ? 'Accepted'
-        : entry.isDeclined
-        ? 'Declined'
-        : 'Missed';
-    final whoText = entry.isAccepted && (entry.acknowledgedBy ?? '').isNotEmpty
-        ? ' by ${entry.acknowledgedBy}'
-        : '';
-    final sectionText = entry.section.trim().isEmpty ? '-' : entry.section;
-    final customerText = entry.customerName.trim().isEmpty
-        ? 'Guest'
-        : entry.customerName;
+    final isTable = entry.isTableCall;
+
+    // Status colors & icons
+    final Color statusColor;
+    final IconData statusIcon;
+    final String statusText;
+
+    if (entry.isAccepted) {
+      statusColor = const Color(0xFF14804A);
+      statusIcon = isTable ? Icons.call_received_rounded : Icons.phone_in_talk_rounded;
+      if (isTable) {
+        final who = (entry.acknowledgedBy ?? '').isNotEmpty
+            ? 'by ${entry.acknowledgedBy}'
+            : '';
+        statusText = who.isEmpty ? 'Accepted' : 'Accepted $who';
+      } else {
+        statusText = entry.durationSeconds > 0
+            ? 'Answered • ${entry.formattedDuration}'
+            : 'Answered';
+      }
+    } else if (entry.isDeclined) {
+      statusColor = const Color(0xFFC53030);
+      statusIcon = isTable ? Icons.call_end_rounded : Icons.phone_disabled_rounded;
+      statusText = 'Declined';
+    } else {
+      statusColor = const Color(0xFFD97706);
+      statusIcon = isTable ? Icons.call_missed_rounded : Icons.phone_missed_rounded;
+      statusText = 'Missed';
+    }
+
+    final titleText = isTable
+        ? 'Table ${entry.tableNumber}'
+        : 'Admin Live Call';
+    final subtitleText = isTable
+        ? '${entry.customerName.isEmpty ? "Guest" : entry.customerName} • Section ${entry.section.isEmpty ? "-" : entry.section} • ${_clockText(callTime)}'
+        : '${entry.customerName} (${entry.callerRole ?? "Super Admin"}) • ${_clockText(callTime)}';
 
     return Container(
-      margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE9EDF3)),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.02),
+            blurRadius: 4,
+            offset: const Offset(0, 1),
+          ),
+        ],
       ),
       child: ListTile(
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
         leading: CircleAvatar(
-          radius: 20,
+          radius: 22,
           backgroundColor: entry.isAccepted
               ? const Color(0xFFEAF8F1)
               : entry.isDeclined
               ? const Color(0xFFFDECEC)
               : const Color(0xFFFFF5E5),
           child: Icon(
-            entry.isAccepted
-                ? Icons.call_received_rounded
-                : entry.isDeclined
-                ? Icons.call_end_rounded
-                : Icons.call_missed,
+            statusIcon,
             color: statusColor,
             size: 20,
           ),
         ),
-        title: Text(
-          'Table ${entry.tableNumber}',
-          style: const TextStyle(
-            color: Color(0xFF1F2937),
-            fontSize: 20,
-            fontWeight: FontWeight.w600,
-          ),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                titleText,
+                style: const TextStyle(
+                  color: Color(0xFF1E293B),
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: isTable
+                    ? const Color(0xFFF0FDF4)
+                    : const Color(0xFFEFF6FF),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: isTable
+                      ? const Color(0xFF86EFAC)
+                      : const Color(0xFF93C5FD),
+                ),
+              ),
+              child: Text(
+                isTable ? 'TABLE SOS' : 'VOICE CALL',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  color: isTable
+                      ? const Color(0xFF15803D)
+                      : const Color(0xFF1D4ED8),
+                  letterSpacing: 0.4,
+                ),
+              ),
+            ),
+          ],
         ),
         subtitle: Padding(
           padding: const EdgeInsets.only(top: 4),
@@ -146,87 +286,338 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                '$customerText • Section $sectionText • ${_clockText(callTime)}',
+                subtitleText,
                 style: const TextStyle(
-                  color: Color(0xFF667085),
-                  fontSize: 13,
+                  color: Color(0xFF64748B),
+                  fontSize: 12.5,
                   fontWeight: FontWeight.w500,
                 ),
               ),
-              const SizedBox(height: 2),
-              Text(
-                '$statusText$whoText',
-                style: TextStyle(
-                  color: statusColor,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
+              const SizedBox(height: 3),
+              Row(
+                children: [
+                  Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: statusColor,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 5),
+                  Text(
+                    statusText,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
         ),
-        trailing: const Icon(Icons.call_outlined, color: Color(0xFF4A5568)),
+        trailing: Icon(
+          isTable ? Icons.room_service_outlined : Icons.phone_enabled_rounded,
+          color: const Color(0xFF94A3B8),
+          size: 22,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTopFilterButton({
+    required _WaiterCallFilter filter,
+    required String label,
+    required IconData icon,
+    int? count,
+    Color? countColor,
+  }) {
+    final isSelected = _activeFilter == filter;
+
+    return InkWell(
+      onTap: () {
+        setState(() {
+          _activeFilter = filter;
+        });
+      },
+      borderRadius: BorderRadius.circular(20),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF0F766E) : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF0F766E) : const Color(0xFFCBD5E1),
+            width: 1.2,
+          ),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: const Color(0xFF0F766E).withValues(alpha: 0.25),
+                    blurRadius: 6,
+                    offset: const Offset(0, 2),
+                  ),
+                ]
+              : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 15,
+              color: isSelected ? Colors.white : const Color(0xFF475569),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? Colors.white : const Color(0xFF1E293B),
+                fontSize: 13,
+                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
+              ),
+            ),
+            if (count != null && count > 0) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? Colors.white.withValues(alpha: 0.25)
+                      : (countColor ?? const Color(0xFF64748B)).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  count.toString(),
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: isSelected ? Colors.white : (countColor ?? const Color(0xFF475569)),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final missedCount = _allEntries.where((e) => e.isMissed).length;
+    final receivedCount = _allEntries.where((e) => e.isAccepted).length;
+    final tableCount = _allEntries.where((e) => e.isTableCall).length;
+    final filtered = _filteredEntries;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF4F6FA),
+      backgroundColor: const Color(0xFFF8FAFC),
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
         title: const Text(
           'Call History',
-          style: TextStyle(color: Colors.black87, fontWeight: FontWeight.w700),
+          style: TextStyle(
+            color: Color(0xFF0F172A),
+            fontWeight: FontWeight.w800,
+            fontSize: 19,
+          ),
         ),
-        iconTheme: const IconThemeData(color: Colors.black87),
+        iconTheme: const IconThemeData(color: Color(0xFF0F172A)),
+        actions: [
+          // DATE FILTER BUTTON (Look previous dates permanently)
+          IconButton(
+            tooltip: 'Filter by Date (Look previous days)',
+            icon: Icon(
+              _selectedDateFilter != null
+                  ? Icons.calendar_month
+                  : Icons.calendar_month_outlined,
+              color: _selectedDateFilter != null
+                  ? const Color(0xFF0F766E)
+                  : const Color(0xFF475569),
+            ),
+            onPressed: _pickDateFilter,
+          ),
+          IconButton(
+            tooltip: 'Refresh',
+            icon: const Icon(Icons.refresh_rounded, color: Color(0xFF475569)),
+            onPressed: _load,
+          ),
+        ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-          ? Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
+      body: Column(
+        children: [
+          // TOP CATEGORY BUTTONS: All | Missed | Received | Table Calling
+          Container(
+            color: Colors.white,
+            padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
                 children: [
-                  Text(
-                    _error!,
-                    style: const TextStyle(
-                      color: Color(0xFF4B5563),
-                      fontWeight: FontWeight.w600,
-                    ),
+                  _buildTopFilterButton(
+                    filter: _WaiterCallFilter.all,
+                    label: 'Call History',
+                    icon: Icons.history_rounded,
+                    count: _allEntries.isNotEmpty ? _allEntries.length : null,
                   ),
-                  const SizedBox(height: 12),
-                  ElevatedButton(onPressed: _load, child: const Text('Retry')),
-                ],
-              ),
-            )
-          : _entries.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: const [
-                  Icon(Icons.call_outlined, size: 56, color: Color(0xFF97A2B2)),
-                  SizedBox(height: 10),
-                  Text(
-                    'No call logs yet',
-                    style: TextStyle(
-                      color: Color(0xFF667085),
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                    ),
+                  const SizedBox(width: 8),
+                  _buildTopFilterButton(
+                    filter: _WaiterCallFilter.missed,
+                    label: 'Missed',
+                    icon: Icons.call_missed_rounded,
+                    count: missedCount,
+                    countColor: Colors.redAccent,
+                  ),
+                  const SizedBox(width: 8),
+                  _buildTopFilterButton(
+                    filter: _WaiterCallFilter.received,
+                    label: 'Received',
+                    icon: Icons.call_received_rounded,
+                    count: receivedCount,
+                    countColor: const Color(0xFF14804A),
+                  ),
+                  const SizedBox(width: 8),
+                  _buildTopFilterButton(
+                    filter: _WaiterCallFilter.tableOnly,
+                    label: 'Table Calling',
+                    icon: Icons.room_service_rounded,
+                    count: tableCount,
+                    countColor: const Color(0xFF0F766E),
                   ),
                 ],
-              ),
-            )
-          : RefreshIndicator(
-              onRefresh: _load,
-              child: ListView(
-                padding: const EdgeInsets.only(bottom: 20),
-                children: _buildHistoryList(),
               ),
             ),
+          ),
+
+          // ACTIVE DATE FILTER CHIP (if user selected previous date)
+          if (_selectedDateFilter != null)
+            Container(
+              color: const Color(0xFFF0FDF4),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.event_available_rounded, size: 18, color: Color(0xFF0F766E)),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Showing calls for: ${DateFormat('dd MMM yyyy').format(_selectedDateFilter!)}',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF0F766E),
+                    ),
+                  ),
+                  const Spacer(),
+                  InkWell(
+                    onTap: () {
+                      setState(() {
+                        _selectedDateFilter = null;
+                      });
+                    },
+                    borderRadius: BorderRadius.circular(12),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      child: Text(
+                        'Show All Dates',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF0F766E),
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          const Divider(height: 1, thickness: 1, color: Color(0xFFE2E8F0)),
+
+          // MAIN LOGS LIST
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator(color: Color(0xFF0F766E)))
+                : _error != null
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _error!,
+                          style: const TextStyle(
+                            color: Color(0xFF4B5563),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        ElevatedButton(
+                          onPressed: _load,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF0F766E),
+                            foregroundColor: Colors.white,
+                          ),
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  )
+                : filtered.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          _activeFilter == _WaiterCallFilter.missed
+                              ? Icons.phone_missed_rounded
+                              : (_activeFilter == _WaiterCallFilter.tableOnly
+                                  ? Icons.room_service_outlined
+                                  : Icons.call_outlined),
+                          size: 56,
+                          color: const Color(0xFF94A3B8),
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          _activeFilter == _WaiterCallFilter.missed
+                              ? 'No missed calls recorded'
+                              : (_activeFilter == _WaiterCallFilter.received
+                                  ? 'No received calls recorded'
+                                  : (_activeFilter == _WaiterCallFilter.tableOnly
+                                      ? 'No table calling requests recorded'
+                                      : 'No call records found')),
+                          style: const TextStyle(
+                            color: Color(0xFF64748B),
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if (_selectedDateFilter != null) ...[
+                          const SizedBox(height: 8),
+                          TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _selectedDateFilter = null;
+                              });
+                            },
+                            child: const Text('Clear Date Filter'),
+                          ),
+                        ],
+                      ],
+                    ),
+                  )
+                : RefreshIndicator(
+                    onRefresh: _load,
+                    child: ListView(
+                      padding: const EdgeInsets.only(bottom: 24),
+                      children: _buildHistoryList(),
+                    ),
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }

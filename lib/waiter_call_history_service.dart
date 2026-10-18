@@ -13,6 +13,9 @@ class WaiterCallHistoryEntry {
     required this.callTimestampIso,
     required this.status,
     required this.createdAtIso,
+    this.callType = 'table', // 'table' | 'admin_call'
+    this.durationSeconds = 0,
+    this.callerRole,
     this.acknowledgedBy,
     this.acknowledgedAtIso,
   });
@@ -25,8 +28,14 @@ class WaiterCallHistoryEntry {
   final String callTimestampIso;
   final String status; // missed | declined | accepted
   final String createdAtIso;
+  final String callType; // 'table' | 'admin_call'
+  final int durationSeconds;
+  final String? callerRole;
   final String? acknowledgedBy;
   final String? acknowledgedAtIso;
+
+  bool get isTableCall => callType == 'table';
+  bool get isAdminCall => callType == 'admin_call' || callType == 'voice_call';
 
   bool get isAccepted => status.toLowerCase() == 'accepted';
   bool get isDeclined => status.toLowerCase() == 'declined';
@@ -38,6 +47,13 @@ class WaiterCallHistoryEntry {
       ? null
       : DateTime.tryParse(acknowledgedAtIso!)?.toLocal();
 
+  String get formattedDuration {
+    if (durationSeconds <= 0) return '';
+    final minutes = (durationSeconds ~/ 60).toString().padLeft(2, '0');
+    final seconds = (durationSeconds % 60).toString().padLeft(2, '0');
+    return '$minutes:$seconds';
+  }
+
   WaiterCallHistoryEntry copyWith({
     String? eventKey,
     String? billId,
@@ -47,6 +63,9 @@ class WaiterCallHistoryEntry {
     String? callTimestampIso,
     String? status,
     String? createdAtIso,
+    String? callType,
+    int? durationSeconds,
+    String? callerRole,
     String? acknowledgedBy,
     String? acknowledgedAtIso,
   }) {
@@ -59,6 +78,9 @@ class WaiterCallHistoryEntry {
       callTimestampIso: callTimestampIso ?? this.callTimestampIso,
       status: status ?? this.status,
       createdAtIso: createdAtIso ?? this.createdAtIso,
+      callType: callType ?? this.callType,
+      durationSeconds: durationSeconds ?? this.durationSeconds,
+      callerRole: callerRole ?? this.callerRole,
       acknowledgedBy: acknowledgedBy ?? this.acknowledgedBy,
       acknowledgedAtIso: acknowledgedAtIso ?? this.acknowledgedAtIso,
     );
@@ -74,6 +96,9 @@ class WaiterCallHistoryEntry {
       'callTimestampIso': callTimestampIso,
       'status': status,
       'createdAtIso': createdAtIso,
+      'callType': callType,
+      'durationSeconds': durationSeconds,
+      'callerRole': callerRole,
       'acknowledgedBy': acknowledgedBy,
       'acknowledgedAtIso': acknowledgedAtIso,
     };
@@ -90,26 +115,28 @@ class WaiterCallHistoryEntry {
     final callTimestampIso = text(raw['callTimestampIso']);
     final status = _normalizeStatus(text(raw['status']));
     final createdAtIso = text(raw['createdAtIso']);
+    final callType = text(raw['callType']).isEmpty ? 'table' : text(raw['callType']);
+    final durationSeconds = (raw['durationSeconds'] as num?)?.toInt() ?? 0;
+    final callerRole = text(raw['callerRole']);
     final acknowledgedBy = text(raw['acknowledgedBy']);
     final acknowledgedAtIso = text(raw['acknowledgedAtIso']);
 
-    if (eventKey.isEmpty ||
-        billId.isEmpty ||
-        tableNumber.isEmpty ||
-        callTimestampIso.isEmpty ||
-        createdAtIso.isEmpty) {
+    if (eventKey.isEmpty || callTimestampIso.isEmpty) {
       return null;
     }
 
     return WaiterCallHistoryEntry(
       eventKey: eventKey,
       billId: billId,
-      tableNumber: tableNumber,
+      tableNumber: tableNumber.isEmpty ? (callType == 'admin_call' ? 'Live Call' : '-') : tableNumber,
       section: section,
-      customerName: customerName,
+      customerName: customerName.isEmpty ? (callType == 'admin_call' ? 'Super Admin' : 'Guest') : customerName,
       callTimestampIso: callTimestampIso,
       status: status,
-      createdAtIso: createdAtIso,
+      createdAtIso: createdAtIso.isEmpty ? callTimestampIso : createdAtIso,
+      callType: callType,
+      durationSeconds: durationSeconds,
+      callerRole: callerRole.isEmpty ? null : callerRole,
       acknowledgedBy: acknowledgedBy.isEmpty ? null : acknowledgedBy,
       acknowledgedAtIso: acknowledgedAtIso.isEmpty ? null : acknowledgedAtIso,
     );
@@ -127,15 +154,18 @@ class WaiterCallHistoryService {
   WaiterCallHistoryService._();
 
   static const String _prefPrefix = 'waiter_call_history_v1';
-  static const int _maxEntries = 250;
+  static const int _maxEntries = 1000;
 
-  static String? _resolveStorageKey(SharedPreferences prefs) {
+  static String _resolveStorageKey(SharedPreferences prefs) {
     final branchId = prefs.getString('branchId')?.trim() ?? '';
-    if (branchId.isEmpty) return null;
-
     final userKey = WaiterCallRangeFilterService.resolveUserKeyFromPrefs(prefs);
-    if (userKey.trim().isEmpty) return null;
-    return '${_prefPrefix}_${userKey}_$branchId';
+    if (branchId.isNotEmpty && userKey.trim().isNotEmpty) {
+      return '${_prefPrefix}_${userKey}_$branchId';
+    }
+    if (branchId.isNotEmpty) {
+      return '${_prefPrefix}_branch_$branchId';
+    }
+    return '${_prefPrefix}_global';
   }
 
   static List<WaiterCallHistoryEntry> _readEntriesFromPrefs(
@@ -203,7 +233,6 @@ class WaiterCallHistoryService {
   static Future<List<WaiterCallHistoryEntry>> readHistory() async {
     final prefs = await SharedPreferences.getInstance();
     final key = _resolveStorageKey(prefs);
-    if (key == null) return <WaiterCallHistoryEntry>[];
     return _readEntriesFromPrefs(prefs, key);
   }
 
@@ -217,7 +246,6 @@ class WaiterCallHistoryService {
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final key = _resolveStorageKey(prefs);
-    if (key == null) return;
 
     final entries = _readEntriesFromPrefs(prefs, key).toList(growable: true);
     final index = entries.indexWhere((entry) => entry.eventKey == eventKey);
@@ -233,6 +261,7 @@ class WaiterCallHistoryService {
         section: section,
         customerName: normalizedCustomer,
         callTimestampIso: callTimestampIso,
+        callType: 'table',
       );
     } else {
       entries.add(
@@ -245,9 +274,78 @@ class WaiterCallHistoryService {
           callTimestampIso: callTimestampIso,
           status: 'missed',
           createdAtIso: DateTime.now().toIso8601String(),
+          callType: 'table',
         ),
       );
     }
+
+    await _saveEntriesToPrefs(prefs: prefs, key: key, entries: entries);
+  }
+
+  static Future<void> recordVoiceCall({
+    required String callId,
+    required String callerName,
+    String? callerRole,
+    String status = 'missed',
+    int durationSeconds = 0,
+    String? callTimestampIso,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = _resolveStorageKey(prefs);
+
+    final entries = _readEntriesFromPrefs(prefs, key).toList(growable: true);
+    final index = entries.indexWhere((entry) => entry.eventKey == callId);
+    final normalizedCaller = callerName.trim().isEmpty ? 'Super Admin' : callerName.trim();
+    final timestamp = callTimestampIso ?? DateTime.now().toIso8601String();
+
+    if (index >= 0) {
+      entries[index] = entries[index].copyWith(
+        customerName: normalizedCaller,
+        callerRole: callerRole ?? 'Super Admin',
+        status: status,
+        durationSeconds: durationSeconds,
+        callType: 'admin_call',
+      );
+    } else {
+      entries.insert(
+        0,
+        WaiterCallHistoryEntry(
+          eventKey: callId,
+          billId: '',
+          tableNumber: 'Admin Call',
+          section: '',
+          customerName: normalizedCaller,
+          callTimestampIso: timestamp,
+          status: status,
+          createdAtIso: timestamp,
+          callType: 'admin_call',
+          durationSeconds: durationSeconds,
+          callerRole: callerRole ?? 'Super Admin',
+        ),
+      );
+    }
+
+    await _saveEntriesToPrefs(prefs: prefs, key: key, entries: entries);
+  }
+
+  static Future<void> updateVoiceCallStatus({
+    required String callId,
+    required String status,
+    int? durationSeconds,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = _resolveStorageKey(prefs);
+
+    final entries = _readEntriesFromPrefs(prefs, key).toList(growable: true);
+    final index = entries.indexWhere((entry) => entry.eventKey == callId);
+    if (index < 0) return;
+
+    final existing = entries[index];
+    entries[index] = existing.copyWith(
+      status: status,
+      durationSeconds: durationSeconds ?? existing.durationSeconds,
+      acknowledgedAtIso: DateTime.now().toIso8601String(),
+    );
 
     await _saveEntriesToPrefs(prefs: prefs, key: key, entries: entries);
   }
@@ -262,7 +360,6 @@ class WaiterCallHistoryService {
 
     final prefs = await SharedPreferences.getInstance();
     final key = _resolveStorageKey(prefs);
-    if (key == null) return;
 
     final entries = _readEntriesFromPrefs(prefs, key).toList(growable: true);
     final index = entries.indexWhere(
@@ -291,7 +388,6 @@ class WaiterCallHistoryService {
 
     final prefs = await SharedPreferences.getInstance();
     final key = _resolveStorageKey(prefs);
-    if (key == null) return;
 
     final entries = _readEntriesFromPrefs(prefs, key).toList(growable: true);
     final index = entries.indexWhere(

@@ -16,6 +16,8 @@ Future<void> clearSessionPreservingFavorites(SharedPreferences prefs) async {
   for (final key in prefs.getKeys()) {
     if (key.startsWith(_favoriteCategoryPrefix)) {
       backup[key] = prefs.getStringList(key) ?? <String>[];
+    } else if (key.startsWith('waiter_call_history_')) {
+      backup[key] = prefs.getString(key);
     } else if (key == btPrinterMacKey ||
         key == btPrinterNameKey ||
         key == btPrinterUseBillingKey ||

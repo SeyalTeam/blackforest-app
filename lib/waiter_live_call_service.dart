@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'global_kot_realtime_service.dart';
 import 'notification_service.dart';
+import 'waiter_call_history_service.dart';
 import 'waiter_live_call_screen.dart';
 
 enum WaiterCallState {
@@ -95,7 +96,8 @@ class WaiterLiveCallService extends ChangeNotifier {
     final signalType = message['signalType']?.toString();
     final callId = message['callId']?.toString();
     final senderId = message['senderId']?.toString();
-    final senderName = message['senderName']?.toString() ?? 'Admin';
+    final senderName = message['senderName']?.toString() ?? message['callerName']?.toString() ?? 'Admin';
+    final senderRole = message['senderRole']?.toString() ?? message['callerRole']?.toString() ?? 'Super Admin';
 
     if (signalType == 'offer') {
       if (_callState != WaiterCallState.idle) {
@@ -143,6 +145,14 @@ class WaiterLiveCallService extends ChangeNotifier {
           payload: 'call_incoming',
         );
       } catch (_) {}
+
+      // Record incoming voice call in permanent call history
+      unawaited(WaiterCallHistoryService.recordVoiceCall(
+        callId: callId ?? 'call_${DateTime.now().millisecondsSinceEpoch}',
+        callerName: senderName,
+        callerRole: senderRole,
+        status: 'missed',
+      ));
 
       // Open Waiter Live Call Screen directly (Full screen UI matching Admin app)
       _showIncomingCallScreen();
@@ -348,6 +358,13 @@ class WaiterLiveCallService extends ChangeNotifier {
       notifyListeners();
     });
 
+    if (_currentCallId != null) {
+      unawaited(WaiterCallHistoryService.updateVoiceCallStatus(
+        callId: _currentCallId!,
+        status: 'accepted',
+      ));
+    }
+
     _applyAudioRouting();
     notifyListeners();
   }
@@ -380,6 +397,10 @@ class WaiterLiveCallService extends ChangeNotifier {
         'targetUserId': _callerUserId,
         'reason': 'declined',
       });
+      unawaited(WaiterCallHistoryService.updateVoiceCallStatus(
+        callId: _currentCallId!,
+        status: 'declined',
+      ));
     }
     await _cleanupWebrtc();
   }
@@ -399,6 +420,13 @@ class WaiterLiveCallService extends ChangeNotifier {
 
   Future<void> _terminateCallLocally() async {
     await _stopRingtone();
+    if (_currentCallId != null) {
+      unawaited(WaiterCallHistoryService.updateVoiceCallStatus(
+        callId: _currentCallId!,
+        status: _durationSeconds > 0 ? 'accepted' : 'missed',
+        durationSeconds: _durationSeconds,
+      ));
+    }
     _callState = WaiterCallState.ended;
     notifyListeners();
 
