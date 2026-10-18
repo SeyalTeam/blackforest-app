@@ -20,6 +20,7 @@ class WaiterCallHistoryEntry {
     required this.createdAtIso,
     this.callType = 'table', // 'table' | 'admin_call'
     this.durationSeconds = 0,
+    this.direction = 'incoming', // 'incoming' | 'outgoing'
     this.callerRole,
     this.callerUserId,
     this.acknowledgedBy,
@@ -36,6 +37,7 @@ class WaiterCallHistoryEntry {
   final String createdAtIso;
   final String callType; // 'table' | 'admin_call'
   final int durationSeconds;
+  final String direction; // 'incoming' | 'outgoing'
   final String? callerRole;
   final String? callerUserId;
   final String? acknowledgedBy;
@@ -44,9 +46,26 @@ class WaiterCallHistoryEntry {
   bool get isTableCall => callType == 'table';
   bool get isAdminCall => callType == 'admin_call' || callType == 'voice_call';
 
-  bool get isAccepted => status.toLowerCase() == 'accepted';
+  bool get isAccepted => status.toLowerCase() == 'accepted' || status.toLowerCase() == 'connected';
   bool get isDeclined => status.toLowerCase() == 'declined';
-  bool get isMissed => status.toLowerCase() == 'missed';
+  bool get isMissed =>
+      status.toLowerCase() == 'missed' ||
+      status.toLowerCase() == 'offline' ||
+      status.toLowerCase() == 'busy';
+
+  bool get isOutgoing => direction.toLowerCase() == 'outgoing';
+  bool get isIncoming => direction.toLowerCase() == 'incoming';
+
+  // Dialed (Outgoing calls initiated by this waiter)
+  bool get isDialed => isOutgoing;
+  bool get isDialedAnswered => isOutgoing && isAccepted;
+  bool get isDialedNoAnswer => isOutgoing && !isAccepted;
+
+  // Received (Incoming calls/table alerts answered by this waiter)
+  bool get isReceived => isIncoming && isAccepted;
+
+  // Missed (Incoming calls/table alerts NOT answered by this waiter)
+  bool get isIncomingMissed => isIncoming && !isAccepted;
 
   DateTime? get callTime => DateTime.tryParse(callTimestampIso)?.toLocal();
   DateTime? get createdAt => DateTime.tryParse(createdAtIso)?.toLocal();
@@ -72,6 +91,7 @@ class WaiterCallHistoryEntry {
     String? createdAtIso,
     String? callType,
     int? durationSeconds,
+    String? direction,
     String? callerRole,
     String? callerUserId,
     String? acknowledgedBy,
@@ -88,6 +108,7 @@ class WaiterCallHistoryEntry {
       createdAtIso: createdAtIso ?? this.createdAtIso,
       callType: callType ?? this.callType,
       durationSeconds: durationSeconds ?? this.durationSeconds,
+      direction: direction ?? this.direction,
       callerRole: callerRole ?? this.callerRole,
       callerUserId: callerUserId ?? this.callerUserId,
       acknowledgedBy: acknowledgedBy ?? this.acknowledgedBy,
@@ -107,6 +128,7 @@ class WaiterCallHistoryEntry {
       'createdAtIso': createdAtIso,
       'callType': callType,
       'durationSeconds': durationSeconds,
+      'direction': direction,
       'callerRole': callerRole,
       'callerUserId': callerUserId,
       'acknowledgedBy': acknowledgedBy,
@@ -127,6 +149,7 @@ class WaiterCallHistoryEntry {
     final createdAtIso = text(raw['createdAtIso']);
     final callType = text(raw['callType']).isEmpty ? 'table' : text(raw['callType']);
     final durationSeconds = (raw['durationSeconds'] as num?)?.toInt() ?? 0;
+    final direction = text(raw['direction']).isEmpty ? 'incoming' : text(raw['direction']);
     final callerRole = text(raw['callerRole']);
     final callerUserId = text(raw['callerUserId']);
     final acknowledgedBy = text(raw['acknowledgedBy']);
@@ -140,13 +163,14 @@ class WaiterCallHistoryEntry {
       eventKey: eventKey,
       billId: billId,
       tableNumber: tableNumber.isEmpty ? (callType == 'admin_call' ? 'Live Call' : '-') : tableNumber,
-      section: section,
       customerName: customerName.isEmpty ? (callType == 'admin_call' ? 'Super Admin' : 'Guest') : customerName,
+      section: section,
       callTimestampIso: callTimestampIso,
       status: status,
       createdAtIso: createdAtIso.isEmpty ? callTimestampIso : createdAtIso,
       callType: callType,
       durationSeconds: durationSeconds,
+      direction: direction,
       callerRole: callerRole.isEmpty ? null : callerRole,
       callerUserId: callerUserId.isEmpty ? null : callerUserId,
       acknowledgedBy: acknowledgedBy.isEmpty ? null : acknowledgedBy,
@@ -394,6 +418,7 @@ class WaiterCallHistoryService {
 
             final isCaller = (myUserId.isNotEmpty && callerId == myUserId);
             final otherUserId = isCaller ? receiverId : callerId;
+            final direction = isCaller ? 'outgoing' : 'incoming';
             final displayName = isCaller
                 ? (doc['receiverName']?.toString().trim().isNotEmpty == true
                     ? doc['receiverName'].toString().trim()
@@ -427,6 +452,7 @@ class WaiterCallHistoryService {
               createdAtIso: startedAt,
               callType: 'admin_call',
               durationSeconds: durationSec,
+              direction: direction,
               callerRole: role,
               callerUserId: otherUserId.isNotEmpty ? otherUserId : null,
               acknowledgedBy: displayName,
@@ -444,6 +470,7 @@ class WaiterCallHistoryService {
                 status: existing.isAccepted ? 'accepted' : status,
                 durationSeconds: bestDuration,
                 callType: 'admin_call',
+                direction: direction,
                 acknowledgedAtIso: endedAt ?? existing.acknowledgedAtIso,
               );
             } else {
@@ -484,6 +511,7 @@ class WaiterCallHistoryService {
     String status = 'missed',
     int durationSeconds = 0,
     String? timestampIso,
+    String direction = 'incoming',
   }) async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -492,15 +520,16 @@ class WaiterCallHistoryService {
       final myName = prefs.getString('user_name') ?? prefs.getString('name') ?? 'Staff';
       final myRole = prefs.getString('role') ?? 'waiter';
 
+      final isOutgoing = direction.toLowerCase() == 'outgoing';
       final uri = Uri.parse('${ApiConfig.baseUrl}/call-logs');
       final payload = {
         'callId': callId,
-        'callerUserId': callerUserId ?? myUserId,
-        'callerName': callerName,
-        'callerRole': callerRole ?? 'admin',
-        'receiverUserId': myUserId,
-        'receiverName': myName,
-        'receiverRole': myRole,
+        'callerUserId': isOutgoing ? myUserId : (callerUserId ?? myUserId),
+        'callerName': isOutgoing ? myName : callerName,
+        'callerRole': isOutgoing ? myRole : (callerRole ?? 'admin'),
+        'receiverUserId': isOutgoing ? (callerUserId ?? '') : myUserId,
+        'receiverName': isOutgoing ? callerName : myName,
+        'receiverRole': isOutgoing ? (callerRole ?? 'admin') : myRole,
         'status': status == 'accepted' ? 'connected' : status,
         'durationSeconds': durationSeconds,
         'startedAt': timestampIso ?? DateTime.now().toIso8601String(),
@@ -569,6 +598,7 @@ class WaiterCallHistoryService {
     String status = 'missed',
     int durationSeconds = 0,
     String? callTimestampIso,
+    String direction = 'incoming',
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final key = _resolveStorageKey(prefs);
@@ -595,6 +625,7 @@ class WaiterCallHistoryService {
         status: status,
         durationSeconds: durationSeconds,
         callType: 'admin_call',
+        direction: direction,
       );
     } else {
       entries.insert(
@@ -610,6 +641,7 @@ class WaiterCallHistoryService {
           createdAtIso: timestamp,
           callType: 'admin_call',
           durationSeconds: durationSeconds,
+          direction: direction,
           callerRole: callerRole ?? 'Super Admin',
           callerUserId: callerUserId,
         ),
@@ -627,6 +659,7 @@ class WaiterCallHistoryService {
         status: status,
         durationSeconds: durationSeconds,
         timestampIso: timestamp,
+        direction: direction,
       ),
     );
   }
@@ -767,6 +800,7 @@ class WaiterCallHistoryService {
         callerUserId: existing.callerUserId,
         status: status,
         durationSeconds: durationSeconds ?? existing.durationSeconds,
+        direction: existing.direction,
       ),
     );
   }

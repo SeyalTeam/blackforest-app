@@ -498,6 +498,7 @@ class WaiterLiveCallService extends ChangeNotifier {
       callerRole: 'Super Admin',
       callerUserId: adminUserId,
       status: 'missed',
+      direction: 'outgoing',
     ));
 
     try {

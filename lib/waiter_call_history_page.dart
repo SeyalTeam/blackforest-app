@@ -7,8 +7,9 @@ import 'waiter_live_call_service.dart';
 
 enum _WaiterCallFilter {
   all,
-  missed,
+  dialed,
   received,
+  missed,
   tableOnly,
 }
 
@@ -73,11 +74,14 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
       switch (_activeFilter) {
         case _WaiterCallFilter.all:
           break;
-        case _WaiterCallFilter.missed:
-          if (!entry.isMissed) return false;
+        case _WaiterCallFilter.dialed:
+          if (!entry.isDialed) return false;
           break;
         case _WaiterCallFilter.received:
-          if (!entry.isAccepted) return false;
+          if (!entry.isReceived) return false;
+          break;
+        case _WaiterCallFilter.missed:
+          if (!entry.isIncomingMissed) return false;
           break;
         case _WaiterCallFilter.tableOnly:
           if (!entry.isTableCall) return false;
@@ -192,7 +196,19 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
     final IconData statusIcon;
     final String statusText;
 
-    if (entry.isAccepted) {
+    if (entry.isDialed) {
+      if (entry.isDialedAnswered) {
+        statusColor = const Color(0xFF14804A);
+        statusIcon = Icons.call_made_rounded;
+        statusText = entry.durationSeconds > 0
+            ? 'Dialed • ${entry.formattedDuration}'
+            : 'Dialed • Answered';
+      } else {
+        statusColor = const Color(0xFF64748B);
+        statusIcon = Icons.call_made_rounded;
+        statusText = 'Dialed • No Answer';
+      }
+    } else if (entry.isAccepted) {
       statusColor = const Color(0xFF14804A);
       statusIcon = isTable ? Icons.call_received_rounded : Icons.phone_in_talk_rounded;
       if (isTable) {
@@ -210,17 +226,19 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
       statusIcon = isTable ? Icons.call_end_rounded : Icons.phone_disabled_rounded;
       statusText = 'Declined';
     } else {
-      statusColor = const Color(0xFFD97706);
+      statusColor = const Color(0xFFDC2626);
       statusIcon = isTable ? Icons.call_missed_rounded : Icons.phone_missed_rounded;
       statusText = 'Missed';
     }
 
     final titleText = isTable
         ? 'Table ${entry.tableNumber}'
-        : 'Admin Live Call';
+        : (entry.isDialed ? entry.customerName : 'Admin Live Call');
     final subtitleText = isTable
         ? '${entry.customerName.isEmpty ? "Guest" : entry.customerName} • Section ${entry.section.isEmpty ? "-" : entry.section} • ${_clockText(callTime)}'
-        : '${entry.customerName} (${entry.callerRole ?? "Super Admin"}) • ${_clockText(callTime)}';
+        : (entry.isDialed
+            ? '${entry.callerRole ?? "Super Admin"} • ${_clockText(callTime)}'
+            : '${entry.customerName} (${entry.callerRole ?? "Super Admin"}) • ${_clockText(callTime)}');
 
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
@@ -240,11 +258,13 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
         leading: CircleAvatar(
           radius: 22,
-          backgroundColor: entry.isAccepted
-              ? const Color(0xFFEAF8F1)
-              : entry.isDeclined
-              ? const Color(0xFFFDECEC)
-              : const Color(0xFFFFF5E5),
+          backgroundColor: entry.isDialed
+              ? (entry.isDialedAnswered ? const Color(0xFFEAF8F1) : const Color(0xFFF1F5F9))
+              : (entry.isAccepted
+                  ? const Color(0xFFEAF8F1)
+                  : entry.isDeclined
+                      ? const Color(0xFFFDECEC)
+                      : const Color(0xFFFFF5E5)),
           child: Icon(
             statusIcon,
             color: statusColor,
@@ -271,22 +291,24 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
               decoration: BoxDecoration(
                 color: isTable
                     ? const Color(0xFFF0FDF4)
-                    : const Color(0xFFEFF6FF),
+                    : (entry.isDialed ? const Color(0xFFF0F9FF) : const Color(0xFFEFF6FF)),
                 borderRadius: BorderRadius.circular(6),
                 border: Border.all(
                   color: isTable
                       ? const Color(0xFF86EFAC)
-                      : const Color(0xFF93C5FD),
+                      : (entry.isDialed ? const Color(0xFFBAE6FD) : const Color(0xFF93C5FD)),
                 ),
               ),
               child: Text(
-                isTable ? 'TABLE SOS' : 'VOICE CALL',
+                isTable
+                    ? 'TABLE SOS'
+                    : (entry.isDialed ? 'DIALED' : 'VOICE CALL'),
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w800,
                   color: isTable
                       ? const Color(0xFF15803D)
-                      : const Color(0xFF1D4ED8),
+                      : (entry.isDialed ? const Color(0xFF0284C7) : const Color(0xFF1D4ED8)),
                   letterSpacing: 0.4,
                 ),
               ),
@@ -491,8 +513,9 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
 
   @override
   Widget build(BuildContext context) {
-    final missedCount = _allEntries.where((e) => e.isMissed).length;
-    final receivedCount = _allEntries.where((e) => e.isAccepted).length;
+    final dialedCount = _allEntries.where((e) => e.isDialed).length;
+    final missedCount = _allEntries.where((e) => e.isIncomingMissed).length;
+    final receivedCount = _allEntries.where((e) => e.isReceived).length;
     final tableCount = _allEntries.where((e) => e.isTableCall).length;
     final filtered = _filteredEntries;
 
@@ -533,7 +556,7 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
       ),
       body: Column(
         children: [
-          // TOP CATEGORY BUTTONS: All | Missed | Received | Table Calling
+          // TOP CATEGORY BUTTONS: All | Dialed | Received | Missed | Table Calling
           Container(
             color: Colors.white,
             padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
@@ -549,26 +572,34 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
                   ),
                   const SizedBox(width: 8),
                   _buildTopFilterButton(
-                    filter: _WaiterCallFilter.missed,
-                    label: 'Missed',
-                    icon: Icons.call_missed_rounded,
-                    count: missedCount,
-                    countColor: Colors.redAccent,
+                    filter: _WaiterCallFilter.dialed,
+                    label: 'Dialed',
+                    icon: Icons.call_made_rounded,
+                    count: dialedCount > 0 ? dialedCount : null,
+                    countColor: const Color(0xFF0284C7),
                   ),
                   const SizedBox(width: 8),
                   _buildTopFilterButton(
                     filter: _WaiterCallFilter.received,
                     label: 'Received',
                     icon: Icons.call_received_rounded,
-                    count: receivedCount,
+                    count: receivedCount > 0 ? receivedCount : null,
                     countColor: const Color(0xFF14804A),
+                  ),
+                  const SizedBox(width: 8),
+                  _buildTopFilterButton(
+                    filter: _WaiterCallFilter.missed,
+                    label: 'Missed',
+                    icon: Icons.call_missed_rounded,
+                    count: missedCount > 0 ? missedCount : null,
+                    countColor: Colors.redAccent,
                   ),
                   const SizedBox(width: 8),
                   _buildTopFilterButton(
                     filter: _WaiterCallFilter.tableOnly,
                     label: 'Table Calling',
                     icon: Icons.room_service_rounded,
-                    count: tableCount,
+                    count: tableCount > 0 ? tableCount : null,
                     countColor: const Color(0xFF0F766E),
                   ),
                 ],
@@ -660,23 +691,29 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(
-                              _activeFilter == _WaiterCallFilter.missed
-                                  ? Icons.phone_missed_rounded
-                                  : (_activeFilter == _WaiterCallFilter.tableOnly
-                                      ? Icons.room_service_outlined
-                                      : Icons.call_outlined),
+                              _activeFilter == _WaiterCallFilter.dialed
+                                  ? Icons.call_made_rounded
+                                  : (_activeFilter == _WaiterCallFilter.missed
+                                      ? Icons.phone_missed_rounded
+                                      : (_activeFilter == _WaiterCallFilter.received
+                                          ? Icons.phone_in_talk_rounded
+                                          : (_activeFilter == _WaiterCallFilter.tableOnly
+                                              ? Icons.room_service_outlined
+                                              : Icons.call_outlined))),
                               size: 56,
                               color: const Color(0xFF94A3B8),
                             ),
                             const SizedBox(height: 12),
                             Text(
-                              _activeFilter == _WaiterCallFilter.missed
-                                  ? 'No missed calls recorded'
-                                  : (_activeFilter == _WaiterCallFilter.received
-                                      ? 'No received calls recorded'
-                                      : (_activeFilter == _WaiterCallFilter.tableOnly
-                                          ? 'No table calling requests recorded'
-                                          : 'No call records found')),
+                              _activeFilter == _WaiterCallFilter.dialed
+                                  ? 'No dialed calls recorded'
+                                  : (_activeFilter == _WaiterCallFilter.missed
+                                      ? 'No missed calls recorded'
+                                      : (_activeFilter == _WaiterCallFilter.received
+                                          ? 'No received calls recorded'
+                                          : (_activeFilter == _WaiterCallFilter.tableOnly
+                                              ? 'No table calling requests recorded'
+                                              : 'No call records found'))),
                               style: const TextStyle(
                                 color: Color(0xFF64748B),
                                 fontSize: 16,
