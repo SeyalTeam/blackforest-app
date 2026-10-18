@@ -31,25 +31,37 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
     _load();
   }
 
-  Future<void> _load() async {
-    if (mounted) {
+  Future<void> _load({bool showLoader = true}) async {
+    if (showLoader && mounted) {
       setState(() {
-        _isLoading = true;
+        _isLoading = _allEntries.isEmpty;
         _error = null;
       });
     }
     try {
-      final entries = await WaiterCallHistoryService.readHistory();
+      // 1. Instant local read so screen is populated immediately
+      final cached = await WaiterCallHistoryService.readHistory(syncRemote: false);
+      if (mounted && cached.isNotEmpty) {
+        setState(() {
+          _allEntries = cached;
+          _isLoading = false;
+        });
+      }
+
+      // 2. Sync permanent history from backend (table calls + voice calls)
+      final remote = await WaiterCallHistoryService.syncHistoryFromBackend();
       if (!mounted) return;
       setState(() {
-        _allEntries = entries;
+        _allEntries = remote;
         _isLoading = false;
       });
     } catch (_) {
       if (!mounted) return;
       setState(() {
         _isLoading = false;
-        _error = 'Unable to load call logs';
+        if (_allEntries.isEmpty) {
+          _error = 'Unable to load call logs';
+        }
       });
     }
   }
@@ -633,46 +645,54 @@ class _WaiterCallHistoryPageState extends State<WaiterCallHistoryPage> {
                     ),
                   )
                 : filtered.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                          _activeFilter == _WaiterCallFilter.missed
-                              ? Icons.phone_missed_rounded
-                              : (_activeFilter == _WaiterCallFilter.tableOnly
-                                  ? Icons.room_service_outlined
-                                  : Icons.call_outlined),
-                          size: 56,
-                          color: const Color(0xFF94A3B8),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          _activeFilter == _WaiterCallFilter.missed
-                              ? 'No missed calls recorded'
-                              : (_activeFilter == _WaiterCallFilter.received
-                                  ? 'No received calls recorded'
+                ? RefreshIndicator(
+                    onRefresh: _load,
+                    child: SingleChildScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      child: Container(
+                        height: MediaQuery.of(context).size.height * 0.6,
+                        alignment: Alignment.center,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _activeFilter == _WaiterCallFilter.missed
+                                  ? Icons.phone_missed_rounded
                                   : (_activeFilter == _WaiterCallFilter.tableOnly
-                                      ? 'No table calling requests recorded'
-                                      : 'No call records found')),
-                          style: const TextStyle(
-                            color: Color(0xFF64748B),
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
+                                      ? Icons.room_service_outlined
+                                      : Icons.call_outlined),
+                              size: 56,
+                              color: const Color(0xFF94A3B8),
+                            ),
+                            const SizedBox(height: 12),
+                            Text(
+                              _activeFilter == _WaiterCallFilter.missed
+                                  ? 'No missed calls recorded'
+                                  : (_activeFilter == _WaiterCallFilter.received
+                                      ? 'No received calls recorded'
+                                      : (_activeFilter == _WaiterCallFilter.tableOnly
+                                          ? 'No table calling requests recorded'
+                                          : 'No call records found')),
+                              style: const TextStyle(
+                                color: Color(0xFF64748B),
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            if (_selectedDateFilter != null) ...[
+                              const SizedBox(height: 8),
+                              TextButton(
+                                onPressed: () {
+                                  setState(() {
+                                    _selectedDateFilter = null;
+                                  });
+                                },
+                                child: const Text('Clear Date Filter'),
+                              ),
+                            ],
+                          ],
                         ),
-                        if (_selectedDateFilter != null) ...[
-                          const SizedBox(height: 8),
-                          TextButton(
-                            onPressed: () {
-                              setState(() {
-                                _selectedDateFilter = null;
-                              });
-                            },
-                            child: const Text('Clear Date Filter'),
-                          ),
-                        ],
-                      ],
+                      ),
                     ),
                   )
                 : RefreshIndicator(

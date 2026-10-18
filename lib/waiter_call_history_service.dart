@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -241,10 +242,275 @@ class WaiterCallHistoryService {
     return bTime.compareTo(aTime);
   }
 
-  static Future<List<WaiterCallHistoryEntry>> readHistory() async {
+  static Future<List<WaiterCallHistoryEntry>> readHistory({bool syncRemote = true}) async {
     final prefs = await SharedPreferences.getInstance();
     final key = _resolveStorageKey(prefs);
-    return _readEntriesFromPrefs(prefs, key);
+    final cached = _readEntriesFromPrefs(prefs, key);
+    if (syncRemote) {
+      unawaited(syncHistoryFromBackend());
+    }
+    return cached;
+  }
+
+  /// Syncs permanent call history (both Table Calls and Voice Calls) from MongoDB backend.
+  /// Merges remote docs with local cache so history is NEVER lost upon app reinstallation.
+  static Future<List<WaiterCallHistoryEntry>> syncHistoryFromBackend() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final key = _resolveStorageKey(prefs);
+      final token = prefs.getString('token')?.trim();
+      final branchId = prefs.getString('branchId')?.trim() ?? '';
+      final myUserId = (prefs.getString('user_id') ?? prefs.getString('userId'))?.trim() ?? '';
+
+      final localEntries = _readEntriesFromPrefs(prefs, key).toList(growable: true);
+      final Map<String, WaiterCallHistoryEntry> merged = {
+        for (final e in localEntries) e.eventKey: e,
+      };
+
+      // 1. Fetch Table Calls from /api/waiter-calls
+      try {
+        final queryParams = <String>[
+          'limit=300',
+          'sort=-createdAt',
+          'depth=1',
+        ];
+        if (branchId.isNotEmpty) {
+          queryParams.add('where[branch][equals]=$branchId');
+        }
+        final uri = Uri.parse('${ApiConfig.baseUrl}/waiter-calls?${queryParams.join('&')}');
+        final res = await http
+            .get(uri, headers: ApiConfig.getHeaders(token))
+            .timeout(const Duration(seconds: 6));
+
+        if (res.statusCode == 200) {
+          final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+          final docs = (decoded is Map ? decoded['docs'] : null) as List? ?? [];
+          for (final item in docs) {
+            if (item is! Map) continue;
+            final doc = Map<String, dynamic>.from(item);
+            final id = (doc['id'] ?? doc['_id'])?.toString().trim() ?? '';
+            if (id.isEmpty) continue;
+
+            final billing = doc['billing'];
+            final billId = billing is Map
+                ? (billing['id'] ?? billing['_id'])?.toString() ?? ''
+                : billing?.toString() ?? '';
+
+            String customerName = 'Guest';
+            if (billing is Map) {
+              final cust = billing['customer'];
+              final custName = cust is Map ? cust['name']?.toString() : null;
+              if (custName != null && custName.trim().isNotEmpty) {
+                customerName = custName.trim();
+              } else if (billing['customerName']?.toString().trim().isNotEmpty == true) {
+                customerName = billing['customerName'].toString().trim();
+              }
+            }
+
+            final rawStatus = (doc['status']?.toString() ?? '').toLowerCase();
+            final status = (rawStatus == 'acknowledged' || rawStatus == 'resolved')
+                ? 'accepted'
+                : (rawStatus == 'declined' ? 'declined' : 'missed');
+
+            final assigned = doc['assignedWaiter'];
+            final ackBy = assigned is Map
+                ? assigned['name']?.toString().trim()
+                : (assigned is String && assigned.isNotEmpty ? assigned : null);
+
+            final callTimestamp = doc['callTimestamp']?.toString() ??
+                doc['createdAt']?.toString() ??
+                DateTime.now().toIso8601String();
+            final createdAt = doc['createdAt']?.toString() ?? callTimestamp;
+            final updatedAt = doc['updatedAt']?.toString();
+
+            final entry = WaiterCallHistoryEntry(
+              eventKey: id,
+              billId: billId,
+              tableNumber: doc['tableNumber']?.toString() ?? '-',
+              section: doc['section']?.toString() ?? '',
+              customerName: customerName,
+              callTimestampIso: callTimestamp,
+              status: status,
+              createdAtIso: createdAt,
+              callType: 'table',
+              durationSeconds: 0,
+              acknowledgedBy: ackBy,
+              acknowledgedAtIso: (status == 'accepted') ? updatedAt : null,
+            );
+
+            if (merged.containsKey(id)) {
+              final existing = merged[id]!;
+              merged[id] = existing.copyWith(
+                billId: billId.isNotEmpty ? billId : existing.billId,
+                tableNumber: entry.tableNumber.isNotEmpty ? entry.tableNumber : existing.tableNumber,
+                section: entry.section.isNotEmpty ? entry.section : existing.section,
+                customerName: customerName != 'Guest' ? customerName : existing.customerName,
+                status: existing.isAccepted ? 'accepted' : status,
+                acknowledgedBy: ackBy ?? existing.acknowledgedBy,
+                acknowledgedAtIso: updatedAt ?? existing.acknowledgedAtIso,
+              );
+            } else {
+              merged[id] = entry;
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('WaiterCallHistoryService: error fetching table calls: $e');
+      }
+
+      // 2. Fetch Live Voice Calls from /api/call-logs
+      try {
+        final uri = Uri.parse('${ApiConfig.baseUrl}/call-logs?limit=300&sort=-createdAt&depth=0');
+        final res = await http
+            .get(uri, headers: ApiConfig.getHeaders(token))
+            .timeout(const Duration(seconds: 6));
+
+        if (res.statusCode == 200) {
+          final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+          final docs = (decoded is Map ? decoded['docs'] : null) as List? ?? [];
+          for (final item in docs) {
+            if (item is! Map) continue;
+            final doc = Map<String, dynamic>.from(item);
+            final callId = (doc['callId'] ?? doc['id'] ?? doc['_id'])?.toString().trim() ?? '';
+            if (callId.isEmpty) continue;
+
+            final callerId = doc['callerUserId']?.toString() ??
+                (doc['callerUser'] is Map
+                    ? doc['callerUser']['id']?.toString()
+                    : doc['callerUser']?.toString()) ??
+                '';
+            final receiverId = doc['receiverUserId']?.toString() ??
+                (doc['receiverUser'] is Map
+                    ? doc['receiverUser']['id']?.toString()
+                    : doc['receiverUser']?.toString()) ??
+                '';
+
+            // If current user ID is known, filter to relevant calls
+            if (myUserId.isNotEmpty && callerId.isNotEmpty && receiverId.isNotEmpty) {
+              if (callerId != myUserId && receiverId != myUserId) {
+                continue;
+              }
+            }
+
+            final isCaller = (myUserId.isNotEmpty && callerId == myUserId);
+            final displayName = isCaller
+                ? (doc['receiverName']?.toString().trim().isNotEmpty == true
+                    ? doc['receiverName'].toString().trim()
+                    : 'Staff')
+                : (doc['callerName']?.toString().trim().isNotEmpty == true
+                    ? doc['callerName'].toString().trim()
+                    : 'Super Admin');
+            final role = isCaller
+                ? (doc['receiverRole']?.toString() ?? 'Staff')
+                : (doc['callerRole']?.toString() ?? 'Super Admin');
+
+            final rawStatus = (doc['status']?.toString() ?? '').toLowerCase();
+            final status = (rawStatus == 'connected' || rawStatus == 'ended')
+                ? 'accepted'
+                : (rawStatus == 'declined' ? 'declined' : 'missed');
+
+            final durationSec = (doc['durationSeconds'] as num?)?.toInt() ?? 0;
+            final startedAt = doc['startedAt']?.toString() ??
+                doc['createdAt']?.toString() ??
+                DateTime.now().toIso8601String();
+            final endedAt = doc['endedAt']?.toString() ?? doc['updatedAt']?.toString();
+
+            final entry = WaiterCallHistoryEntry(
+              eventKey: callId,
+              billId: '',
+              tableNumber: 'Admin Call',
+              section: '',
+              customerName: displayName,
+              callTimestampIso: startedAt,
+              status: status,
+              createdAtIso: startedAt,
+              callType: 'admin_call',
+              durationSeconds: durationSec,
+              callerRole: role,
+              callerUserId: callerId.isNotEmpty ? callerId : null,
+              acknowledgedBy: displayName,
+              acknowledgedAtIso: endedAt,
+            );
+
+            if (merged.containsKey(callId)) {
+              final existing = merged[callId]!;
+              final bestDuration =
+                  durationSec > existing.durationSeconds ? durationSec : existing.durationSeconds;
+              merged[callId] = existing.copyWith(
+                customerName: displayName.isNotEmpty ? displayName : existing.customerName,
+                callerRole: role.isNotEmpty ? role : existing.callerRole,
+                callerUserId: callerId.isNotEmpty ? callerId : existing.callerUserId,
+                status: existing.isAccepted ? 'accepted' : status,
+                durationSeconds: bestDuration,
+                callType: 'admin_call',
+                acknowledgedAtIso: endedAt ?? existing.acknowledgedAtIso,
+              );
+            } else {
+              merged[callId] = entry;
+            }
+
+            // Cache last admin caller user id for callback
+            if (callerId.isNotEmpty &&
+                (role.toLowerCase().contains('admin') ||
+                    displayName.toLowerCase().contains('admin'))) {
+              await prefs.setString('last_admin_caller_user_id', callerId);
+              await prefs.setString('last_admin_caller_name', displayName);
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint('WaiterCallHistoryService: error fetching voice call logs: $e');
+      }
+
+      final result = merged.values.toList()..sort(_sortEntriesDescending);
+      await _saveEntriesToPrefs(prefs: prefs, key: key, entries: result);
+      return result;
+    } catch (e) {
+      debugPrint('WaiterCallHistoryService: syncHistoryFromBackend error: $e');
+      final prefs = await SharedPreferences.getInstance();
+      final key = _resolveStorageKey(prefs);
+      return _readEntriesFromPrefs(prefs, key);
+    }
+  }
+
+  /// Sends call log updates to MongoDB so backend stays synchronized.
+  static Future<void> syncVoiceCallToBackend({
+    required String callId,
+    required String callerName,
+    String? callerRole,
+    String? callerUserId,
+    String status = 'missed',
+    int durationSeconds = 0,
+    String? timestampIso,
+  }) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token')?.trim();
+      final myUserId = (prefs.getString('user_id') ?? prefs.getString('userId'))?.trim() ?? '';
+      final myName = prefs.getString('user_name') ?? prefs.getString('name') ?? 'Staff';
+      final myRole = prefs.getString('role') ?? 'waiter';
+
+      final uri = Uri.parse('${ApiConfig.baseUrl}/call-logs');
+      final payload = {
+        'callId': callId,
+        'callerUserId': callerUserId ?? myUserId,
+        'callerName': callerName,
+        'callerRole': callerRole ?? 'admin',
+        'receiverUserId': myUserId,
+        'receiverName': myName,
+        'receiverRole': myRole,
+        'status': status == 'accepted' ? 'connected' : status,
+        'durationSeconds': durationSeconds,
+        'startedAt': timestampIso ?? DateTime.now().toIso8601String(),
+      };
+      await http
+          .post(
+            uri,
+            headers: ApiConfig.getHeaders(token),
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 4));
+    } catch (_) {}
   }
 
   static Future<void> recordIncomingCall({
@@ -347,6 +613,18 @@ class WaiterCallHistoryService {
     }
 
     await _saveEntriesToPrefs(prefs: prefs, key: key, entries: entries);
+
+    unawaited(
+      syncVoiceCallToBackend(
+        callId: callId,
+        callerName: normalizedCaller,
+        callerRole: callerRole,
+        callerUserId: callerUserId,
+        status: status,
+        durationSeconds: durationSeconds,
+        timestampIso: timestamp,
+      ),
+    );
   }
 
   static Future<String?> getLastAdminUserId() async {
@@ -479,6 +757,17 @@ class WaiterCallHistoryService {
     );
 
     await _saveEntriesToPrefs(prefs: prefs, key: key, entries: entries);
+
+    unawaited(
+      syncVoiceCallToBackend(
+        callId: callId,
+        callerName: existing.customerName,
+        callerRole: existing.callerRole,
+        callerUserId: existing.callerUserId,
+        status: status,
+        durationSeconds: durationSeconds ?? existing.durationSeconds,
+      ),
+    );
   }
 
   static Future<void> markAccepted({
