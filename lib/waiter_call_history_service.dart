@@ -1,7 +1,11 @@
 import 'dart:convert';
 
-import 'package:blackforest_app/waiter_call_range_filter_service.dart';
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'api_config.dart';
+import 'waiter_call_range_filter_service.dart';
 
 class WaiterCallHistoryEntry {
   const WaiterCallHistoryEntry({
@@ -346,11 +350,112 @@ class WaiterCallHistoryService {
   }
 
   static Future<String?> getLastAdminUserId() async {
+    // 1. Check SharedPreferences cached last admin user id
     try {
       final prefs = await SharedPreferences.getInstance();
       final id = prefs.getString('last_admin_caller_user_id')?.trim();
       if (id != null && id.isNotEmpty) return id;
     } catch (_) {}
+
+    // 2. Check existing call history entries for any callerUserId
+    try {
+      final entries = await readHistory();
+      for (final e in entries) {
+        final id = e.callerUserId?.trim();
+        if (id != null && id.isNotEmpty) {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('last_admin_caller_user_id', id);
+          return id;
+        }
+      }
+    } catch (_) {}
+
+    // 3. Resolve Admin/Superadmin via API
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token')?.trim();
+      if (token != null && token.isNotEmpty) {
+        final uri = Uri.parse(
+          '${ApiConfig.baseUrl}/users?where[role][in]=superadmin,admin&limit=5&depth=0',
+        );
+        final res = await http.get(
+          uri,
+          headers: ApiConfig.getHeaders(token),
+        ).timeout(const Duration(seconds: 4));
+
+        if (res.statusCode == 200) {
+          final decoded = jsonDecode(utf8.decode(res.bodyBytes));
+          final docs = decoded['docs'] as List?;
+          if (docs != null && docs.isNotEmpty) {
+            dynamic selectedDoc = docs.firstWhere(
+              (d) => d is Map && d['role'] == 'superadmin',
+              orElse: () => docs.first,
+            );
+            if (selectedDoc is Map) {
+              final adminId = (selectedDoc['id'] ?? selectedDoc['_id'])?.toString().trim();
+              final adminName = (selectedDoc['name'] ?? selectedDoc['username'] ?? 'Super Admin').toString();
+              if (adminId != null && adminId.isNotEmpty) {
+                await prefs.setString('last_admin_caller_user_id', adminId);
+                await prefs.setString('last_admin_caller_name', adminName);
+                debugPrint('WaiterCallHistoryService: fetched admin user ID via API: $adminId ($adminName)');
+                return adminId;
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('WaiterCallHistoryService: error fetching admin user from API: $e');
+    }
+
+    // 4. Fallback: Check message threads & messages
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token')?.trim();
+      final myUserId = (prefs.getString('user_id') ?? prefs.getString('userId'))?.trim() ?? '';
+      if (token != null && token.isNotEmpty) {
+        final threadUrl = Uri.parse(
+          '${ApiConfig.baseUrl}/message-threads?limit=1&depth=0${myUserId.isNotEmpty ? "&where[staffUser][equals]=$myUserId" : ""}',
+        );
+        final threadRes = await http.get(
+          threadUrl,
+          headers: ApiConfig.getHeaders(token),
+        ).timeout(const Duration(seconds: 4));
+
+        if (threadRes.statusCode == 200) {
+          final decoded = jsonDecode(utf8.decode(threadRes.bodyBytes));
+          final docs = decoded['docs'] as List?;
+          if (docs != null && docs.isNotEmpty) {
+            final threadId = (docs.first['id'] ?? docs.first['_id'])?.toString() ?? '';
+            if (threadId.isNotEmpty) {
+              final msgsRes = await http.get(
+                Uri.parse('${ApiConfig.baseUrl}/messages?limit=10&depth=1&sort=-createdAt&where[thread][equals]=$threadId'),
+                headers: ApiConfig.getHeaders(token),
+              ).timeout(const Duration(seconds: 4));
+              if (msgsRes.statusCode == 200) {
+                final mDecoded = jsonDecode(utf8.decode(msgsRes.bodyBytes));
+                final mDocs = mDecoded['docs'] as List?;
+                if (mDocs != null) {
+                  for (final m in mDocs) {
+                    if (m is! Map) continue;
+                    final role = m['senderRole']?.toString() ?? '';
+                    if (role == 'admin' || role == 'superadmin') {
+                      final sUser = m['senderUser'];
+                      final sId = sUser is Map ? (sUser['id'] ?? sUser['_id'])?.toString() : sUser?.toString();
+                      if (sId != null && sId.isNotEmpty) {
+                        await prefs.setString('last_admin_caller_user_id', sId);
+                        return sId;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (_) {}
+
     return null;
   }
 
