@@ -138,22 +138,12 @@ class _RankCardPageState extends State<RankCardPage> {
             merged['rule7CounterBilling'] = fallback['rule7CounterBilling'];
           }
 
-          // Ensure all 7 rules are present in the rules list
+          // Handle dynamic rules list from server
           final resRules = (res['rules'] as List<dynamic>?) ?? [];
-          final bool hasRuleTable = resRules.any((r) => r is Map && r['category'] == 'billing_table');
-          final bool hasRuleCounter = resRules.any((r) => r is Map && r['category'] == 'billing_counter');
-          if (!hasRuleTable || !hasRuleCounter) {
-            final fbRules = (fallback['rules'] as List<dynamic>?) ?? [];
-            final combinedRules = List<dynamic>.from(resRules);
-            if (!hasRuleTable) {
-              final fbTable = fbRules.firstWhere((r) => r is Map && r['category'] == 'billing_table', orElse: () => null);
-              if (fbTable != null) combinedRules.add(fbTable);
-            }
-            if (!hasRuleCounter) {
-              final fbCounter = fbRules.firstWhere((r) => r is Map && r['category'] == 'billing_counter', orElse: () => null);
-              if (fbCounter != null) combinedRules.add(fbCounter);
-            }
-            merged['rules'] = combinedRules;
+          if (resRules.isNotEmpty) {
+            merged['rules'] = resRules;
+          } else {
+            merged['rules'] = (fallback['rules'] as List<dynamic>?) ?? [];
           }
 
           // Safeguard scope rankings if server returned empty or missing scopes
@@ -1449,23 +1439,6 @@ class _RankCardPageState extends State<RankCardPage> {
 
     final rulesList = _reportData?['rules'] as List<dynamic>? ?? [];
 
-    Map<String, dynamic>? findRule(String category) {
-      for (final r in rulesList) {
-        if (r is Map<String, dynamic> && r['category'] == category) {
-          return r;
-        }
-      }
-      return null;
-    }
-
-    final ruleCall = findRule('call_speed');
-    final ruleAtt = findRule('attendance');
-    final ruleTasks = findRule('tasks');
-    final ruleBilling = findRule('billing');
-    final ruleKot = findRule('kot_time');
-    final ruleTable = findRule('billing_table');
-    final ruleCounter = findRule('billing_counter');
-
     int resolveMaxMarks(Map<String, dynamic>? rule, Map<String, dynamic>? ruleObj) {
       if (rule != null && rule['maxMarks'] is num) {
         return (rule['maxMarks'] as num).toInt();
@@ -1497,114 +1470,150 @@ class _RankCardPageState extends State<RankCardPage> {
       return '$scoreStr / $maxMarks';
     }
 
-    final callMax = resolveMaxMarks(ruleCall, r1);
-    final callScore = resolveScore(ruleCall, r1, callMax, 0);
+    final items = <Map<String, dynamic>>[];
 
-    final attMax = resolveMaxMarks(ruleAtt, r2);
-    final attScore = resolveScore(ruleAtt, r2, attMax, 0);
+    // If rulesList is available, render dynamically; otherwise use default 7 rules
+    final rulesToRender = rulesList.isNotEmpty
+        ? rulesList
+        : [
+            {'category': 'call_speed', 'title': 'Call Response SLA', 'maxMarks': 100, 'score': 0},
+            {'category': 'attendance', 'title': 'Shift Attendance', 'maxMarks': 100, 'score': 0},
+            {'category': 'tasks', 'title': 'Daily Tasks Checklist', 'maxMarks': 100, 'score': 0},
+            {'category': 'billing', 'title': 'Table Billing Accuracy', 'maxMarks': 100, 'score': 0},
+            {'category': 'kot_time', 'title': 'KOT Table Delivery SLA', 'maxMarks': 100, 'score': 0},
+            {'category': 'billing_table', 'title': 'Table Order Sales SLA', 'maxMarks': 100, 'score': 0},
+            {'category': 'billing_counter', 'title': 'Counter Bill Sales SLA', 'maxMarks': 100, 'score': 0},
+          ];
 
-    final tasksMax = resolveMaxMarks(ruleTasks, r3);
-    final tasksScore = resolveScore(ruleTasks, r3, tasksMax, 0);
+    final emojiRegex = RegExp(
+      r'^([\u{1F300}-\u{1FAFF}]|[\u{2600}-\u{27BF}]|[\u{2300}-\u{23FF}]|[\u{2B50}])\s*',
+      unicode: true,
+    );
 
-    final billMax = resolveMaxMarks(ruleBilling, r4);
-    final billScore = resolveScore(ruleBilling, r4, billMax, 0);
+    for (final rawRule in rulesToRender) {
+      if (rawRule is! Map) continue;
+      final rule = Map<String, dynamic>.from(rawRule);
+      final cat = rule['category']?.toString() ?? '';
+      final rawTitle = rule['title']?.toString() ?? 'Performance Standard';
+      final summary = rule['summary']?.toString() ?? rule['ratingLabel']?.toString() ?? '';
 
-    final kotMax = resolveMaxMarks(ruleKot, r5);
-    final kotScore = resolveScore(ruleKot, r5, kotMax, 0);
+      String icon = '🎯';
+      String title = rawTitle;
 
-    final tableMax = resolveMaxMarks(ruleTable, r6);
-    final tableScore = resolveScore(ruleTable, r6, tableMax, 0);
-    final tableRevenue = (r6?['totalRevenue'] as num?)?.toInt() ?? 0;
-    final tableBills = (r6?['totalBills'] as num?)?.toInt() ?? 0;
-    final tableAch = (r6?['achievementPercent'] as num?)?.round() ?? 0;
-    final tableRevStr = '₹${NumberFormat.decimalPattern('en_IN').format(tableRevenue)}';
+      final match = emojiRegex.firstMatch(rawTitle.trim());
+      if (match != null) {
+        icon = match.group(1)!;
+        title = rawTitle.trim().substring(match.end).trim();
+      }
 
-    final counterMax = resolveMaxMarks(ruleCounter, r7);
-    final counterScore = resolveScore(ruleCounter, r7, counterMax, 0);
-    final counterRevenue = (r7?['totalRevenue'] as num?)?.toInt() ?? 0;
-    final counterBills = (r7?['totalBills'] as num?)?.toInt() ?? 0;
-    final counterAch = (r7?['achievementPercent'] as num?)?.round() ?? 0;
-    final counterRevStr = '₹${NumberFormat.decimalPattern('en_IN').format(counterRevenue)}';
+      String subtitle = '';
+      num score = 0;
+      int maxMarks = (rule['maxMarks'] as num?)?.toInt() ?? 100;
 
-    final items = [
-      {
-        'icon': '⚡',
-        'title': 'Call Response SLA',
-        'subtitle': totalCalls == 0
-            ? '0 calls received'
-            : '$callSpeed avg • $under30s of $totalCalls calls < 30s',
-        'mark': formatMark(callScore, callMax),
-        'score': callScore,
-        'maxMarks': callMax,
-        'color': _getScoreColor(callScore, callMax),
-      },
-      {
-        'icon': '⏰',
-        'title': 'Shift Attendance',
-        'subtitle': presentDays == 0
-            ? '0 shifts • Not punched in'
-            : '${presentDays == 1 ? "1 shift" : "$presentDays shifts"} • $attRate% attendance rate',
-        'mark': formatMark(attScore, attMax),
-        'score': attScore,
-        'maxMarks': attMax,
-        'color': _getScoreColor(attScore, attMax),
-      },
-      {
-        'icon': '📋',
-        'title': 'Daily Tasks Checklist',
-        'subtitle': totalTasks == 0
-            ? '0 tasks recorded'
-            : '$tasksDone of $totalTasks completed ($taskRate%)',
-        'mark': formatMark(tasksScore, tasksMax),
-        'score': tasksScore,
-        'maxMarks': tasksMax,
-        'color': _getScoreColor(tasksScore, tasksMax),
-      },
-      {
-        'icon': '🍽️',
-        'title': 'Table Billing Accuracy',
-        'subtitle': servedProds == 0
-            ? '0 items served'
-            : '$servedProds items served • $billingAcc% accuracy',
-        'mark': formatMark(billScore, billMax),
-        'score': billScore,
-        'maxMarks': billMax,
-        'color': _getScoreColor(billScore, billMax),
-      },
-      {
-        'icon': '⏱️',
-        'title': 'KOT Table Delivery SLA',
-        'subtitle': (r5?['totalItems'] == null || r5?['totalItems'] == 0)
-            ? '0 KOT deliveries'
-            : '$kotAvg avg • $kotRate% delivered on-time',
-        'mark': formatMark(kotScore, kotMax),
-        'score': kotScore,
-        'maxMarks': kotMax,
-        'color': _getScoreColor(kotScore, kotMax),
-      },
-      {
-        'icon': '🍽️',
-        'title': 'Table Order Sales SLA',
-        'subtitle': tableBills == 0
-            ? '₹0 • 0 tables billed'
-            : '$tableRevStr across $tableBills tables • $tableAch% achieved',
-        'mark': formatMark(tableScore, tableMax),
-        'score': tableScore,
-        'maxMarks': tableMax,
-        'color': _getScoreColor(tableScore, tableMax),
-      },
-      {
-        'icon': '🛍️',
-        'title': 'Counter Bill Sales SLA',
-        'subtitle': counterBills == 0
-            ? '₹0 • 0 counter bills'
-            : '$counterRevStr across $counterBills bills • $counterAch% achieved',
-        'mark': formatMark(counterScore, counterMax),
-        'score': counterScore,
-        'maxMarks': counterMax,
-        'color': _getScoreColor(counterScore, counterMax),
-      },
-    ];
+      switch (cat) {
+        case 'call_speed':
+          if (icon == '🎯') icon = '⚡';
+          if (title == rawTitle || title.isEmpty) title = 'Call Response SLA';
+          maxMarks = resolveMaxMarks(rule, r1);
+          score = resolveScore(rule, r1, maxMarks, 0);
+          subtitle = totalCalls == 0
+              ? '0 calls received'
+              : '$callSpeed avg • $under30s of $totalCalls calls < 30s';
+          break;
+
+        case 'attendance':
+          if (icon == '🎯') icon = '⏰';
+          if (title == rawTitle || title.isEmpty) title = 'Shift Attendance';
+          maxMarks = resolveMaxMarks(rule, r2);
+          score = resolveScore(rule, r2, maxMarks, 0);
+          subtitle = presentDays == 0
+              ? '0 shifts • Not punched in'
+              : '${presentDays == 1 ? "1 shift" : "$presentDays shifts"} • $attRate% attendance rate';
+          break;
+
+        case 'tasks':
+          if (icon == '🎯') icon = '📋';
+          if (title == rawTitle || title.isEmpty) title = 'Daily Tasks Checklist';
+          maxMarks = resolveMaxMarks(rule, r3);
+          score = resolveScore(rule, r3, maxMarks, 0);
+          subtitle = totalTasks == 0
+              ? '0 tasks recorded'
+              : '$tasksDone of $totalTasks completed ($taskRate%)';
+          break;
+
+        case 'billing':
+          if (icon == '🎯') icon = '🍽️';
+          if (title == rawTitle || title.isEmpty) title = 'Table Billing Accuracy';
+          maxMarks = resolveMaxMarks(rule, r4);
+          score = resolveScore(rule, r4, maxMarks, 0);
+          subtitle = servedProds == 0
+              ? '0 items served'
+              : '$servedProds items served • $billingAcc% accuracy';
+          break;
+
+        case 'kot_time':
+          if (icon == '🎯') icon = '⏱️';
+          if (title == rawTitle || title.isEmpty) title = 'KOT Table Delivery SLA';
+          maxMarks = resolveMaxMarks(rule, r5);
+          score = resolveScore(rule, r5, maxMarks, 0);
+          subtitle = (r5?['totalItems'] == null || r5?['totalItems'] == 0)
+              ? '0 KOT deliveries'
+              : '$kotAvg avg • $kotRate% delivered on-time';
+          break;
+
+        case 'billing_table':
+          if (icon == '🎯') icon = '🍽️';
+          if (title == rawTitle || title.isEmpty) title = 'Table Order Sales SLA';
+          final tableRevenue = (r6?['totalRevenue'] as num?)?.toInt() ?? 0;
+          final tableBills = (r6?['totalBills'] as num?)?.toInt() ?? 0;
+          final tableAch = (r6?['achievementPercent'] as num?)?.round() ?? 0;
+          final tableRevStr = '₹${NumberFormat.decimalPattern('en_IN').format(tableRevenue)}';
+          maxMarks = resolveMaxMarks(rule, r6);
+          score = resolveScore(rule, r6, maxMarks, 0);
+          subtitle = tableBills == 0
+              ? '₹0 • 0 tables billed'
+              : '$tableRevStr across $tableBills tables • $tableAch% achieved';
+          break;
+
+        case 'billing_counter':
+          if (icon == '🎯') icon = '🛍️';
+          if (title == rawTitle || title.isEmpty) title = 'Counter Bill Sales SLA';
+          final counterRevenue = (r7?['totalRevenue'] as num?)?.toInt() ?? 0;
+          final counterBills = (r7?['totalBills'] as num?)?.toInt() ?? 0;
+          final counterAch = (r7?['achievementPercent'] as num?)?.round() ?? 0;
+          final counterRevStr = '₹${NumberFormat.decimalPattern('en_IN').format(counterRevenue)}';
+          maxMarks = resolveMaxMarks(rule, r7);
+          score = resolveScore(rule, r7, maxMarks, 0);
+          subtitle = counterBills == 0
+              ? '₹0 • 0 counter bills'
+              : '$counterRevStr across $counterBills bills • $counterAch% achieved';
+          break;
+
+        default:
+          if (icon == '🎯') {
+            if (cat == 'hygiene') {
+              icon = '⭐';
+            } else if (cat == 'reviews') {
+              icon = '💬';
+            } else if (cat == 'general') {
+              icon = 'ℹ️';
+            }
+          }
+          score = resolveScore(rule, null, maxMarks, 0);
+          subtitle = summary.isNotEmpty ? summary : '0 recorded • Pending live evaluation';
+          break;
+      }
+
+      items.add({
+        'icon': icon,
+        'title': title,
+        'subtitle': subtitle,
+        'mark': formatMark(score, maxMarks),
+        'score': score,
+        'maxMarks': maxMarks,
+        'color': _getScoreColor(score, maxMarks),
+      });
+    }
 
     final totalHighlightsScore = items.fold<num>(0, (sum, it) => sum + (it['score'] as num));
     final totalHighlightsMax = items.fold<int>(0, (sum, it) => sum + (it['maxMarks'] as int));
