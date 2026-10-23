@@ -119,7 +119,7 @@ class PrintTaskHandler extends TaskHandler {
 }
 
 class KotAutoPrintService {
-  static const String _apiBase = 'https://admin.theblackforestcakes.com/api';
+  static const String _apiBase = 'https://blackforest-api.vseyal.com/api';
   static const Duration _configCacheTtl = Duration(minutes: 2);
   static const int _maxRememberedItems = 1200;
   static const String _autoCompletedReceiptPrefKey =
@@ -1674,7 +1674,7 @@ class KotAutoPrintService {
       }
 
       // QR Code Logic (Same as cart_page.dart)
-      String billingUrl = 'https://admin.theblackforestcakes.com/billings';
+      String billingUrl = 'https://blackforest-api.vseyal.com/billings';
       String? billingId = bill['id'] ?? bill['doc']?['id'] ?? bill['_id'];
       if (billingId != null) {
         billingUrl = '$billingUrl/$billingId';

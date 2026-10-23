@@ -90,7 +90,7 @@ class GlobalKotRealtimeService {
       final primaryHost = apiHostActive.trim().isNotEmpty ? apiHostActive.trim() : apiHostPrimary;
       final candidateHosts = <String>[
         primaryHost,
-        if (primaryHost != 'admin.theblackforestcakes.com') 'admin.theblackforestcakes.com',
+        if (primaryHost != 'blackforest-api.vseyal.com') 'blackforest-api.vseyal.com',
         if (primaryHost != 'blackforest.vseyal.com') 'blackforest.vseyal.com',
       ];
 

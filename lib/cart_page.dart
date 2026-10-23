@@ -327,7 +327,7 @@ class _CartPageState extends State<CartPage> {
       if (token == null) return;
 
       final response = await http.get(
-        Uri.parse('https://admin.theblackforestcakes.com/api/users/me?depth=2'),
+        Uri.parse('https://blackforest-api.vseyal.com/api/users/me?depth=2'),
         headers: {'Authorization': 'Bearer $token'},
       );
 
@@ -364,7 +364,7 @@ class _CartPageState extends State<CartPage> {
       try {
         final gRes = await http.get(
           Uri.parse(
-            'https://admin.theblackforestcakes.com/api/globals/branch-geo-settings',
+            'https://blackforest-api.vseyal.com/api/globals/branch-geo-settings',
           ),
           headers: {
             'Authorization': 'Bearer $token',
@@ -433,7 +433,7 @@ class _CartPageState extends State<CartPage> {
       // 2. Fetch from Branches Collection
       final response = await http.get(
         Uri.parse(
-          'https://admin.theblackforestcakes.com/api/branches/$branchId?depth=1',
+          'https://blackforest-api.vseyal.com/api/branches/$branchId?depth=1',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -776,7 +776,7 @@ class _CartPageState extends State<CartPage> {
       final token = prefs.getString('token');
       final response = await http.get(
         Uri.parse(
-          'https://admin.theblackforestcakes.com/api/kitchens?where[branches][contains]=$_branchId&limit=100',
+          'https://blackforest-api.vseyal.com/api/kitchens?where[branches][contains]=$_branchId&limit=100',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -809,7 +809,7 @@ class _CartPageState extends State<CartPage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://admin.theblackforestcakes.com/api/companies/$companyId?depth=1',
+          'https://blackforest-api.vseyal.com/api/companies/$companyId?depth=1',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -842,7 +842,7 @@ class _CartPageState extends State<CartPage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://admin.theblackforestcakes.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
+          'https://blackforest-api.vseyal.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -925,7 +925,7 @@ class _CartPageState extends State<CartPage> {
       };
 
       final response = await http.get(
-        Uri.https('admin.theblackforestcakes.com', '/api/billings', lookupParams),
+        Uri.https('blackforest-api.vseyal.com', '/api/billings', lookupParams),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode != 200) return false;
@@ -1017,7 +1017,7 @@ class _CartPageState extends State<CartPage> {
     if (trimmedName.isEmpty && trimmedPhone.isEmpty) return;
 
     final url = Uri.parse(
-      'https://admin.theblackforestcakes.com/api/billings/$trimmedBillId?depth=0',
+      'https://blackforest-api.vseyal.com/api/billings/$trimmedBillId?depth=0',
     );
     final payload = <String, dynamic>{
       'customerDetails': {
@@ -1149,7 +1149,7 @@ class _CartPageState extends State<CartPage> {
     }
 
     final patchUrl = Uri.parse(
-      'https://admin.theblackforestcakes.com/api/billings/$trimmedBillId?depth=0',
+      'https://blackforest-api.vseyal.com/api/billings/$trimmedBillId?depth=0',
     );
     final patchPayload = <String, dynamic>{
       'customerDetails': {
@@ -1174,7 +1174,7 @@ class _CartPageState extends State<CartPage> {
         final response = await http
             .get(
               Uri.parse(
-                'https://admin.theblackforestcakes.com/api/billings/$trimmedBillId?depth=0',
+                'https://blackforest-api.vseyal.com/api/billings/$trimmedBillId?depth=0',
               ),
               headers: {
                 'Content-Type': 'application/json',
@@ -1413,7 +1413,7 @@ class _CartPageState extends State<CartPage> {
       // 1. Try Global Settings first
       final gRes = await http.get(
         Uri.parse(
-          'https://admin.theblackforestcakes.com/api/globals/branch-geo-settings',
+          'https://blackforest-api.vseyal.com/api/globals/branch-geo-settings',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -1445,7 +1445,7 @@ class _CartPageState extends State<CartPage> {
 
       // 2. Fallback to Branches Collection
       final allBranchesResponse = await http.get(
-        Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
+        Uri.parse('https://blackforest-api.vseyal.com/api/branches?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
 
@@ -1509,7 +1509,7 @@ class _CartPageState extends State<CartPage> {
 
       final response = await http.get(
         Uri.parse(
-          'https://admin.theblackforestcakes.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=2',
+          'https://blackforest-api.vseyal.com/api/products?where[upc][equals]=$scanResult&limit=1&depth=2',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -1691,9 +1691,9 @@ class _CartPageState extends State<CartPage> {
               now.day,
             ).toUtc().toIso8601String();
             final urlString =
-                'https://admin.theblackforestcakes.com/api/billings?where[branch][equals]=$resolvedBranchId&where[status][in][0]=pending&where[status][in][1]=ordered&where[status][in][2]=confirmed&where[status][in][3]=prepared&where[createdAt][greater_than_equal]=$todayStart&limit=30&depth=1';
+                'https://blackforest-api.vseyal.com/api/billings?where[branch][equals]=$resolvedBranchId&where[status][in][0]=pending&where[status][in][1]=ordered&where[status][in][2]=confirmed&where[status][in][3]=prepared&where[createdAt][greater_than_equal]=$todayStart&limit=30&depth=1';
             final tablesUrlString =
-                'https://admin.theblackforestcakes.com/api/tables?where[branch][equals]=$resolvedBranchId&limit=1&depth=1';
+                'https://blackforest-api.vseyal.com/api/tables?where[branch][equals]=$resolvedBranchId&limit=1&depth=1';
 
             final results = await Future.wait([
               http.get(
@@ -4541,7 +4541,7 @@ class _CartPageState extends State<CartPage> {
           try {
             final lookupResponse = await http.get(
               Uri.https(
-                'admin.theblackforestcakes.com',
+                'blackforest-api.vseyal.com',
                 '/api/billings',
                 lookupParams,
               ),
@@ -4704,9 +4704,9 @@ class _CartPageState extends State<CartPage> {
 
       final url = billId != null
           ? Uri.parse(
-              'https://admin.theblackforestcakes.com/api/billings/$billId?depth=0',
+              'https://blackforest-api.vseyal.com/api/billings/$billId?depth=0',
             )
-          : Uri.parse('https://admin.theblackforestcakes.com/api/billings?depth=0');
+          : Uri.parse('https://blackforest-api.vseyal.com/api/billings?depth=0');
       final billingWriteHeaders = {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer $token',
@@ -5677,7 +5677,7 @@ class _CartPageState extends State<CartPage> {
               if (token != null) {
                 final userResponse = await http.get(
                   Uri.parse(
-                    'https://admin.theblackforestcakes.com/api/users/$userId?depth=1',
+                    'https://blackforest-api.vseyal.com/api/users/$userId?depth=1',
                   ),
                   headers: {'Authorization': 'Bearer $token'},
                 );
@@ -5700,7 +5700,7 @@ class _CartPageState extends State<CartPage> {
         final token = prefs.getString('token');
         if (token != null) {
           final meResponse = await http.get(
-            Uri.parse('https://admin.theblackforestcakes.com/api/users/me'),
+            Uri.parse('https://blackforest-api.vseyal.com/api/users/me'),
             headers: {'Authorization': 'Bearer $token'},
           );
           if (meResponse.statusCode == 200) {
@@ -6316,7 +6316,7 @@ class _CartPageState extends State<CartPage> {
 
           printer.feed(1); // Added space after feedback image as requested
         }
-        String billingUrl = 'https://admin.theblackforestcakes.com/billings';
+        String billingUrl = 'https://blackforest-api.vseyal.com/billings';
         String? billingId =
             billingResponse['id'] ??
             billingResponse['doc']?['id'] ??
@@ -6655,7 +6655,7 @@ class _CartPageState extends State<CartPage> {
         final token = prefs.getString('token');
         if (token != null) {
           final meResponse = await http.get(
-            Uri.parse('https://admin.theblackforestcakes.com/api/users/me'),
+            Uri.parse('https://blackforest-api.vseyal.com/api/users/me'),
             headers: {'Authorization': 'Bearer $token'},
           );
           if (meResponse.statusCode == 200) {

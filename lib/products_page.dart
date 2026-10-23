@@ -801,7 +801,7 @@ class _ProductsPageState extends State<ProductsPage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://admin.theblackforestcakes.com/api/globals/widget-settings?depth=1',
+          'https://blackforest-api.vseyal.com/api/globals/widget-settings?depth=1',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -967,7 +967,7 @@ class _ProductsPageState extends State<ProductsPage> {
     try {
       final response = await http.get(
         Uri.parse(
-          'https://admin.theblackforestcakes.com/api/categories?where[id][in]=${ids.join(',')}&depth=1&limit=100',
+          'https://blackforest-api.vseyal.com/api/categories?where[id][in]=${ids.join(',')}&depth=1&limit=100',
         ),
         headers: {
           'Authorization': 'Bearer $token',
@@ -1035,7 +1035,7 @@ class _ProductsPageState extends State<ProductsPage> {
   Future<void> _fetchUserData(String token) async {
     try {
       final response = await http.get(
-        Uri.parse('https://admin.theblackforestcakes.com/api/users/me?depth=0'),
+        Uri.parse('https://blackforest-api.vseyal.com/api/users/me?depth=0'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (response.statusCode == 200) {
@@ -1120,7 +1120,7 @@ class _ProductsPageState extends State<ProductsPage> {
       try {
         final gRes = await http.get(
           Uri.parse(
-            'https://admin.theblackforestcakes.com/api/globals/branch-geo-settings',
+            'https://blackforest-api.vseyal.com/api/globals/branch-geo-settings',
           ),
           headers: {
             'Authorization': 'Bearer $token',
@@ -1161,7 +1161,7 @@ class _ProductsPageState extends State<ProductsPage> {
 
       // 2. Fallback to Branches Collection
       final allBranchesResponse = await http.get(
-        Uri.parse('https://admin.theblackforestcakes.com/api/branches?depth=1'),
+        Uri.parse('https://blackforest-api.vseyal.com/api/branches?depth=1'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (allBranchesResponse.statusCode == 200) {
@@ -1272,7 +1272,7 @@ class _ProductsPageState extends State<ProductsPage> {
     for (final idChunk in _chunked<String>(ids, 60)) {
       final response = await http.get(
         Uri.parse(
-          'https://admin.theblackforestcakes.com/api/products?where[id][in]=${idChunk.join(',')}&depth=2&limit=${idChunk.length}',
+          'https://blackforest-api.vseyal.com/api/products?where[id][in]=${idChunk.join(',')}&depth=2&limit=${idChunk.length}',
         ),
         headers: {'Authorization': 'Bearer $token'},
       );
@@ -1393,7 +1393,7 @@ class _ProductsPageState extends State<ProductsPage> {
 
         final response = await http.get(
           Uri.parse(
-            'https://admin.theblackforestcakes.com/api/widgets/billing-menu',
+            'https://blackforest-api.vseyal.com/api/widgets/billing-menu',
           ).replace(
             queryParameters: <String, String>{
               'mode': 'products',
@@ -1451,7 +1451,7 @@ class _ProductsPageState extends State<ProductsPage> {
       }
 
       final url =
-          'https://admin.theblackforestcakes.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=2';
+          'https://blackforest-api.vseyal.com/api/products?where[category][equals]=${widget.categoryId}&limit=100&depth=2';
       final response = await http.get(
         Uri.parse(url),
         headers: {'Authorization': 'Bearer $token'},
@@ -1645,7 +1645,7 @@ class _ProductsPageState extends State<ProductsPage> {
       return resolveApiAssetUrl(value);
     }
     if (value.startsWith('//')) return resolveApiAssetUrl('https:$value');
-    if (value.startsWith('admin.theblackforestcakes.com')) {
+    if (value.startsWith('blackforest-api.vseyal.com')) {
       return resolveApiAssetUrl('https://$value');
     }
     if (value.startsWith('/')) return resolveApiAssetUrl(value);

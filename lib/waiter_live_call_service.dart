@@ -7,6 +7,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'attendance_manager.dart';
 import 'global_kot_realtime_service.dart';
 import 'notification_service.dart';
 import 'waiter_call_history_service.dart';
@@ -463,6 +464,12 @@ class WaiterLiveCallService extends ChangeNotifier {
     if (targetUserId.isEmpty || targetUserId == myUserId) {
       debugPrint('WaiterLiveCallService: Cannot call user - target ID matches myUserId or is empty');
       throw Exception('Target contact is unavailable.');
+    }
+
+    // STRICT: Must be punched in to place a call
+    if (!AttendanceManager.isPunchedIn) {
+      debugPrint('WaiterLiveCallService: Cannot call - user is not punched in');
+      throw Exception('You must be punched in to make calls.');
     }
 
     final micStatus = await Permission.microphone.request();
