@@ -67,7 +67,7 @@ class ApiService {
   Future<Map<String, dynamic>> fetchUserProfile() async {
     try {
       final token = await _getToken();
-      final url = '$_baseUrl/users/me';
+      final url = '$_baseUrl/users/me?depth=2';
       final res = await http.get(
         Uri.parse(url),
         headers: token != null ? {'Authorization': 'Bearer $token'} : {},

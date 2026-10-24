@@ -28,6 +28,8 @@ class GlobalKotRealtimeService {
   String _wsBranchId = '';
   String _wsKitchenId = '';
   String _currentUserId = '';
+  bool _isChef = false;
+  final Set<String> _chefAssignedCategoryIds = {};
   
   final AudioPlayer _audioPlayer = AudioPlayer();
   final Set<String> _seenEventIds = <String>{};
@@ -70,6 +72,11 @@ class GlobalKotRealtimeService {
     _wsBranchId = (prefs.getString('branchId') ?? prefs.getString('branch') ?? prefs.getString('userBranchId') ?? '').trim();
     _wsKitchenId = (prefs.getString('kitchenId') ?? '').trim();
     _currentUserId = (prefs.getString('user_id') ?? prefs.getString('userId') ?? prefs.getString('employee_id') ?? '').trim();
+    final userRole = (prefs.getString('role') ?? '').trim().toLowerCase();
+    final chefCatList = prefs.getStringList('chef_assigned_category_ids') ?? <String>[];
+    _chefAssignedCategoryIds.clear();
+    _chefAssignedCategoryIds.addAll(chefCatList);
+    _isChef = userRole == 'chef' || (userRole == 'kitchen' && _chefAssignedCategoryIds.isNotEmpty);
   }
 
   Future<void> connect() async {
@@ -294,6 +301,18 @@ class GlobalKotRealtimeService {
     final tableName = (message['tableName'] ?? message['tableNo'] ?? message['table'])?.toString() ?? '';
     
     if (statusAfter == 'ordered' || statusAfter == 'pending' || statusAfter == 'confirmed') {
+      if (_isChef) {
+        if (_chefAssignedCategoryIds.isEmpty) {
+          _updateController.add(null);
+          return;
+        }
+        final notifCatId = (message['categoryId'] ?? '').toString().trim();
+        if (notifCatId.isNotEmpty && !_chefAssignedCategoryIds.contains(notifCatId)) {
+          _updateController.add(null);
+          return;
+        }
+      }
+
       try {
         _audioPlayer.play(AssetSource('sounds/alert.wav'));
       } catch (_) {}

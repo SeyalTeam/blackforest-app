@@ -76,7 +76,17 @@ class _StockOrderPageState extends State<StockOrderPage> {
         final localIds = sp.products.map((p) => p['id']?.toString()).toSet();
         final externals = docs.where((p) {
           final id = p['id']?.toString();
-          return id != null && !localIds.contains(id);
+          if (id == null || localIds.contains(id)) return false;
+          if (sp.isChef) {
+            final cat = p['category'];
+            final catId = (cat is Map ? (cat['id'] ?? cat['_id'] ?? cat[r'$oid']) : cat)
+                ?.toString()
+                .trim();
+            if (catId == null || !sp.assignedChefCategoryIds.contains(catId)) {
+              return false;
+            }
+          }
+          return true;
         }).toList();
 
         setState(() {
@@ -135,7 +145,43 @@ class _StockOrderPageState extends State<StockOrderPage> {
   // ========================== CATEGORY GRID & GLOBAL PRODUCT SEARCH ===========================
   Widget _buildCategories(BuildContext context, StockProvider sp) {
     if (sp.categories.isEmpty) {
-      return const Center(child: Text("No categories found"));
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                sp.isChef
+                    ? Icons.soup_kitchen_outlined
+                    : Icons.inventory_2_outlined,
+                size: 64,
+                color: Colors.grey[400],
+              ),
+              const SizedBox(height: 16),
+              Text(
+                sp.isChef
+                    ? "No stock categories assigned to your chef account"
+                    : "No categories found",
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey,
+                ),
+              ),
+              if (sp.isChef) ...[
+                const SizedBox(height: 8),
+                const Text(
+                  "Please contact your branch supervisor to assign categories.",
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 13, color: Colors.grey),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
     }
 
     final query = sp.searchCtrl.text.trim();

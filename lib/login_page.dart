@@ -560,6 +560,45 @@ class _LoginPageState extends State<LoginPage> {
             );
           }
 
+          // Extract assigned categories for chef
+          final rawUserCategories = fullUser['categories'];
+          final assignedChefCategoryIds = <String>[];
+          final assignedChefCategoryNames = <String>[];
+          if (rawUserCategories is List) {
+            for (final c in rawUserCategories) {
+              final id = (c is Map ? (c['id'] ?? c['_id'] ?? c[r'$oid']) : c)
+                      ?.toString()
+                      .trim() ??
+                  '';
+              final name = (c is Map ? (c['name'] ?? c['title']) : null)
+                      ?.toString()
+                      .trim() ??
+                  '';
+              if (id.isNotEmpty) {
+                assignedChefCategoryIds.add(id);
+                if (name.isNotEmpty) assignedChefCategoryNames.add(name);
+              }
+            }
+          }
+          await storage.write(
+            key: 'chefAssignedCategoryIds',
+            value: assignedChefCategoryIds.join(','),
+          );
+          await prefs.setStringList(
+            'chef_assigned_category_ids',
+            assignedChefCategoryIds,
+          );
+          await prefs.setString(
+            'chef_assigned_category_ids_csv',
+            assignedChefCategoryIds.join(','),
+          );
+          if (assignedChefCategoryNames.isNotEmpty) {
+            await prefs.setStringList(
+              'chef_assigned_category_names',
+              assignedChefCategoryNames,
+            );
+          }
+
           // Fetch Branch Details (IP, Lat, Lng, Radius, Printer IP)
           if (branchId.isNotEmpty) {
             try {

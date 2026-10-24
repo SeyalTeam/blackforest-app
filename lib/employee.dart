@@ -43,6 +43,7 @@ class _EmployeePageState extends State<EmployeePage> {
   String? _employeeName;
   String? _employeeRole;
   List<String> _managerCompanyNames = [];
+  List<String> _chefCategoryNames = [];
   String? _kitchenName;
   String? _employeeId;
   String? _employeePhotoUrl;
@@ -138,6 +139,7 @@ class _EmployeePageState extends State<EmployeePage> {
       final cachedBranchName = (await _storage.read(key: 'userBranchName')) ?? prefs.getString('branchName');
       final cachedEmpId = await _storage.read(key: 'employeeId');
       final cachedCompaniesStr = await _storage.read(key: 'managerCompanyNames');
+      final cachedChefCats = prefs.getStringList('chef_assigned_category_names') ?? [];
       final cachedHasPhotoStr = await _storage.read(key: 'activeSessionHasPhoto');
       final cachedPunchIn = await _storage.read(key: 'activePunchIn');
       final cachedPastSecsStr = await _storage.read(key: 'pastWorkSeconds');
@@ -196,6 +198,9 @@ class _EmployeePageState extends State<EmployeePage> {
           }
           if (cachedCompaniesStr != null && cachedCompaniesStr.isNotEmpty) {
             _managerCompanyNames = cachedCompaniesStr.split('||');
+          }
+          if (cachedChefCats.isNotEmpty) {
+            _chefCategoryNames = cachedChefCats;
           }
           if (cachedHasPhotoStr != null) {
             _activeSessionHasPhoto = cachedHasPhotoStr == 'true';
@@ -398,6 +403,26 @@ class _EmployeePageState extends State<EmployeePage> {
           );
         }
 
+        List<String> chefCatIds = [];
+        List<String> chefCatNames = [];
+        final rawCats = user['categories'];
+        if (rawCats is List) {
+          for (final c in rawCats) {
+            final cId = (c is Map ? (c['id'] ?? c['_id'] ?? c[r'$oid']) : c)?.toString().trim() ?? '';
+            final cName = (c is Map ? (c['name'] ?? c['title']) : null)?.toString().trim() ?? '';
+            if (cId.isNotEmpty) {
+              chefCatIds.add(cId);
+              if (cName.isNotEmpty) chefCatNames.add(cName);
+            }
+          }
+        }
+        await _storage.write(key: 'chefAssignedCategoryIds', value: chefCatIds.join(','));
+        await _storage.write(key: 'chefAssignedCategoryNames', value: chefCatNames.join(','));
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setStringList('chef_assigned_category_ids', chefCatIds);
+        await prefs.setString('chef_assigned_category_ids_csv', chefCatIds.join(','));
+        await prefs.setStringList('chef_assigned_category_names', chefCatNames);
+
         if (mounted) {
           setState(() {
             if (name != null) _employeeName = name;
@@ -408,6 +433,7 @@ class _EmployeePageState extends State<EmployeePage> {
             if (kName != null && kName.isNotEmpty) _kitchenName = kName;
             if (resolvedUrl != null) _employeePhotoUrl = resolvedUrl;
             if (companyNames.isNotEmpty) _managerCompanyNames = companyNames;
+            _chefCategoryNames = chefCatNames;
           });
         }
       }
@@ -2013,6 +2039,29 @@ class _EmployeePageState extends State<EmployeePage> {
                             style: TextStyle(
                               color: Colors.grey[600],
                               fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ],
+                        if (_chefCategoryNames.isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'Categories: ${_chefCategoryNames.join(', ')}',
+                            style: TextStyle(
+                              color: Colors.grey[700],
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
+                        ] else if (_employeeRole?.toLowerCase() == 'chef') ...[
+                          const SizedBox(height: 4),
+                          const Text(
+                            'No categories assigned',
+                            style: TextStyle(
+                              color: Colors.orange,
+                              fontSize: 12,
                               fontWeight: FontWeight.w500,
                             ),
                             textAlign: TextAlign.center,

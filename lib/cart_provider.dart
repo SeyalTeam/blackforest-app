@@ -1848,6 +1848,19 @@ class CartProvider extends ChangeNotifier {
       if (token == null || userId == null) return;
       final normalizedUserId = userId.trim();
       final normalizedBranchId = branchId?.trim() ?? '';
+      final userRole = (prefs.getString('role') ?? '').trim().toLowerCase();
+      final chefCatList =
+          prefs.getStringList('chef_assigned_category_ids') ?? <String>[];
+      final chefCatIds = chefCatList.toSet();
+      final isChef = userRole == 'chef' || (userRole == 'kitchen' && chefCatIds.isNotEmpty);
+
+      if (isChef && chefCatIds.isEmpty) {
+        if (_kitchenNotifications.isNotEmpty) {
+          _kitchenNotifications.clear();
+          notifyListeners();
+        }
+        return;
+      }
       final userKeys =
           WaiterCallRangeFilterService.resolveCandidateUserKeysFromPrefs(prefs);
       final assignedRows = normalizedBranchId.isEmpty
@@ -2116,6 +2129,25 @@ class CartProvider extends ChangeNotifier {
             if (_readNotificationIds.contains(itemId)) continue;
 
             if (status == sourceStatus) {
+              if (isChef) {
+                final product = item['product'];
+                String itemCatId = '';
+                if (item['category'] != null) {
+                  itemCatId = resolveId(item['category']);
+                } else if (item['categoryId'] != null) {
+                  itemCatId = asText(item['categoryId']);
+                } else if (product is Map) {
+                  if (product['category'] != null) {
+                    itemCatId = resolveId(product['category']);
+                  } else if (product['categoryId'] != null) {
+                    itemCatId = asText(product['categoryId']);
+                  }
+                }
+                if (itemCatId.isEmpty || !chefCatIds.contains(itemCatId)) {
+                  continue;
+                }
+              }
+
               readyItems.add({
                 'id': itemId,
                 'billId': billId,

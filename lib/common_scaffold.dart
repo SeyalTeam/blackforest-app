@@ -2404,6 +2404,74 @@ class _KotPageState extends State<KotPage> {
   String _wsKitchenId = '';
   String? _lastEventId;
 
+  bool _isChef = false;
+  final Set<String> _assignedChefCategoryIds = <String>{};
+  final Map<String, String> _productCategoryCache = <String, String>{};
+
+  String _resolveItemCategoryId(
+    Map<String, dynamic> itemMap,
+    Map<String, dynamic> productMap,
+  ) {
+    // 1. Direct from itemMap
+    final itemCat = itemMap['category'];
+    final itemCatId = _resolveId(itemCat);
+    if (itemCatId.isNotEmpty) return itemCatId;
+
+    final directItemCatId = _readText(itemMap['categoryId']);
+    if (directItemCatId.isNotEmpty) return directItemCatId;
+
+    // 2. From productMap
+    final prodCat = productMap['category'];
+    final prodCatId = _resolveId(prodCat);
+    if (prodCatId.isNotEmpty) return prodCatId;
+
+    final directProdCatId = _readText(productMap['categoryId']);
+    if (directProdCatId.isNotEmpty) return directProdCatId;
+
+    // 3. From productMap['categories'] list if present
+    final prodCats = productMap['categories'];
+    if (prodCats is List) {
+      for (final c in prodCats) {
+        final id = _resolveId(c);
+        if (id.isNotEmpty) return id;
+      }
+    }
+
+    // 4. Fallback from local product-to-category cache if available
+    final productId = _resolveId(productMap['id']).isNotEmpty
+        ? _resolveId(productMap['id'])
+        : _resolveId(itemMap['product']);
+    if (productId.isNotEmpty && _productCategoryCache.containsKey(productId)) {
+      return _productCategoryCache[productId]!;
+    }
+
+    return '';
+  }
+
+  bool _doesItemMatchChefCategories(
+    Map<String, dynamic> itemMap,
+    Map<String, dynamic> productMap,
+  ) {
+    if (_assignedChefCategoryIds.isEmpty) return false;
+
+    final catId = _resolveItemCategoryId(itemMap, productMap);
+    if (catId.isNotEmpty && _assignedChefCategoryIds.contains(catId)) {
+      return true;
+    }
+
+    final prodCats = productMap['categories'];
+    if (prodCats is List) {
+      for (final c in prodCats) {
+        final id = _resolveId(c);
+        if (id.isNotEmpty && _assignedChefCategoryIds.contains(id)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
   String _sourceStatusForRole(String role) {
     return normalizeKotStatusSource(_kotSourceStatus);
   }
@@ -2531,6 +2599,11 @@ class _KotPageState extends State<KotPage> {
     if (role.isNotEmpty) {
       _role = role;
     }
+    final cachedChefCats =
+        prefs.getStringList('chef_assigned_category_ids') ?? <String>[];
+    _assignedChefCategoryIds.clear();
+    _assignedChefCategoryIds.addAll(cachedChefCats);
+    _isChef = _role == 'chef' || (_role == 'kitchen' && _assignedChefCategoryIds.isNotEmpty);
     if (_wsToken.isNotEmpty) {
       _authToken = _wsToken;
     }
@@ -2900,6 +2973,13 @@ class _KotPageState extends State<KotPage> {
     final tableName = _readText(message['tableName'] ?? message['tableNo'] ?? message['table']);
 
     if (statusAfter == 'ordered' || statusAfter == 'pending' || statusAfter == 'confirmed') {
+      if (_isChef) {
+        if (_assignedChefCategoryIds.isEmpty) return;
+        final notifCatId = _readText(message['categoryId']);
+        if (notifCatId.isNotEmpty && !_assignedChefCategoryIds.contains(notifCatId)) {
+          return;
+        }
+      }
       try {
         _audioPlayer.play(AssetSource('sounds/alert.wav'));
       } catch (_) {}
@@ -4018,6 +4098,66 @@ class _KotPageState extends State<KotPage> {
               branchId: branchId,
             );
       final role = _readText(prefs.getString('role')).toLowerCase();
+      final isChef = role == 'chef' || role == 'kitchen';
+
+      if (isChef) {
+        final cached = prefs.getStringList('chef_assigned_category_ids');
+        if (cached != null) {
+          _assignedChefCategoryIds.clear();
+          _assignedChefCategoryIds.addAll(cached);
+        }
+        try {
+          final profile = await ApiService.instance.fetchUserProfile();
+          if (profile.isNotEmpty) {
+            final user = profile['user'] ?? profile;
+            final userCats = user['categories'];
+            final freshCatIds = <String>[];
+            if (userCats is List) {
+              for (final c in userCats) {
+                final cId = (c is Map ? (c['id'] ?? c['_id'] ?? c[r'$oid']) : c)
+                        ?.toString()
+                        .trim() ??
+                    '';
+                if (cId.isNotEmpty) freshCatIds.add(cId);
+              }
+            } else if (userCats is Map) {
+              final cId = (userCats['id'] ??
+                          userCats['_id'] ??
+                          userCats[r'$oid'])
+                      ?.toString()
+                      .trim() ??
+                  '';
+              if (cId.isNotEmpty) freshCatIds.add(cId);
+            }
+            _assignedChefCategoryIds.clear();
+            _assignedChefCategoryIds.addAll(freshCatIds);
+            unawaited(
+              prefs.setStringList('chef_assigned_category_ids', freshCatIds),
+            );
+            unawaited(
+              prefs.setString(
+                'chef_assigned_category_ids_csv',
+                freshCatIds.join(','),
+              ),
+            );
+          }
+        } catch (_) {}
+
+        if (_assignedChefCategoryIds.isEmpty && (role == 'chef')) {
+          if (!mounted) return;
+          setState(() {
+            _role = role;
+            _isChef = true;
+            _kotSourceStatus = sourceStatus;
+            _authToken = token;
+            _items.clear();
+            _billItemsCacheByBillId.clear();
+            _isLoading = false;
+            _errorMessage = null;
+          });
+          return;
+        }
+      }
 
       final cachedTablesRaw = prefs.getString('cached_tables_$branchId');
       List<dynamic> cachedTables = [];
@@ -4185,6 +4325,13 @@ class _KotPageState extends State<KotPage> {
           final quantity = _readDouble(itemMap['quantity'], fallback: 0);
           final unit = _readText(itemMap['unit']);
           final productMap = _asMap(itemMap['product']);
+          if (isChef) {
+            final matchesChef = _doesItemMatchChefCategories(
+              itemMap,
+              productMap,
+            );
+            if (!matchesChef) continue;
+          }
           final resolvedRelationProductId = _resolveId(itemMap['product']);
           final productCode = _readText(productMap['productId']);
           final productUpc = _readText(productMap['upc']);
@@ -4337,6 +4484,7 @@ class _KotPageState extends State<KotPage> {
       if (!mounted) return;
       setState(() {
         _role = role;
+        _isChef = isChef;
         _kotSourceStatus = sourceStatus;
         _authToken = token;
         _billItemsCacheByBillId
@@ -4963,6 +5111,15 @@ class _KotPageState extends State<KotPage> {
     }
 
     if (visibleItems.isEmpty) {
+      if (_isChef && _assignedChefCategoryIds.isEmpty) {
+        return _buildEmptyState(
+          icon: Icons.soup_kitchen_outlined,
+          title: 'No categories assigned',
+          subtitle:
+              'No categories are currently assigned to your chef account. Please contact branch supervisor to assign categories.',
+          showRetry: true,
+        );
+      }
       final isPreparedSource = sourceStatus == kotStatusSourcePrepared;
       return _buildEmptyState(
         icon: Icons.task_alt_rounded,
@@ -4970,8 +5127,12 @@ class _KotPageState extends State<KotPage> {
             ? 'No prepared products'
             : 'No confirmed products',
         subtitle: isPreparedSource
-            ? 'Chef-prepared products will appear here.'
-            : 'Supervisor-confirmed products will appear here.',
+            ? (_isChef
+                ? 'Chef-prepared products for your assigned categories will appear here.'
+                : 'Chef-prepared products will appear here.')
+            : (_isChef
+                ? 'Confirmed orders for your assigned categories will appear here.'
+                : 'Supervisor-confirmed products will appear here.'),
       );
     }
 
