@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:ui';
 import 'package:blackforest_app/app_http.dart' as http;
+import 'package:blackforest_app/geo_settings_manager.dart';
 import 'package:blackforest_app/cart_provider.dart';
 import 'package:esc_pos_utils/esc_pos_utils.dart';
 import 'package:flutter/foundation.dart';
@@ -610,9 +611,9 @@ class KotAutoPrintService {
       '&where[createdBy][equals]=$userId'
       '&where[branch][equals]=$branchId'
       '&where[createdAt][greater_than_equal]=$todayStart'
-      '&limit=100'
+      '&limit=50'
       '&sort=createdAt'
-      '&depth=3',
+      '&depth=1',
     );
 
     final response = await http.get(
@@ -660,9 +661,9 @@ class KotAutoPrintService {
       '&where[createdBy][equals]=$userId'
       '&where[branch][equals]=$branchId'
       '&where[updatedAt][greater_than_equal]=$todayStart'
-      '&limit=100'
+      '&limit=50'
       '&sort=updatedAt'
-      '&depth=3',
+      '&depth=1',
     );
 
     final response = await http.get(
@@ -1212,26 +1213,15 @@ class KotAutoPrintService {
       String receiptPrinterProtocol = 'esc_pos';
       List<dynamic> kotPrinters = const <dynamic>[];
 
-      final geoResponse = await http.get(
-        Uri.parse('$_apiBase/globals/branch-geo-settings'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-      );
-
-      if (geoResponse.statusCode == 200) {
-        final payload = jsonDecode(geoResponse.body);
-        final locations = payload is Map<String, dynamic>
-            ? payload['locations']
-            : null;
-        if (locations is List) {
-          for (final rawLocation in locations) {
-            if (rawLocation is! Map) continue;
-            final location = Map<String, dynamic>.from(rawLocation);
-            final branch = location['branch'];
-            final locationBranchId = _relationId(branch);
-            if (locationBranchId != branchId) continue;
+      final payload = await GeoSettingsManager.getSettings(token: token);
+      final locations = payload['locations'];
+      if (locations is List) {
+        for (final rawLocation in locations) {
+          if (rawLocation is! Map) continue;
+          final location = Map<String, dynamic>.from(rawLocation);
+          final branch = location['branch'];
+          final locationBranchId = _relationId(branch);
+          if (locationBranchId != branchId) continue;
 
             if (branchName.isEmpty && branch is Map) {
               branchName = _toText(branch['name']);
@@ -1260,7 +1250,6 @@ class KotAutoPrintService {
             break;
           }
         }
-      }
 
       if (branchName.isEmpty ||
           companyName.isEmpty ||

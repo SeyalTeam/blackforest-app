@@ -79,6 +79,10 @@ class _EmployeePageState extends State<EmployeePage> {
   List<Map<String, dynamic>> _dailyTasks = [];
   final Set<String> _togglingTaskIds = {};
 
+  String? _effectiveBranch() {
+    return _gpsBranchName ?? _loginBranchName ?? _branchName;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -184,14 +188,24 @@ class _EmployeePageState extends State<EmployeePage> {
         setState(() {
           _employeeName = cachedName;
           _employeeRole = cachedRole;
-          if (cachedKitchenName != null && cachedKitchenName.isNotEmpty) {
-            _kitchenName = cachedKitchenName;
-          }
-          if (cachedBranchName != null && cachedBranchName.isNotEmpty) {
-            _branchName = cachedBranchName;
+          final effectiveInitialBranch = (cachedGpsBranchName != null && cachedGpsBranchName.isNotEmpty)
+              ? cachedGpsBranchName
+              : (cachedBranchName != null && cachedBranchName.isNotEmpty ? cachedBranchName : null);
+          if (effectiveInitialBranch != null && effectiveInitialBranch.isNotEmpty) {
+            _branchName = effectiveInitialBranch;
           }
           if (cachedGpsBranchName != null && cachedGpsBranchName.isNotEmpty) {
             _gpsBranchName = cachedGpsBranchName;
+          }
+          if (cachedKitchenName != null && cachedKitchenName.isNotEmpty) {
+            if (effectiveInitialBranch == null ||
+                effectiveInitialBranch.isEmpty ||
+                cachedKitchenName.toLowerCase().contains(effectiveInitialBranch.toLowerCase()) ||
+                effectiveInitialBranch.toLowerCase().contains(cachedKitchenName.toLowerCase())) {
+              _kitchenName = cachedKitchenName;
+            } else {
+              _kitchenName = null;
+            }
           }
           if (cachedEmpId != null && cachedEmpId.isNotEmpty) {
             _employeeId = cachedEmpId;
@@ -304,98 +318,119 @@ class _EmployeePageState extends State<EmployeePage> {
           }
         }
 
+        final prefs = await SharedPreferences.getInstance();
+        final currentGps = _gpsBranchName ?? prefs.getString('lastGpsBranchName');
+        final currentStoredBranch = _branchName ?? prefs.getString('branchName') ?? (await _storage.read(key: 'userBranchName'));
+        final activeBranchName = (currentGps != null && currentGps.isNotEmpty)
+            ? currentGps
+            : ((currentStoredBranch != null && currentStoredBranch.isNotEmpty)
+                ? currentStoredBranch
+                : bName);
+
         String? kName;
         String? kId;
 
-        // 1. Check user['kitchen']
-        final userKitchen = user['kitchen'];
-        if (userKitchen is List && userKitchen.isNotEmpty) {
-          final firstK = userKitchen.first;
-          if (firstK is Map) {
-            kName = firstK['name']?.toString();
-            kId = (firstK['id'] ?? firstK['_id'])?.toString();
-          } else if (firstK is String && firstK.isNotEmpty) {
-            kId = firstK;
-          }
-        } else if (userKitchen is Map) {
-          kName = userKitchen['name']?.toString();
-          kId = (userKitchen['id'] ?? userKitchen['_id'])?.toString();
-        } else if (userKitchen is String && userKitchen.isNotEmpty) {
-          kId = userKitchen;
-        }
-
-        // 2. Fallback: Check employee['kitchen']
-        if (employee is Map) {
-          final empKitchen = employee['kitchen'];
-          if (empKitchen is Map) {
-            kName ??= empKitchen['name']?.toString();
-            kId ??= (empKitchen['id'] ?? empKitchen['_id'])?.toString();
-          } else if (empKitchen is String && empKitchen.isNotEmpty) {
-            kId ??= empKitchen;
-          }
-        }
-
-        // 3. Fallback: Check user['kitchens'] list if any
-        final userKitchens = user['kitchens'];
-        if (userKitchens is List && userKitchens.isNotEmpty) {
-          final firstK = userKitchens.first;
-          if (firstK is Map) {
-            kName ??= firstK['name']?.toString();
-            kId ??= (firstK['id'] ?? firstK['_id'])?.toString();
-          } else if (firstK is String && firstK.isNotEmpty) {
-            kId ??= firstK;
-          }
-        }
-
-        // 4. Fetch kitchen details if we have kId but not kName
-        if ((kName == null || kName.isEmpty) && kId != null && kId.isNotEmpty) {
+        // 1. Try to find a kitchen that specifically matches the active branch
+        if (activeBranchName != null && activeBranchName.isNotEmpty) {
           try {
-            final kDetails = await ApiService.instance.fetchKitchenDetails(kId);
-            kName = kDetails['name']?.toString();
-          } catch (e) {
-            debugPrint('DEBUG: Error fetching kitchen details in profile: $e');
-          }
-        }
+            final allKitchens = await ApiService.instance.fetchKitchens();
+            final targetB = activeBranchName.toLowerCase().trim();
+            final targetId = prefs.getString('branchId') ?? await _storage.read(key: 'userBranchId');
 
-        // 5. Fallback: check storage for userKitchenId
-        if (kName == null || kName.isEmpty) {
-          final storedKId = await _storage.read(key: 'userKitchenId');
-          if (storedKId != null && storedKId.isNotEmpty) {
-            try {
-              final kDetails = await ApiService.instance.fetchKitchenDetails(storedKId);
-              kName = kDetails['name']?.toString();
-            } catch (e) {
-              debugPrint('DEBUG: Error fetching stored kitchen details in profile: $e');
-            }
-          }
-        }
+            for (final k in allKitchens) {
+              if (k is! Map) continue;
+              final kBName = (k['branch'] is Map ? k['branch']['name'] : null)?.toString().toLowerCase().trim();
+              final kBId = (k['branch'] is Map ? (k['branch']['id'] ?? k['branch']['_id']) : k['branch'])?.toString().trim();
 
-        // 6. Fallback: check kitchens matching user's branch
-        if (kName == null || kName.isEmpty) {
-          final bId = (branch is Map ? (branch['id'] ?? branch['_id']) : branch)?.toString();
-          if (bId != null && bId.isNotEmpty) {
-            try {
-              final allKitchens = await ApiService.instance.fetchKitchens();
-              for (final k in allKitchens) {
-                final targetBId = (k['branch'] is Map ? (k['branch']['id'] ?? k['branch']['_id']) : k['branch'])?.toString();
-                if (targetBId == bId) {
-                  kName = k['name']?.toString();
-                  if (kName != null && kName.isNotEmpty) break;
+              bool matches = false;
+              if (kBName != null && kBName.isNotEmpty) {
+                if (kBName == targetB || kBName.contains(targetB) || targetB.contains(kBName)) {
+                  matches = true;
                 }
               }
+              if (!matches && targetId != null && targetId.isNotEmpty && kBId != null && kBId.isNotEmpty) {
+                if (kBId == targetId) {
+                  matches = true;
+                }
+              }
+              if (matches) {
+                kName = k['name']?.toString();
+                kId = (k['id'] ?? k['_id'])?.toString();
+                break;
+              }
+            }
+          } catch (e) {
+            debugPrint('DEBUG: Error matching kitchens to active branch: $e');
+          }
+        }
+
+        // 2. If no kitchen matched active branch, check user profile kitchen ONLY IF it belongs to active branch
+        if (kName == null || kName.isEmpty) {
+          String? profileKName;
+          String? profileKId;
+
+          final userKitchen = user['kitchen'];
+          if (userKitchen is List && userKitchen.isNotEmpty) {
+            final firstK = userKitchen.first;
+            if (firstK is Map) {
+              profileKName = firstK['name']?.toString();
+              profileKId = (firstK['id'] ?? firstK['_id'])?.toString();
+            } else if (firstK is String && firstK.isNotEmpty) {
+              profileKId = firstK;
+            }
+          } else if (userKitchen is Map) {
+            profileKName = userKitchen['name']?.toString();
+            profileKId = (userKitchen['id'] ?? userKitchen['_id'])?.toString();
+          } else if (userKitchen is String && userKitchen.isNotEmpty) {
+            profileKId = userKitchen;
+          }
+
+          if (profileKName == null && employee is Map) {
+            final empKitchen = employee['kitchen'];
+            if (empKitchen is Map) {
+              profileKName = empKitchen['name']?.toString();
+              profileKId = (empKitchen['id'] ?? empKitchen['_id'])?.toString();
+            } else if (empKitchen is String && empKitchen.isNotEmpty) {
+              profileKId = empKitchen;
+            }
+          }
+
+          if ((profileKName == null || profileKName.isEmpty) && profileKId != null && profileKId.isNotEmpty) {
+            try {
+              final kDetails = await ApiService.instance.fetchKitchenDetails(profileKId);
+              profileKName = kDetails['name']?.toString();
             } catch (_) {}
+          }
+
+          if (profileKName != null && profileKName.isNotEmpty) {
+            final targetB = activeBranchName?.toLowerCase().trim();
+            final profileKLower = profileKName.toLowerCase().trim();
+            if (targetB == null ||
+                targetB.isEmpty ||
+                (bName?.toLowerCase().trim() == targetB && (profileKLower.contains(targetB) || targetB.contains(profileKLower))) ||
+                profileKLower.contains(targetB) ||
+                targetB.contains(profileKLower)) {
+              kName = profileKName;
+              kId = profileKId;
+            }
           }
         }
 
         if (kName != null && kName.isNotEmpty) {
           await _storage.write(key: 'userKitchenName', value: kName);
+        } else {
+          await _storage.delete(key: 'userKitchenName');
         }
 
         if (code != null) await _storage.write(key: 'employeeId', value: code);
         if (empDocId != null && empDocId.isNotEmpty) {
           await _storage.write(key: 'employeeDocId', value: empDocId);
         }
-        if (bName != null) await _storage.write(key: 'userBranchName', value: bName);
+        if (activeBranchName != null && activeBranchName.isNotEmpty) {
+          await _storage.write(key: 'userBranchName', value: activeBranchName);
+          await prefs.setString('userBranchName', activeBranchName);
+          await prefs.setString('branchName', activeBranchName);
+        }
         if (companyNames.isNotEmpty) {
           await _storage.write(
             key: 'managerCompanyNames',
@@ -418,7 +453,6 @@ class _EmployeePageState extends State<EmployeePage> {
         }
         await _storage.write(key: 'chefAssignedCategoryIds', value: chefCatIds.join(','));
         await _storage.write(key: 'chefAssignedCategoryNames', value: chefCatNames.join(','));
-        final prefs = await SharedPreferences.getInstance();
         await prefs.setStringList('chef_assigned_category_ids', chefCatIds);
         await prefs.setString('chef_assigned_category_ids_csv', chefCatIds.join(','));
         await prefs.setStringList('chef_assigned_category_names', chefCatNames);
@@ -429,8 +463,10 @@ class _EmployeePageState extends State<EmployeePage> {
             if (role != null) _employeeRole = role;
             if (code != null) _employeeId = code;
             if (phone != null) _employeePhone = phone;
-            if (bName != null && (_branchName == null || _branchName!.isEmpty)) _branchName = bName;
-            if (kName != null && kName.isNotEmpty) _kitchenName = kName;
+            if (activeBranchName != null && activeBranchName.isNotEmpty) {
+              _branchName = activeBranchName;
+            }
+            _kitchenName = kName;
             if (resolvedUrl != null) _employeePhotoUrl = resolvedUrl;
             if (companyNames.isNotEmpty) _managerCompanyNames = companyNames;
             _chefCategoryNames = chefCatNames;
@@ -504,32 +540,51 @@ class _EmployeePageState extends State<EmployeePage> {
           
           final loginBranchData = firstDoc['loginBranch'];
           if (loginBranchData is Map<String, dynamic>) {
-            _loginBranchName = loginBranchData['name']?.toString();
-            final newBranchId = loginBranchData['id']?.toString() ?? loginBranchData['_id']?.toString();
-            if (newBranchId != null && _loginBranchName != null) {
-              final prefs = await SharedPreferences.getInstance();
-              await prefs.setString('branchId', newBranchId);
-              await prefs.setString('userBranchName', _loginBranchName!);
-              await _storage.write(key: 'userBranchName', value: _loginBranchName!);
-              if (mounted) {
-                setState(() {
-                  _branchName = _loginBranchName;
-                });
+            final docBranchName = loginBranchData['name']?.toString();
+            final docBranchId = loginBranchData['id']?.toString() ?? loginBranchData['_id']?.toString();
+
+            final currentPhysicalBranch = _gpsBranchName;
+            if (currentPhysicalBranch != null && currentPhysicalBranch.isNotEmpty) {
+              _loginBranchName = currentPhysicalBranch;
+              _branchName = currentPhysicalBranch;
+            } else if (docBranchName != null && docBranchName.isNotEmpty) {
+              _loginBranchName = docBranchName;
+              _branchName = docBranchName;
+              if (docBranchId != null) {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.setString('branchId', docBranchId);
+                await prefs.setString('userBranchName', docBranchName);
+                await _storage.write(key: 'userBranchName', value: docBranchName);
               }
             }
           } else {
-            _loginBranchName = null;
+            if (_gpsBranchName != null && _gpsBranchName!.isNotEmpty) {
+              _loginBranchName = _gpsBranchName;
+              _branchName = _gpsBranchName;
+            } else {
+              _loginBranchName = null;
+            }
           }
         } else {
           _attendanceDocId = null;
           _rawActivities = [];
           _dayType = null;
-          _loginBranchName = null;
+          if (_gpsBranchName != null && _gpsBranchName!.isNotEmpty) {
+            _loginBranchName = _gpsBranchName;
+            _branchName = _gpsBranchName;
+          } else {
+            _loginBranchName = null;
+          }
         }
       } else {
         _attendanceDocId = null;
         _rawActivities = [];
-        _loginBranchName = null;
+        if (_gpsBranchName != null && _gpsBranchName!.isNotEmpty) {
+          _loginBranchName = _gpsBranchName;
+          _branchName = _gpsBranchName;
+        } else {
+          _loginBranchName = null;
+        }
       }
 
       for (final dynamic doc in docs) {
@@ -961,9 +1016,22 @@ class _EmployeePageState extends State<EmployeePage> {
       if (geo.branchName != null && geo.branchName!.isNotEmpty) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('lastGpsBranchName', geo.branchName!);
+        await prefs.setString('branchName', geo.branchName!);
+        await prefs.setString('userBranchName', geo.branchName!);
+        await _storage.write(key: 'userBranchName', value: geo.branchName!);
+        if (geo.branchId != null && geo.branchId!.isNotEmpty) {
+          await prefs.setString('branchId', geo.branchId!);
+          await _storage.write(key: 'userBranchId', value: geo.branchId!);
+        }
         if (mounted) {
           setState(() {
             _gpsBranchName = geo.branchName;
+            _branchName = geo.branchName;
+            _loginBranchName = geo.branchName;
+            if (_kitchenName != null &&
+                !_kitchenName!.toLowerCase().contains(geo.branchName!.toLowerCase())) {
+              _kitchenName = null;
+            }
           });
         }
       }
@@ -1148,9 +1216,22 @@ class _EmployeePageState extends State<EmployeePage> {
       if (geo.branchName != null && geo.branchName!.isNotEmpty) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('lastGpsBranchName', geo.branchName!);
+        await prefs.setString('branchName', geo.branchName!);
+        await prefs.setString('userBranchName', geo.branchName!);
+        await _storage.write(key: 'userBranchName', value: geo.branchName!);
+        if (geo.branchId != null && geo.branchId!.isNotEmpty) {
+          await prefs.setString('branchId', geo.branchId!);
+          await _storage.write(key: 'userBranchId', value: geo.branchId!);
+        }
         if (mounted) {
           setState(() {
             _gpsBranchName = geo.branchName;
+            _branchName = geo.branchName;
+            _loginBranchName = geo.branchName;
+            if (_kitchenName != null &&
+                !_kitchenName!.toLowerCase().contains(geo.branchName!.toLowerCase())) {
+              _kitchenName = null;
+            }
           });
         }
       }
@@ -2006,10 +2087,10 @@ class _EmployeePageState extends State<EmployeePage> {
                           ),
                           textAlign: TextAlign.center,
                         ),
-                        if ((_loginBranchName ?? _branchName) != null && (_loginBranchName ?? _branchName)!.isNotEmpty) ...[
+                        if (_effectiveBranch() != null && _effectiveBranch()!.isNotEmpty) ...[
                           const SizedBox(height: 2),
                           Text(
-                            (_loginBranchName ?? _branchName)!,
+                            _effectiveBranch()!,
                             style: TextStyle(
                               color: Colors.grey[600],
                               fontSize: 13,
@@ -2022,7 +2103,10 @@ class _EmployeePageState extends State<EmployeePage> {
                       else if ((_employeeRole?.toLowerCase() == 'chef' ||
                               _employeeRole?.toLowerCase() == 'kitchen') &&
                           _kitchenName != null &&
-                          _kitchenName!.isNotEmpty) ...[
+                          _kitchenName!.isNotEmpty &&
+                          (_effectiveBranch() == null ||
+                              _kitchenName!.toLowerCase().contains(_effectiveBranch()!.toLowerCase()) ||
+                              _effectiveBranch()!.toLowerCase().contains(_kitchenName!.toLowerCase()))) ...[
                         Text(
                           _kitchenName!,
                           style: const TextStyle(
@@ -2032,10 +2116,12 @@ class _EmployeePageState extends State<EmployeePage> {
                           ),
                           textAlign: TextAlign.center,
                         ),
-                        if ((_loginBranchName ?? _branchName) != null && (_loginBranchName ?? _branchName)!.isNotEmpty) ...[
+                        if (_effectiveBranch() != null &&
+                            _effectiveBranch()!.isNotEmpty &&
+                            _effectiveBranch()!.toLowerCase() != _kitchenName!.toLowerCase()) ...[
                           const SizedBox(height: 2),
                           Text(
-                            (_loginBranchName ?? _branchName)!,
+                            _effectiveBranch()!,
                             style: TextStyle(
                               color: Colors.grey[600],
                               fontSize: 13,
@@ -2068,15 +2154,43 @@ class _EmployeePageState extends State<EmployeePage> {
                           ),
                         ],
                       ]
-                      else if ((_loginBranchName ?? _branchName) != null && (_loginBranchName ?? _branchName)!.isNotEmpty)
+                      else if (_effectiveBranch() != null && _effectiveBranch()!.isNotEmpty) ...[
                         Text(
-                          (_loginBranchName ?? _branchName)!,
+                          _effectiveBranch()!,
                           style: const TextStyle(
                             color: Colors.blue,
                             fontSize: 16,
                             fontWeight: FontWeight.w600,
                           ),
+                          textAlign: TextAlign.center,
                         ),
+                        if ((_employeeRole?.toLowerCase() == 'chef' ||
+                                _employeeRole?.toLowerCase() == 'kitchen')) ...[
+                          if (_chefCategoryNames.isNotEmpty) ...[
+                            const SizedBox(height: 4),
+                            Text(
+                              'Categories: ${_chefCategoryNames.join(', ')}',
+                              style: TextStyle(
+                                color: Colors.grey[700],
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ] else if (_employeeRole?.toLowerCase() == 'chef') ...[
+                            const SizedBox(height: 4),
+                            const Text(
+                              'No categories assigned',
+                              style: TextStyle(
+                                color: Colors.orange,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ],
+                      ],
                       if (_gpsBranchName != null &&
                           _gpsBranchName!.isNotEmpty) ...[
                         const SizedBox(height: 6),

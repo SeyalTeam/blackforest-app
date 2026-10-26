@@ -1,6 +1,7 @@
 import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
 import 'dart:convert';
+import 'geo_settings_manager.dart';
 
 class ApiConfig {
   static const String domain = "https://blackforest-api.vseyal.com";
@@ -34,21 +35,12 @@ class ApiConfig {
     return {};
   }
 
-  static Future<Map<String, dynamic>> fetchBranchGeoSettings(String token) async {
+  static Future<Map<String, dynamic>> fetchBranchGeoSettings(String token, {bool forceRefresh = false}) async {
     try {
-      var response = await http.get(
-        Uri.parse('$baseUrl/globals/branch-geo-settings'),
-        headers: getHeaders(token),
+      return await GeoSettingsManager.getSettings(
+        token: token,
+        forceRefresh: forceRefresh,
       );
-      if (response.statusCode != 200) {
-        response = await http.get(
-          Uri.parse('$baseUrl/globals/branchGeoSettings'),
-          headers: getHeaders(token),
-        );
-      }
-      if (response.statusCode == 200) {
-        return json.decode(response.body);
-      }
     } catch (e) {
       debugPrint('fetchBranchGeoSettings error: $e');
     }

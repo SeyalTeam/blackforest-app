@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'api_config.dart';
 import 'api_service.dart';
-import 'dart:convert';
+import 'geo_settings_manager.dart';
 
 class GeofenceResult {
   final bool isInside;
@@ -33,6 +31,8 @@ class GeofenceUtil {
     Position? existingPosition,
     String? targetBranchId,
     String? targetBranchName,
+    List<dynamic>? customBranches,
+    Map<String, dynamic>? customGeoSettings,
   }) async {
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) {
@@ -101,50 +101,81 @@ class GeofenceUtil {
     );
 
     try {
-      Map<String, dynamic> data = {};
-      final prefs = await SharedPreferences.getInstance();
-      try {
-        try {
-          data = await ApiService.instance.fetchBranchGeoSettings();
-        } catch (_) {
-          data = await ApiConfig.fetchBranchGeoSettings(prefs.getString('token') ?? '');
-        }
-        if (data.isNotEmpty) {
-          await prefs.setString('cached_geo_settings', jsonEncode(data));
-        }
-      } catch (e) {
-        final cached = prefs.getString('cached_geo_settings');
-        if (cached != null) {
-          data = jsonDecode(cached);
-        } else {
-          rethrow;
-        }
+      Map<String, dynamic> data = customGeoSettings ?? {};
+      if (data.isEmpty) {
+        data = await GeoSettingsManager.getSettings();
       }
 
       // Helper map to resolve branch names accurately from branch IDs
       Map<String, String> branchNameMap = {};
-      try {
-        final branchesList = await ApiService.instance.fetchBranches();
-        for (var b in branchesList) {
-          final bId = (b['id'] ?? b['_id'])?.toString();
-          final bName = b['name']?.toString();
-          if (bId != null && bName != null) {
-            branchNameMap[bId] = bName;
+      List<dynamic> branchesList = customBranches ?? [];
+      if (branchesList.isEmpty) {
+        try {
+          branchesList = await ApiService.instance.fetchBranches();
+        } catch (_) {}
+      }
+      for (var b in branchesList) {
+        if (b is! Map) continue;
+        final bId = (b['id'] ?? b['_id'])?.toString();
+        final bName = b['name']?.toString();
+        if (bId != null && bName != null) {
+          branchNameMap[bId] = bName;
+        }
+      }
+
+      // Collect all location targets (from branch-geo-settings AND branches list)
+      final List<Map<String, dynamic>> allLocations = [];
+      final rawLocations = data['locations'] as List?;
+      if (rawLocations != null) {
+        for (final loc in rawLocations) {
+          if (loc is Map) allLocations.add(Map<String, dynamic>.from(loc));
+        }
+      }
+
+      // Also ensure branches with lat/lng from branchesList are included
+      for (final b in branchesList) {
+        if (b is! Map) continue;
+        final bId = (b['id'] ?? b['_id'])?.toString() ?? '';
+        final bName = b['name']?.toString() ?? '';
+        final lat = b['latitude'] ?? (b['location'] is Map ? b['location']['latitude'] : null);
+        final lng = b['longitude'] ?? (b['location'] is Map ? b['location']['longitude'] : null);
+        final radius = b['radius'] ?? (b['location'] is Map ? b['location']['radius'] : 100.0);
+        if (lat != null && lng != null) {
+          final exists = allLocations.any((loc) {
+            final locB = loc['branch'];
+            final locBId = (locB is Map ? (locB['id'] ?? locB['_id']) : locB)?.toString() ?? loc['branchId']?.toString();
+            return locBId == bId;
+          });
+          if (!exists) {
+            allLocations.add({
+              'branch': b,
+              'branchId': bId,
+              'name': bName,
+              'branchName': bName,
+              'latitude': lat,
+              'longitude': lng,
+              'radius': radius,
+            });
           }
         }
-      } catch (_) {}
+      }
 
-      final locations = data['locations'] as List?;
-      if (locations != null && locations.isNotEmpty) {
+      if (allLocations.isNotEmpty) {
         double nearestDistance = double.infinity;
         double nearestRadius = 100.0;
         String? nearestBranchName;
         String? nearestBranchId;
 
+        double targetDistance = double.infinity;
+        double targetRadius = 100.0;
+
+        final hasTarget = (targetBranchId != null && targetBranchId.isNotEmpty) ||
+            (targetBranchName != null && targetBranchName.isNotEmpty);
+
         // Collect all branches where the device is currently inside
         final insideBranches = <Map<String, dynamic>>[];
 
-        for (var loc in locations) {
+        for (var loc in allLocations) {
           final lat = loc['latitude'];
           final lng = loc['longitude'];
           final radiusStr = loc['radius'];
@@ -191,6 +222,26 @@ class GeofenceUtil {
               nearestBranchId = branchId;
             }
 
+            // Track target branch distance specifically
+            if (hasTarget) {
+              final idMatch = targetBranchId != null &&
+                  targetBranchId.isNotEmpty &&
+                  branchId.isNotEmpty &&
+                  branchId.toLowerCase() == targetBranchId.toLowerCase();
+              final nameMatch = targetBranchName != null &&
+                  targetBranchName.isNotEmpty &&
+                  branchName.isNotEmpty &&
+                  (branchName.toLowerCase().trim() == targetBranchName.toLowerCase().trim() ||
+                   branchName.toLowerCase().contains(targetBranchName.toLowerCase().trim()) ||
+                   targetBranchName.toLowerCase().trim().contains(branchName.toLowerCase()));
+              if (idMatch || nameMatch) {
+                if (distance < targetDistance) {
+                  targetDistance = distance;
+                  targetRadius = effectiveRadius;
+                }
+              }
+            }
+
             if (distance <= effectiveRadius) {
               debugPrint(
                 'GeofenceUtil: INSIDE branch "$branchName"! distance: ${distance.toStringAsFixed(1)}m <= effective: ${effectiveRadius.toStringAsFixed(1)}m (base: ${radius}m, buffer: ${(effectiveRadius - radius).toStringAsFixed(1)}m)',
@@ -206,17 +257,22 @@ class GeofenceUtil {
         }
 
         // If targetBranchId or targetBranchName is specified:
-        if (targetBranchId != null && targetBranchId.isNotEmpty) {
+        if (hasTarget) {
           // Check if any of the inside branches matches targetBranchId or name
           final matchedInside = insideBranches.firstWhere(
             (b) {
               final bId = b['branchId']?.toString() ?? '';
               final bName = b['branchName']?.toString() ?? '';
-              final idMatch = bId.isNotEmpty && bId.toLowerCase() == targetBranchId.toLowerCase();
+              final idMatch = targetBranchId != null &&
+                  targetBranchId.isNotEmpty &&
+                  bId.isNotEmpty &&
+                  bId.toLowerCase() == targetBranchId.toLowerCase();
               final nameMatch = targetBranchName != null &&
                   targetBranchName.isNotEmpty &&
                   bName.isNotEmpty &&
-                  bName.toLowerCase().trim() == targetBranchName.toLowerCase().trim();
+                  (bName.toLowerCase().trim() == targetBranchName.toLowerCase().trim() ||
+                   bName.toLowerCase().contains(targetBranchName.toLowerCase().trim()) ||
+                   targetBranchName.toLowerCase().trim().contains(bName.toLowerCase()));
               return idMatch || nameMatch;
             },
             orElse: () => {},
@@ -234,13 +290,14 @@ class GeofenceUtil {
           }
 
           // User is NOT inside the target branch.
+          final expName = (targetBranchName != null && targetBranchName.isNotEmpty)
+              ? targetBranchName
+              : 'assigned branch';
+
           // Check if user is inside a different branch:
           if (insideBranches.isNotEmpty) {
             final actual = insideBranches.first;
             final actualName = actual['branchName'] ?? 'another branch';
-            final expName = (targetBranchName != null && targetBranchName.isNotEmpty)
-                ? targetBranchName
-                : 'assigned branch';
             debugPrint(
               'GeofenceUtil: Inside "$actualName", but expected "$expName"',
             );
@@ -252,9 +309,25 @@ class GeofenceUtil {
               distance: actual['distance'],
               radius: actual['radius'],
               errorMessage:
-                  'GPS mismatch: You are at "$actualName", but this login is assigned to "$expName".',
+                  'GPS mismatch: You are at "$actualName", but this branch PIN is for "$expName". Please enter the PIN for "$actualName".',
             );
           }
+
+          // User is outside all branches
+          final distToReport = targetDistance.isFinite ? targetDistance : nearestDistance;
+          final targetDistStr = distToReport.isFinite
+              ? ' (${distToReport.toStringAsFixed(0)}m away)'
+              : '';
+          return GeofenceResult(
+            isInside: false,
+            position: position,
+            branchName: nearestBranchName,
+            branchId: nearestBranchId,
+            distance: distToReport,
+            radius: targetDistance.isFinite ? targetRadius : nearestRadius,
+            errorMessage:
+                'You are not inside "$expName"$targetDistStr. Login is only allowed when physically inside the branch.',
+          );
         } else if (insideBranches.isNotEmpty) {
           // No specific target branch required, inside at least one branch
           final first = insideBranches.first;

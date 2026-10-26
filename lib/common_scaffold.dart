@@ -17,6 +17,7 @@ import 'package:blackforest_app/stock_cart_page.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:blackforest_app/app_http.dart' as http;
+import 'package:blackforest_app/geo_settings_manager.dart';
 import 'package:esc_pos_printer/esc_pos_printer.dart';
 import 'package:esc_pos_utils/esc_pos_utils.dart' hide Barcode;
 import 'package:provider/provider.dart'; // For cart badge
@@ -38,6 +39,7 @@ import 'package:blackforest_app/waiter_call_history_service.dart';
 import 'package:blackforest_app/waiter_call_range_filter_service.dart';
 import 'package:blackforest_app/kot_status_source_prefs.dart';
 import 'package:blackforest_app/api_server_prefs.dart';
+import 'package:blackforest_app/api_service.dart';
 import 'package:blackforest_app/auth_session_manager.dart';
 import 'package:blackforest_app/auth_flags.dart';
 import 'package:blackforest_app/session_prefs.dart';
@@ -1319,23 +1321,14 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     }
 
     try {
-      final globalRes = await http
-          .get(
-            Uri.parse(
-              'https://blackforest-api.vseyal.com/api/globals/branch-geo-settings',
-            ),
-            headers: headers,
-          )
-          .timeout(const Duration(seconds: 5));
-      if (globalRes.statusCode == 200) {
-        final settings = jsonDecode(globalRes.body);
-        final locations = settings['locations'];
-        if (locations is List) {
-          for (final rawLoc in locations) {
-            if (rawLoc is! Map) continue;
-            final loc = Map<String, dynamic>.from(rawLoc);
-            final locBranchId = _toIdString(loc['branch']);
-            if (locBranchId != branchId) continue;
+      final settings = await GeoSettingsManager.getSettings(token: token);
+      final locations = settings['locations'];
+      if (locations is List) {
+        for (final rawLoc in locations) {
+          if (rawLoc is! Map) continue;
+          final loc = Map<String, dynamic>.from(rawLoc);
+          final locBranchId = _toIdString(loc['branch']);
+          if (locBranchId != branchId) continue;
 
             addTarget('Global Receipt', loc['printerIp'], loc['printerPort']);
 
@@ -1353,8 +1346,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
             break;
           }
         }
-      }
-    } catch (e) {
+      } catch (e) {
       debugPrint('Printer test global fetch failed: $e');
     }
 
@@ -4214,7 +4206,7 @@ class _KotPageState extends State<KotPage> {
 
       const billStatusFilter = 'pending,ordered,confirmed,prepared,delivered';
       String urlString =
-          'https://blackforest-api.vseyal.com/api/billings?where[status][in][0]=pending&where[status][in][1]=ordered&where[status][in][2]=confirmed&where[status][in][3]=prepared&where[status][in][4]=delivered&where[createdAt][greater_than_equal]=$todayStartUtc&where[createdAt][less_than]=$tomorrowStartUtc&limit=300&sort=-updatedAt&depth=3';
+          'https://blackforest-api.vseyal.com/api/billings?where[status][in][0]=pending&where[status][in][1]=ordered&where[status][in][2]=confirmed&where[status][in][3]=prepared&where[status][in][4]=delivered&where[createdAt][greater_than_equal]=$todayStartUtc&where[createdAt][less_than]=$tomorrowStartUtc&limit=100&sort=-updatedAt&depth=1';
       if (branchId.isNotEmpty) {
         urlString += '&where[branch][equals]=$branchId';
       }

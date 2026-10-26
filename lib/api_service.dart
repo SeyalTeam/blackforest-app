@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'dart:io';
+import 'package:blackforest_app/geo_settings_manager.dart';
 import 'package:blackforest_app/app_http.dart' as http;
 import 'package:http_parser/http_parser.dart' as http_parser;
 import 'package:intl/intl.dart';
@@ -178,7 +179,13 @@ class ApiService {
       final token = await _getToken();
       final res = await http.get(
         Uri.parse('$_baseUrl/branches?limit=1000'),
-        headers: token != null ? {'Authorization': 'Bearer $token'} : {},
+        headers: {
+          'Content-Type': 'application/json',
+          'x-app-key': 'bf_pos_9f8d7e6c5b4a3210',
+          'x-app-secret': 'bf_pos_9f8d7e6c5b4a3210',
+          http.skipUnauthorizedLogoutHeaderName: 'true',
+          if (token != null) 'Authorization': 'Bearer $token',
+        },
       );
 
       if (res.statusCode == 200) {
@@ -193,23 +200,13 @@ class ApiService {
     }
   }
 
-  Future<Map<String, dynamic>> fetchBranchGeoSettings() async {
+  Future<Map<String, dynamic>> fetchBranchGeoSettings({bool forceRefresh = false}) async {
     try {
       final token = await _getToken();
-      final res = await http.get(
-        Uri.parse('$_baseUrl/globals/branch-geo-settings'),
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          if (token != null) 'Authorization': 'Bearer $token',
-        },
+      return await GeoSettingsManager.getSettings(
+        forceRefresh: forceRefresh,
+        token: token,
       );
-
-      if (res.statusCode == 200) {
-        return jsonDecode(res.body) as Map<String, dynamic>;
-      } else {
-        throw Exception('Failed to load branch geo settings: ${res.statusCode}');
-      }
     } catch (e) {
       rethrow;
     }
@@ -1050,7 +1047,7 @@ Future<List<dynamic>> fetchEmployees() async {
       final token = await _getToken();
 
       String url =
-          '$_baseUrl/billings?limit=100&depth=3'
+          '$_baseUrl/billings?limit=60&depth=1'
           '&where[branch][equals]=$branchId'
           '&where[status][in][0]=ordered'
           '&where[status][in][1]=confirmed'

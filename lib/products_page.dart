@@ -14,6 +14,7 @@ import 'package:blackforest_app/api_server_prefs.dart';
 import 'package:blackforest_app/product_popularity_service.dart';
 import 'package:blackforest_app/widgets/rolling_qty_text.dart';
 import 'package:blackforest_app/widgets/product_rating_badge.dart';
+import 'package:blackforest_app/geo_settings_manager.dart';
 
 class _FilledTrianglePainter extends CustomPainter {
   final Color color;
@@ -789,6 +790,10 @@ class _ProductsPageState extends State<ProductsPage> {
     }
   }
 
+  static List<_HomeTopCategoryChip>? _cachedTopCategories;
+  static DateTime? _lastTopCategoriesFetch;
+  static String? _cachedTopCategoriesBranchId;
+
   Future<List<_HomeTopCategoryChip>> _fetchTopSellingKotCategoriesForBranch({
     required String token,
     required String branchId,
@@ -796,6 +801,14 @@ class _ProductsPageState extends State<ProductsPage> {
     final normalizedBranchId = branchId.trim();
     if (normalizedBranchId.isEmpty) {
       return const <_HomeTopCategoryChip>[];
+    }
+
+    final now = DateTime.now();
+    if (_cachedTopCategories != null &&
+        _cachedTopCategoriesBranchId == normalizedBranchId &&
+        _lastTopCategoriesFetch != null &&
+        now.difference(_lastTopCategoriesFetch!).inMinutes < 15) {
+      return _cachedTopCategories!;
     }
 
     try {
@@ -813,11 +826,15 @@ class _ProductsPageState extends State<ProductsPage> {
       }
 
       final decoded = await compute(_parseJsonMap, response.body);
-      return _readHomeTopCategoriesForBranch(
+      final result = _readHomeTopCategoriesForBranch(
         decoded,
         normalizedBranchId,
         ruleNameFilter: _topCircleCategoriesRuleName,
       );
+      _cachedTopCategories = result;
+      _cachedTopCategoriesBranchId = normalizedBranchId;
+      _lastTopCategoriesFetch = DateTime.now();
+      return result;
     } catch (_) {
       return const <_HomeTopCategoryChip>[];
     }
@@ -1116,23 +1133,13 @@ class _ProductsPageState extends State<ProductsPage> {
       String? deviceIp = await _fetchDeviceIp();
       if (deviceIp == null) return;
 
-      // 1. Try Global Settings
+      // 1. Try Global Settings (Cached)
       try {
-        final gRes = await http.get(
-          Uri.parse(
-            'https://blackforest-api.vseyal.com/api/globals/branch-geo-settings',
-          ),
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
-        );
-        if (gRes.statusCode == 200) {
-          final settings = jsonDecode(gRes.body);
-          final locations = settings['locations'] as List?;
-          if (locations != null) {
-            for (var loc in locations) {
-              String? bIpRange = loc['ipAddress']?.toString().trim();
+        final settings = await GeoSettingsManager.getSettings(token: token);
+        final locations = settings['locations'] as List?;
+        if (locations != null) {
+          for (var loc in locations) {
+            String? bIpRange = loc['ipAddress']?.toString().trim();
               if (bIpRange != null &&
                   (bIpRange == deviceIp || _isIpInRange(deviceIp, bIpRange))) {
                 final branchRef = loc['branch'];
@@ -1154,14 +1161,13 @@ class _ProductsPageState extends State<ProductsPage> {
               }
             }
           }
-        }
       } catch (e) {
         debugPrint("Error fetching global settings in products: $e");
       }
 
       // 2. Fallback to Branches Collection
       final allBranchesResponse = await http.get(
-        Uri.parse('https://blackforest-api.vseyal.com/api/branches?depth=1'),
+        Uri.parse('https://blackforest-api.vseyal.com/api/branches?depth=0'),
         headers: {'Authorization': 'Bearer $token'},
       );
       if (allBranchesResponse.statusCode == 200) {

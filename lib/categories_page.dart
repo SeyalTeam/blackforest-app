@@ -19,6 +19,7 @@ import 'package:blackforest_app/table_customer_details_visibility_service.dart';
 import 'package:blackforest_app/widgets/product_rating_badge.dart';
 import 'package:blackforest_app/api_server_prefs.dart';
 import 'package:blackforest_app/api_config.dart';
+import 'package:blackforest_app/geo_settings_manager.dart';
 
 class _CategoriesCacheEntry {
   final List<dynamic> categories;
@@ -1795,24 +1796,14 @@ class _CategoriesPageState extends State<CategoriesPage> {
         }
       }
 
-      // 1. Try IP Match and Global Settings first (Fastest)
+      // 1. Try IP Match and Global Settings first (Cached)
       try {
-        final gRes = await http.get(
-          Uri.parse(
-            'https://blackforest-api.vseyal.com/api/globals/branch-geo-settings',
-          ),
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
-        );
-        if (gRes.statusCode == 200) {
-          final settings = jsonDecode(gRes.body);
-          final locations = settings['locations'] as List?;
-          if (locations != null) {
-            for (var loc in locations) {
-              final locBranch = loc['branch'];
-              String? locBranchId;
+        final settings = await GeoSettingsManager.getSettings(token: token);
+        final locations = settings['locations'] as List?;
+        if (locations != null) {
+          for (var loc in locations) {
+            final locBranch = loc['branch'];
+            String? locBranchId;
               if (locBranch is Map) {
                 locBranchId =
                     locBranch['id']?.toString() ??
@@ -1859,7 +1850,6 @@ class _CategoriesPageState extends State<CategoriesPage> {
               }
             }
           }
-        }
       } catch (e) {
         debugPrint("Error fetching global settings in categories: $e");
       }

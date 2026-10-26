@@ -10,6 +10,7 @@ import 'package:blackforest_app/customer_history_dialog.dart';
 import 'package:blackforest_app/table_customer_details_visibility_service.dart';
 import 'package:blackforest_app/table.dart';
 import 'package:blackforest_app/app_http.dart' as http;
+import 'package:blackforest_app/geo_settings_manager.dart';
 import 'package:blackforest_app/kot_auto_print_service.dart';
 import 'package:blackforest_app/printer/thermal_print_prefs.dart';
 import 'package:blackforest_app/printer/bluetooth_printer_prefs.dart';
@@ -360,69 +361,57 @@ class _CartPageState extends State<CartPage> {
     try {
       String? globalPrinterIp;
 
-      // 1. Fetch from Priority Global Settings
+      // 1. Fetch from Priority Global Settings (Cached)
       try {
-        final gRes = await http.get(
-          Uri.parse(
-            'https://blackforest-api.vseyal.com/api/globals/branch-geo-settings',
-          ),
-          headers: {
-            'Authorization': 'Bearer $token',
-            'Content-Type': 'application/json',
-          },
-        );
+        final settings = await GeoSettingsManager.getSettings(token: token);
+        final locations = settings['locations'] as List?;
+        if (locations != null) {
+          final branchConfig = locations.firstWhere((loc) {
+            final locBranch = loc['branch'];
+            String? locBranchId;
+            if (locBranch is Map) {
+              locBranchId =
+                  locBranch['id']?.toString() ??
+                  locBranch['_id']?.toString() ??
+                  locBranch['\$oid']?.toString();
+            } else {
+              locBranchId = locBranch?.toString();
+            }
+            return locBranchId == branchId;
+          }, orElse: () => null);
 
-        if (gRes.statusCode == 200) {
-          final settings = jsonDecode(gRes.body);
-          final locations = settings['locations'] as List?;
-          if (locations != null) {
-            final branchConfig = locations.firstWhere((loc) {
-              final locBranch = loc['branch'];
-              String? locBranchId;
-              if (locBranch is Map) {
-                locBranchId =
-                    locBranch['id']?.toString() ??
-                    locBranch['_id']?.toString() ??
-                    locBranch['\$oid']?.toString();
-              } else {
-                locBranchId = locBranch?.toString();
-              }
-              return locBranchId == branchId;
-            }, orElse: () => null);
+          if (branchConfig != null) {
+            globalPrinterIp = branchConfig['printerIp']?.toString().trim();
+            final rawKotPrinters = branchConfig['kotPrinters'];
+            if (rawKotPrinters is List) {
+              _kotPrinters = List<dynamic>.from(rawKotPrinters);
+            }
 
-            if (branchConfig != null) {
-              globalPrinterIp = branchConfig['printerIp']?.toString().trim();
-              final rawKotPrinters = branchConfig['kotPrinters'];
-              if (rawKotPrinters is List) {
-                _kotPrinters = List<dynamic>.from(rawKotPrinters);
-              }
-
-              // Store Geo settings for future use
-              final prefs = await SharedPreferences.getInstance();
-              if (branchConfig['latitude'] != null) {
-                await prefs.setDouble(
-                  'branchLat',
-                  (branchConfig['latitude'] as num).toDouble(),
-                );
-              }
-              if (branchConfig['longitude'] != null) {
-                await prefs.setDouble(
-                  'branchLng',
-                  (branchConfig['longitude'] as num).toDouble(),
-                );
-              }
-              if (branchConfig['radius'] != null) {
-                await prefs.setInt(
-                  'branchRadius',
-                  (branchConfig['radius'] as num).toInt(),
-                );
-              }
-              if (branchConfig['ipAddress'] != null) {
-                await prefs.setString(
-                  'branchIp',
-                  branchConfig['ipAddress'].toString(),
-                );
-              }
+            // Store Geo settings for future use
+            final prefs = await SharedPreferences.getInstance();
+            if (branchConfig['latitude'] != null) {
+              await prefs.setDouble(
+                'branchLat',
+                (branchConfig['latitude'] as num).toDouble(),
+              );
+            }
+            if (branchConfig['longitude'] != null) {
+              await prefs.setDouble(
+                'branchLng',
+                (branchConfig['longitude'] as num).toDouble(),
+              );
+            }
+            if (branchConfig['radius'] != null) {
+              await prefs.setInt(
+                'branchRadius',
+                (branchConfig['radius'] as num).toInt(),
+              );
+            }
+            if (branchConfig['ipAddress'] != null) {
+              await prefs.setString(
+                'branchIp',
+                branchConfig['ipAddress'].toString(),
+              );
             }
           }
         }
@@ -1410,34 +1399,22 @@ class _CartPageState extends State<CartPage> {
     if (deviceIp == null) return;
 
     try {
-      // 1. Try Global Settings first
-      final gRes = await http.get(
-        Uri.parse(
-          'https://blackforest-api.vseyal.com/api/globals/branch-geo-settings',
-        ),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-      );
-
-      if (gRes.statusCode == 200) {
-        final settings = jsonDecode(gRes.body);
-        final locations = settings['locations'] as List?;
-        if (locations != null) {
-          for (var loc in locations) {
-            String? bIpRange = loc['ipAddress']?.toString().trim();
-            if (bIpRange != null &&
-                (bIpRange == deviceIp || _isIpInRange(deviceIp, bIpRange))) {
-              final branchRef = loc['branch'];
-              final String? branchId = (branchRef is Map)
-                  ? branchRef['id']?.toString()
-                  : branchRef?.toString();
-              if (branchId != null) {
-                _branchId = branchId;
-                await _fetchBranchDetails(token, branchId);
-                return;
-              }
+      // 1. Try Global Settings first (Cached)
+      final settings = await GeoSettingsManager.getSettings(token: token);
+      final locations = settings['locations'] as List?;
+      if (locations != null) {
+        for (var loc in locations) {
+          String? bIpRange = loc['ipAddress']?.toString().trim();
+          if (bIpRange != null &&
+              (bIpRange == deviceIp || _isIpInRange(deviceIp, bIpRange))) {
+            final branchRef = loc['branch'];
+            final String? branchId = (branchRef is Map)
+                ? branchRef['id']?.toString()
+                : branchRef?.toString();
+            if (branchId != null) {
+              _branchId = branchId;
+              await _fetchBranchDetails(token, branchId);
+              return;
             }
           }
         }
