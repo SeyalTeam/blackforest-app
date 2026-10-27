@@ -40,6 +40,9 @@ class GlobalKotRealtimeService {
   final _updateController = StreamController<void>.broadcast();
   Stream<void> get onUpdate => _updateController.stream;
 
+  final _orderEventController = StreamController<Map<String, dynamic>>.broadcast();
+  Stream<Map<String, dynamic>> get onOrderEvent => _orderEventController.stream;
+
   final _chatMessageController = StreamController<Map<String, dynamic>>.broadcast();
   Stream<Map<String, dynamic>> get onChatMessage => _chatMessageController.stream;
 
@@ -314,7 +317,7 @@ class GlobalKotRealtimeService {
       }
 
       try {
-        _audioPlayer.play(AssetSource('sounds/alert.wav'));
+        _audioPlayer.play(AssetSource('sounds/order.wav'));
       } catch (_) {}
       
       try {
@@ -339,6 +342,7 @@ class GlobalKotRealtimeService {
     }
     
     _updateController.add(null);
+    _orderEventController.add(message);
   }
 
   Future<void> _handleChatMessage(Map<String, dynamic> message) async {

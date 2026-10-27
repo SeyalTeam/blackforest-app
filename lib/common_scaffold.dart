@@ -38,6 +38,7 @@ import 'package:blackforest_app/waiter_call_history_page.dart';
 import 'package:blackforest_app/waiter_call_history_service.dart';
 import 'package:blackforest_app/waiter_call_range_filter_service.dart';
 import 'package:blackforest_app/kot_status_source_prefs.dart';
+import 'package:blackforest_app/global_kot_realtime_service.dart';
 import 'package:blackforest_app/api_server_prefs.dart';
 import 'package:blackforest_app/api_service.dart';
 import 'package:blackforest_app/auth_session_manager.dart';
@@ -68,6 +69,16 @@ class CommonScaffold extends StatefulWidget {
 
   static void setUnreadChatCount(int count) {
     unreadChatNotifier.value = count;
+  }
+
+  static final ValueNotifier<int> unreadKotNotifier = ValueNotifier<int>(0);
+
+  static void setUnreadKotCount(int count) {
+    unreadKotNotifier.value = count;
+  }
+
+  static void incrementKotBadge([int by = 1]) {
+    unreadKotNotifier.value = (unreadKotNotifier.value + by).clamp(0, 99);
   }
 
   final String title;
@@ -133,10 +144,61 @@ class _CommonScaffoldState extends State<CommonScaffold> {
   String? _activeWaiterStatusMessage;
   Color _activeWaiterStatusColor = const Color(0xFF9095A7);
   bool _isOverlayDisposedByNavigation = false;
+  StreamSubscription<Map<String, dynamic>>? _orderEventSub;
 
   @override
   void initState() {
     super.initState();
+    if (widget.pageType == PageType.kot) {
+      CommonScaffold.setUnreadKotCount(0);
+    }
+    _orderEventSub = GlobalKotRealtimeService.instance.onOrderEvent.listen((event) {
+      if (!mounted) return;
+      final statusAfter = (event['statusAfter']?.toString() ?? '').toLowerCase();
+      final tableName = (event['tableName'] ?? event['tableNo'] ?? event['table'])?.toString() ?? '';
+      final billingId = (event['billingId'] ?? '').toString();
+
+      if (statusAfter == 'confirmed' || statusAfter == 'ordered' || statusAfter == 'pending') {
+        if (widget.pageType != PageType.kot) {
+          CommonScaffold.incrementKotBadge();
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Row(
+                children: [
+                  const Icon(Icons.bolt_rounded, color: Colors.amber, size: 24),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      tableName.isNotEmpty
+                          ? 'New Order: Table $tableName (${statusAfter.toUpperCase()})'
+                          : 'New Order #$billingId (${statusAfter.toUpperCase()})',
+                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+                      CommonScaffold.setUnreadKotCount(0);
+                      Navigator.pushAndRemoveUntil(
+                        context,
+                        _createRoute(const KotPage()),
+                        (route) => false,
+                      );
+                    },
+                    child: const Text('VIEW', style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold)),
+                  ),
+                ],
+              ),
+              backgroundColor: const Color(0xFF1E293B),
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(seconds: 5),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          );
+        }
+      }
+    });
     AttendanceManager.isPunchedInNotifier.addListener(_onAttendanceStateChanged);
     _loadUsername();
     _loadNavigationVisibility();
@@ -215,6 +277,8 @@ class _CommonScaffoldState extends State<CommonScaffold> {
 
   @override
   void dispose() {
+    _orderEventSub?.cancel();
+    _orderEventSub = null;
     AttendanceManager.isPunchedInNotifier.removeListener(_onAttendanceStateChanged);
     _inactivityTimer?.cancel();
     _kitchenSyncTimer?.cancel();
@@ -2192,12 +2256,18 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                       type: PageType.table,
                       isPunchedIn: isPunchedIn,
                     ),
-                  _buildNavItem(
-                    icon: Icons.bolt_rounded,
-                    label: 'KOT',
-                    page: const KotPage(),
-                    type: PageType.kot,
-                    isPunchedIn: isPunchedIn,
+                  ValueListenableBuilder<int>(
+                    valueListenable: CommonScaffold.unreadKotNotifier,
+                    builder: (context, unreadKot, _) {
+                      return _buildNavItem(
+                        icon: Icons.bolt_rounded,
+                        label: 'KOT',
+                        page: const KotPage(),
+                        type: PageType.kot,
+                        badgeCount: unreadKot,
+                        isPunchedIn: isPunchedIn,
+                      );
+                    },
                   ),
                   ValueListenableBuilder<int>(
                     valueListenable: CommonScaffold.unreadChatNotifier,
@@ -2250,6 +2320,9 @@ class _CommonScaffoldState extends State<CommonScaffold> {
             if (!isPunchedIn) {
               _handleAttendanceBlockedNavigation();
               return;
+            }
+            if (type == PageType.kot) {
+              CommonScaffold.setUnreadKotCount(0);
             }
             if (onTap != null) {
               onTap();
@@ -2386,6 +2459,7 @@ class _KotPageState extends State<KotPage> {
   Timer? _wsRefreshTimer;
   io.WebSocket? _wsSocket;
   StreamSubscription<dynamic>? _wsSocketSubscription;
+  StreamSubscription<void>? _globalKotUpdateSub;
   bool _wsConnecting = false;
   bool _wsSubscribed = false;
   bool _isRealtimeDisposed = false;
@@ -2543,6 +2617,12 @@ class _KotPageState extends State<KotPage> {
   @override
   void initState() {
     super.initState();
+    CommonScaffold.setUnreadKotCount(0);
+    _globalKotUpdateSub = GlobalKotRealtimeService.instance.onUpdate.listen((_) {
+      if (mounted && !_isRealtimeDisposed) {
+        _scheduleWsDrivenRefresh(immediate: true);
+      }
+    });
     unawaited(_initializeKotDataFlow());
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (!mounted) return;
@@ -2553,6 +2633,8 @@ class _KotPageState extends State<KotPage> {
   @override
   void dispose() {
     _isRealtimeDisposed = true;
+    _globalKotUpdateSub?.cancel();
+    _globalKotUpdateSub = null;
     _refreshTimer?.cancel();
     _clockTimer?.cancel();
     _wsReconnectTimer?.cancel();

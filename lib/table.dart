@@ -11,6 +11,7 @@ import 'package:blackforest_app/cart_page.dart';
 import 'package:blackforest_app/customer_history_dialog.dart';
 import 'package:blackforest_app/table_customer_details_visibility_service.dart';
 import 'package:blackforest_app/waiter_call_range_filter_service.dart';
+import 'package:blackforest_app/global_kot_realtime_service.dart';
 
 class TablePage extends StatefulWidget {
   const TablePage({super.key});
@@ -55,6 +56,7 @@ class _TablePageState extends State<TablePage> {
   bool _isHandlingTableTap = false;
   bool _isFetchingPendingBills = false;
   Timer? _timer;
+  StreamSubscription<void>? _realtimeSub;
 
   List<Map<String, dynamic>> _activeItemsFromBill(dynamic bill) {
     if (bill is! Map) return const <Map<String, dynamic>>[];
@@ -79,10 +81,17 @@ class _TablePageState extends State<TablePage> {
     super.initState();
     _loadInitialData();
     _startTimer();
+    _realtimeSub = GlobalKotRealtimeService.instance.onUpdate.listen((_) {
+      if (mounted) {
+        unawaited(_fetchPendingBills());
+      }
+    });
   }
 
   @override
   void dispose() {
+    _realtimeSub?.cancel();
+    _realtimeSub = null;
     _timer?.cancel();
     super.dispose();
   }
