@@ -269,9 +269,10 @@ class AttendanceManager {
 
     _isExecuting = true;
     try {
-      final token = await storage.read(key: 'token');
-      final userId = await storage.read(key: 'userId');
-      final userRole = (await storage.read(key: 'userRole'))?.toLowerCase();
+      final prefs = await SharedPreferences.getInstance();
+      final token = (await storage.read(key: 'token')) ?? prefs.getString('token');
+      final userId = (await storage.read(key: 'userId')) ?? prefs.getString('userId');
+      final userRole = ((await storage.read(key: 'userRole')) ?? prefs.getString('userRole'))?.toLowerCase();
       
       if (userRole == 'watcher') {
         return;

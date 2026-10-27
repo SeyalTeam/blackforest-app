@@ -3785,7 +3785,7 @@ class _KotPageState extends State<KotPage> {
         final foundIds = <String>{};
         final response = await http.get(
           Uri.parse(
-            'https://blackforest-api.vseyal.com/api/products?where[id][in]=$idsParam&depth=3&limit=100',
+            'https://blackforest-api.vseyal.com/api/products?where[id][in]=$idsParam&depth=1&limit=100',
           ),
           headers: {
             'Authorization': 'Bearer $token',
@@ -3804,7 +3804,7 @@ class _KotPageState extends State<KotPage> {
         if (docs.isEmpty) {
           final fallbackResponse = await http.get(
             Uri.parse(
-              'https://blackforest-api.vseyal.com/api/products?where[_id][in]=$idsParam&depth=3&limit=100',
+              'https://blackforest-api.vseyal.com/api/products?where[_id][in]=$idsParam&depth=1&limit=100',
             ),
             headers: {
               'Authorization': 'Bearer $token',
@@ -3822,7 +3822,7 @@ class _KotPageState extends State<KotPage> {
         if (docs.isEmpty) {
           final productIdFallbackResponse = await http.get(
             Uri.parse(
-              'https://blackforest-api.vseyal.com/api/products?where[productId][in]=$idsParam&depth=3&limit=100',
+              'https://blackforest-api.vseyal.com/api/products?where[productId][in]=$idsParam&depth=1&limit=100',
             ),
             headers: {
               'Authorization': 'Bearer $token',
@@ -3878,7 +3878,7 @@ class _KotPageState extends State<KotPage> {
 
           final idEndpointResponse = await http.get(
             Uri.parse(
-              'https://blackforest-api.vseyal.com/api/products/${Uri.encodeComponent(id)}?depth=3',
+              'https://blackforest-api.vseyal.com/api/products/${Uri.encodeComponent(id)}?depth=1',
             ),
             headers: {
               'Authorization': 'Bearer $token',
@@ -3892,7 +3892,7 @@ class _KotPageState extends State<KotPage> {
           if (productDoc.isEmpty) {
             final productIdLookup = await http.get(
               Uri.parse(
-                'https://blackforest-api.vseyal.com/api/products?where[productId][equals]=${Uri.encodeQueryComponent(id)}&depth=3&limit=1',
+                'https://blackforest-api.vseyal.com/api/products?where[productId][equals]=${Uri.encodeQueryComponent(id)}&depth=1&limit=1',
               ),
               headers: {
                 'Authorization': 'Bearer $token',
@@ -3913,7 +3913,7 @@ class _KotPageState extends State<KotPage> {
           if (productDoc.isEmpty) {
             final upcLookup = await http.get(
               Uri.parse(
-                'https://blackforest-api.vseyal.com/api/products?where[upc][equals]=${Uri.encodeQueryComponent(id)}&depth=3&limit=1',
+                'https://blackforest-api.vseyal.com/api/products?where[upc][equals]=${Uri.encodeQueryComponent(id)}&depth=1&limit=1',
               ),
               headers: {
                 'Authorization': 'Bearer $token',
@@ -3982,7 +3982,7 @@ class _KotPageState extends State<KotPage> {
             final query = Uri.encodeQueryComponent(queryText);
             final response = await http.get(
               Uri.parse(
-                'https://blackforest-api.vseyal.com/api/products?where[name][$operator]=$query&depth=3&limit=18',
+                'https://blackforest-api.vseyal.com/api/products?where[name][$operator]=$query&depth=1&limit=18',
               ),
               headers: {
                 'Authorization': 'Bearer $token',

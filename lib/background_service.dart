@@ -4,6 +4,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'attendance_manager.dart';
 
 Future<void> initializeService() async {
@@ -64,7 +65,8 @@ void onStart(ServiceInstance service) async {
 
   // 2. Initial check on startup if user is logged in
   try {
-    final token = await storage.read(key: 'token');
+    final prefs = await SharedPreferences.getInstance();
+    final token = (await storage.read(key: 'token')) ?? prefs.getString('token');
     if (token != null && token.isNotEmpty) {
       await AttendanceManager.checkAndProcessAttendance(isBackground: true);
     }
@@ -75,7 +77,8 @@ void onStart(ServiceInstance service) async {
   // 3. Fallback heartbeat timer: 5 minutes (relieves battery & server load)
   Timer.periodic(const Duration(minutes: 5), (timer) async {
     try {
-      final token = await storage.read(key: 'token');
+      final prefs = await SharedPreferences.getInstance();
+      final token = (await storage.read(key: 'token')) ?? prefs.getString('token');
       if (token == null || token.isEmpty) return; // User not logged in
 
       await AttendanceManager.checkAndProcessAttendance(isBackground: true);
