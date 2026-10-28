@@ -2427,7 +2427,7 @@ class KotPage extends StatefulWidget {
 }
 
 class _KotPageState extends State<KotPage> {
-  static const Duration _fallbackPollInterval = Duration(seconds: 60);
+  static const Duration _fallbackPollInterval = Duration(seconds: 8);
   static const Duration _wsRefreshDebounceInterval = Duration(
     milliseconds: 250,
   );
@@ -2463,6 +2463,7 @@ class _KotPageState extends State<KotPage> {
   bool _wsConnecting = false;
   bool _wsSubscribed = false;
   bool _isRealtimeDisposed = false;
+  bool _isFetchInFlight = false;
   int _wsConnectionGeneration = 0;
   int _wsReconnectAttempt = 0;
   String _wsToken = '';
@@ -2618,6 +2619,7 @@ class _KotPageState extends State<KotPage> {
   void initState() {
     super.initState();
     CommonScaffold.setUnreadKotCount(0);
+    unawaited(GlobalKotRealtimeService.instance.connect());
     _globalKotUpdateSub = GlobalKotRealtimeService.instance.onUpdate.listen((_) {
       if (mounted && !_isRealtimeDisposed) {
         _scheduleWsDrivenRefresh(immediate: true);
@@ -2653,20 +2655,29 @@ class _KotPageState extends State<KotPage> {
   }
 
   void _startFallbackPolling() {
-    // Background polling timer disabled - 100% WebSocket and notification driven
     _refreshTimer?.cancel();
-    _refreshTimer = null;
+    // Silent 8-second periodic sync while on KotPage guarantees confirmed orders
+    // appear automatically without requiring manual pull-to-refresh.
+    _refreshTimer = Timer.periodic(_fallbackPollInterval, (_) {
+      if (!mounted || _isRealtimeDisposed) return;
+      unawaited(_refreshConfirmedItems(showLoader: false, hydrateImages: false));
+    });
   }
 
   void _stopFallbackPolling() {
-    _refreshTimer?.cancel();
-    _refreshTimer = null;
+    // Keep foreground periodic sync active as a fail-safe background sync
+    // so no orders are missed if tablet is temporarily idle or on store Wi-Fi.
   }
 
   Future<void> _loadRealtimeSessionSnapshot() async {
     final prefs = await SharedPreferences.getInstance();
-    _wsToken = _readText(prefs.getString('token'));
-    _wsBranchId = _readText(prefs.getString('branchId'));
+    final tokenCandidate = prefs.getString('token') ?? prefs.getString('auth_token') ?? '';
+    _wsToken = _readText(tokenCandidate);
+    final branchCandidate = prefs.getString('branchId') ??
+        prefs.getString('branch') ??
+        prefs.getString('userBranchId') ??
+        '';
+    _wsBranchId = _readText(branchCandidate);
     _wsKitchenId = _readText(prefs.getString('kitchenId'));
     _kotSourceStatus = loadKotStatusSourceFromPrefs(prefs);
     final role = _readText(prefs.getString('role')).toLowerCase();
@@ -2859,7 +2870,12 @@ class _KotPageState extends State<KotPage> {
   bool _shouldRefreshForStatusChange(String statusBefore, String statusAfter) {
     if (_role.trim().isEmpty) return true;
     final sourceStatus = _sourceStatusForRole(_role);
-    return statusBefore == sourceStatus || statusAfter == sourceStatus;
+    return statusBefore == sourceStatus ||
+        statusAfter == sourceStatus ||
+        statusAfter == 'confirmed' ||
+        statusAfter == 'ordered' ||
+        statusAfter == 'pending' ||
+        statusAfter == 'prepared';
   }
 
   bool _shouldApplyRealtimeItemState(
@@ -4150,6 +4166,8 @@ class _KotPageState extends State<KotPage> {
     bool showLoader = false,
     bool hydrateImages = true,
   }) async {
+    if (_isFetchInFlight) return;
+    _isFetchInFlight = true;
     if (showLoader && mounted) {
       setState(() {
         _isLoading = true;
@@ -4598,6 +4616,8 @@ class _KotPageState extends State<KotPage> {
         _errorMessage = error.toString().replaceFirst('Exception: ', '');
         _isLoading = false;
       });
+    } finally {
+      _isFetchInFlight = false;
     }
   }
 

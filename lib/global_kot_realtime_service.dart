@@ -23,6 +23,7 @@ class GlobalKotRealtimeService {
   bool _wsConnecting = false;
   int _wsConnectionGeneration = 0;
   Timer? _wsReconnectTimer;
+  Timer? _pingTimer;
   
   String _wsToken = '';
   String _wsBranchId = '';
@@ -52,10 +53,11 @@ class GlobalKotRealtimeService {
   bool get isConnected => _wsSocket != null && _wsSocket!.readyState == io.WebSocket.open;
 
   bool _markEventAsSeen(String eventId) {
-    if (eventId.isEmpty) return false;
-    if (_seenEventIds.contains(eventId)) return false;
-    _seenEventIds.add(eventId);
-    _seenEventIdOrder.add(eventId);
+    final trimmed = eventId.trim();
+    if (trimmed.isEmpty) return true;
+    if (_seenEventIds.contains(trimmed)) return false;
+    _seenEventIds.add(trimmed);
+    _seenEventIdOrder.add(trimmed);
     if (_seenEventIdOrder.length > _maxTrackedEventIds) {
       final removed = _seenEventIdOrder.removeAt(0);
       _seenEventIds.remove(removed);
@@ -144,6 +146,7 @@ class GlobalKotRealtimeService {
       );
       
       _sendSubscribe();
+      _startPingTimer();
     } catch (_) {
       _scheduleReconnect();
     } finally {
@@ -163,6 +166,8 @@ class GlobalKotRealtimeService {
   }
 
   Future<void> _closeSocket({bool sendUnsubscribe = false}) async {
+    _pingTimer?.cancel();
+    _pingTimer = null;
     final socket = _wsSocket;
     final sub = _wsSocketSubscription;
     _wsSocket = null;
@@ -210,6 +215,17 @@ class GlobalKotRealtimeService {
         debugPrint('GlobalKotRealtimeService: error sending message: $e');
       }
     }
+  }
+
+  void _startPingTimer() {
+    _pingTimer?.cancel();
+    _pingTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      if (_wsSocket != null && _wsSocket!.readyState == io.WebSocket.open) {
+        try {
+          _wsSocket!.add(jsonEncode({'action': 'ping', 'type': 'ping'}));
+        } catch (_) {}
+      }
+    });
   }
 
   void _handleFrame(dynamic frame, int generation) {
@@ -269,10 +285,14 @@ class GlobalKotRealtimeService {
       return;
     }
     
-    if (eventType != 'billing_item_status_changed' &&
-        eventType != 'billing_item_preparing_time_changed' &&
-        eventType != 'billing_status_changed' &&
-        eventType != 'waiter_call_received') {
+    final isBillingOrOrderEvent = eventType == 'billing_item_status_changed' ||
+        eventType == 'billing_item_preparing_time_changed' ||
+        eventType == 'billing_status_changed' ||
+        eventType == 'waiter_call_received' ||
+        eventType.contains('billing') ||
+        eventType.contains('order');
+
+    if (!isBillingOrOrderEvent) {
       return;
     }
     
