@@ -4241,38 +4241,6 @@ class _KotPageState extends State<KotPage> {
         } catch (_) {}
       }
 
-      if (cachedTables.isEmpty && branchId.isNotEmpty && token.isNotEmpty) {
-        try {
-          final tablesResponse = await http
-              .get(
-                Uri.parse(
-                  'https://blackforest-api.vseyal.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
-                ),
-                headers: {'Authorization': 'Bearer $token'},
-              )
-              .timeout(const Duration(seconds: 5));
-          if (tablesResponse.statusCode == 200) {
-            final tablesData = jsonDecode(tablesResponse.body);
-            final List<dynamic> allDocs = tablesData['docs'] ?? [];
-            final dynamic branchDoc = allDocs.isNotEmpty ? allDocs.first : null;
-            if (branchDoc != null) {
-              final List<dynamic> sections = branchDoc['sections'] ?? [];
-              if (sections.isNotEmpty) {
-                cachedTables = sections;
-                unawaited(
-                  prefs.setString(
-                    'cached_tables_$branchId',
-                    jsonEncode(sections),
-                  ),
-                );
-              }
-            }
-          }
-        } catch (e) {
-          debugPrint('Error fetching tables fallback in KOT page: $e');
-        }
-      }
-
       if (token.isEmpty) {
         throw Exception('Session missing. Please login again.');
       }
@@ -4286,20 +4254,52 @@ class _KotPageState extends State<KotPage> {
       final todayStartUtc = todayStartLocal.toUtc().toIso8601String();
       final tomorrowStartUtc = tomorrowStartLocal.toUtc().toIso8601String();
 
-      const billStatusFilter = 'pending,ordered,confirmed,prepared,delivered';
       String urlString =
           'https://blackforest-api.vseyal.com/api/billings?where[status][in][0]=pending&where[status][in][1]=ordered&where[status][in][2]=confirmed&where[status][in][3]=prepared&where[status][in][4]=delivered&where[createdAt][greater_than_equal]=$todayStartUtc&where[createdAt][less_than]=$tomorrowStartUtc&limit=100&sort=-updatedAt&depth=1';
       if (branchId.isNotEmpty) {
         urlString += '&where[branch][equals]=$branchId';
       }
 
-      final response = await http.get(
+      final billingsFuture = http.get(
         Uri.parse(urlString),
         headers: {
           'Authorization': 'Bearer $token',
           'Content-Type': 'application/json',
         },
       );
+
+      final tablesFuture = (branchId.isNotEmpty && token.isNotEmpty)
+          ? http.get(
+              Uri.parse(
+                'https://blackforest-api.vseyal.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
+              ),
+              headers: {'Authorization': 'Bearer $token'},
+            ).timeout(const Duration(seconds: 4)).catchError((_) => http.Response('', 500))
+          : Future<http.Response>.value(http.Response('', 500));
+
+      final results = await Future.wait([billingsFuture, tablesFuture]);
+      final response = results[0];
+      final tablesResponse = results[1];
+
+      if (tablesResponse.statusCode == 200) {
+        try {
+          final tablesData = jsonDecode(tablesResponse.body);
+          final List<dynamic> allDocs = tablesData['docs'] ?? [];
+          final dynamic branchDoc = allDocs.isNotEmpty ? allDocs.first : null;
+          if (branchDoc != null) {
+            final List<dynamic> sections = branchDoc['sections'] ?? [];
+            if (sections.isNotEmpty) {
+              cachedTables = sections;
+              unawaited(
+                prefs.setString(
+                  'cached_tables_$branchId',
+                  jsonEncode(sections),
+                ),
+              );
+            }
+          }
+        } catch (_) {}
+      }
 
       if (response.statusCode != 200) {
         throw Exception(
@@ -4324,19 +4324,35 @@ class _KotPageState extends State<KotPage> {
         if (!isShared) {
           if (!_matchesSelectedTableRange(bill, selectedTableRows)) continue;
 
-          // Allocation Filter
+          // Allocation Filter (only filters if role is waiter, and bill is not mine)
           final sectionName = _resolveSectionForRangeFilter(bill);
           final tableNumStr = _resolveTableNumberTokenForRangeFilter(bill);
           final tableNumber =
               WaiterCallRangeFilterService.parseTableToken(tableNumStr) ?? 0;
-          if (tableNumber > 0 && sectionName.isNotEmpty) {
-            final isAllocated = _isTableAllocatedToMe(
-              sectionName: sectionName,
-              tableNumber: tableNumber,
-              cachedTables: cachedTables,
-              candidateKeys: userKeys,
+          if (role == 'waiter' && tableNumber > 0 && sectionName.isNotEmpty) {
+            final createdBy = _asMap(bill['createdBy']);
+            final billCreatedById = _resolveId(createdBy['id']).isNotEmpty
+                ? _resolveId(createdBy['id'])
+                : _resolveId(bill['createdBy']);
+            final billWaiterId = _resolveId(bill['waiter']);
+            final waiterName = _readText(
+              createdBy['name'] ?? createdBy['username'] ?? bill['waiterName'],
             );
-            if (!isAllocated) continue;
+            final isMyBill = userKeys.any((key) =>
+                key.isNotEmpty &&
+                (key == billCreatedById ||
+                    key == billWaiterId ||
+                    key.toLowerCase() == waiterName.toLowerCase()));
+
+            if (!isMyBill) {
+              final isAllocated = _isTableAllocatedToMe(
+                sectionName: sectionName,
+                tableNumber: tableNumber,
+                cachedTables: cachedTables,
+                candidateKeys: userKeys,
+              );
+              if (!isAllocated) continue;
+            }
           }
         }
 
@@ -5361,7 +5377,7 @@ class _KotPageState extends State<KotPage> {
       title: title,
       pageType: PageType.kot,
       body: RefreshIndicator(
-        onRefresh: _refreshConfirmedItems,
+        onRefresh: () => _refreshConfirmedItems(showLoader: false, hydrateImages: false),
         child: _buildContent(),
       ),
     );
