@@ -2441,6 +2441,7 @@ class _KotPageState extends State<KotPage> {
   final List<_KotConfirmedItem> _items = <_KotConfirmedItem>[];
   final Set<String> _updatingKeys = <String>{};
   final Set<String> _inFlightDeliveryTokens = <String>{};
+  final Map<String, DateTime> _locallyDeliveredTokens = <String, DateTime>{};
   final Map<String, List<Map<String, dynamic>>> _billItemsCacheByBillId =
       <String, List<Map<String, dynamic>>>{};
   final Map<String, String> _productImageById = <String, String>{};
@@ -4493,6 +4494,11 @@ class _KotPageState extends State<KotPage> {
           if (_inFlightDeliveryTokens.contains(deliveryToken)) {
             continue;
           }
+          final deliveredAt = _locallyDeliveredTokens[deliveryToken];
+          if (deliveredAt != null &&
+              DateTime.now().difference(deliveredAt).inSeconds < 60) {
+            continue;
+          }
           final updatedToken =
               updatedAt?.millisecondsSinceEpoch.toString() ?? '0';
           final uniqueKey =
@@ -4739,6 +4745,7 @@ class _KotPageState extends State<KotPage> {
   Future<void> _markAsDelivered(_KotConfirmedItem item) async {
     if (_updatingKeys.contains(item.key)) return;
     final deliveryToken = _deliveryTokenForItem(item);
+    _locallyDeliveredTokens[deliveryToken] = DateTime.now();
     setState(() {
       _updatingKeys.add(item.key);
       _inFlightDeliveryTokens.add(deliveryToken);
@@ -4762,15 +4769,7 @@ class _KotPageState extends State<KotPage> {
       }
 
       final finalTargetStatus = _targetStatusForRole(_role);
-      final currentStatus = item.status.toLowerCase().trim();
-
-      final statusesToUpdate = <String>[];
-      if (currentStatus == 'prepared' && finalTargetStatus == 'delivered') {
-        statusesToUpdate.add('confirmed');
-        statusesToUpdate.add('delivered');
-      } else {
-        statusesToUpdate.add(finalTargetStatus);
-      }
+      final statusesToUpdate = <String>[finalTargetStatus];
 
       _KotConfirmedItem activeItem = item;
       http.Response? updateResponse;
@@ -4938,6 +4937,7 @@ class _KotPageState extends State<KotPage> {
         ),
       );
     } catch (error) {
+      _locallyDeliveredTokens.remove(deliveryToken);
       if (!mounted) return;
       setState(() {
         final alreadyVisible = _items.any((entry) => entry.key == item.key);
