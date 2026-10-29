@@ -102,7 +102,7 @@ class GlobalKotRealtimeService {
       final primaryHost = apiHostActive.trim().isNotEmpty ? apiHostActive.trim() : apiHostPrimary;
       final candidateHosts = <String>[
         primaryHost,
-        if (primaryHost != 'blackforest-api.vseyal.com') 'blackforest-api.vseyal.com',
+        if (primaryHost != 'dev1-blacforest.vseyal.com') 'dev1-blacforest.vseyal.com',
         if (primaryHost != 'blackforest.vseyal.com') 'blackforest.vseyal.com',
       ];
 
@@ -318,8 +318,57 @@ class GlobalKotRealtimeService {
     
     // Play alert and show notification
     final statusAfter = (message['statusAfter']?.toString() ?? '').toLowerCase();
-    final billingId = message['billingId']?.toString() ?? '';
-    final tableName = (message['tableName'] ?? message['tableNo'] ?? message['table'])?.toString() ?? '';
+    final billingId = (message['billingId'] ?? '').toString();
+
+    // 1. Resolve Table display
+    String rawTable = (message['tableName'] ??
+            message['tableNo'] ??
+            message['table'] ??
+            (message['tableDetails'] is Map ? message['tableDetails']['tableNumber'] : null) ??
+            '')
+        .toString()
+        .trim();
+    final rawSection = (message['section'] ??
+            (message['tableDetails'] is Map ? message['tableDetails']['section'] : null) ??
+            '')
+        .toString()
+        .trim();
+    final kotNum = (message['kotNumber'] ?? '').toString().trim();
+
+    String tableDisplay = '';
+    if (rawTable.isNotEmpty) {
+      if (!rawTable.toLowerCase().startsWith('table') && RegExp(r'^\d+$').hasMatch(rawTable)) {
+        rawTable = 'Table $rawTable';
+      }
+      tableDisplay = rawSection.isNotEmpty && !rawTable.contains(rawSection)
+          ? '$rawSection - $rawTable'
+          : rawTable;
+    } else if (rawSection.isNotEmpty) {
+      tableDisplay = rawSection;
+    } else if (kotNum.isNotEmpty) {
+      tableDisplay = 'KOT #$kotNum';
+    } else if (billingId.isNotEmpty) {
+      tableDisplay = 'Order #${billingId.length > 6 ? billingId.substring(billingId.length - 6) : billingId}';
+    } else {
+      tableDisplay = 'Takeaway';
+    }
+
+    // 2. Resolve Product display
+    final rawProdName = (message['productName'] ??
+            (message['itemSnapshot'] is Map ? message['itemSnapshot']['name'] : null) ??
+            '')
+        .toString()
+        .trim();
+    final productNamesList = message['productNames'];
+    String productsDisplay = '';
+    if (rawProdName.isNotEmpty) {
+      productsDisplay = rawProdName;
+    } else if (productNamesList is List && productNamesList.isNotEmpty) {
+      productsDisplay = productNamesList
+          .map((e) => e?.toString().trim() ?? '')
+          .where((s) => s.isNotEmpty)
+          .join(', ');
+    }
     
     if (statusAfter == 'ordered' || statusAfter == 'pending' || statusAfter == 'confirmed') {
       if (_isChef) {
@@ -338,16 +387,20 @@ class GlobalKotRealtimeService {
       
       try {
         final notifTitle = (statusAfter == 'ordered' || statusAfter == 'pending')
-            ? '🔔 New Order Received!'
-            : '✅ Order Status Updated: ${statusAfter.toUpperCase()}';
-        final notifBody = tableName.isNotEmpty
-            ? 'Table: $tableName • Status: ${statusAfter.toUpperCase()}'
-            : 'Order #${billingId.isNotEmpty ? billingId : ''} • Status: ${statusAfter.toUpperCase()}';
+            ? '🔔 New Order: $tableDisplay'
+            : (statusAfter == 'confirmed')
+                ? '✅ Order Confirmed: $tableDisplay'
+                : '✅ Order Status Updated: ${statusAfter.toUpperCase()}';
+
+        final notifBody = productsDisplay.isNotEmpty
+            ? '$tableDisplay • $productsDisplay'
+            : '$tableDisplay • Status: ${statusAfter.toUpperCase()}';
             
         NotificationService().showOrderNotification(
           id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
           title: notifTitle,
           body: notifBody,
+          payload: billingId.isNotEmpty ? billingId : null,
         );
       } catch (nErr) {
         debugPrint('Failed to display order notification: $nErr');

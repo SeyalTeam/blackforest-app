@@ -155,13 +155,63 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     _orderEventSub = GlobalKotRealtimeService.instance.onOrderEvent.listen((event) {
       if (!mounted) return;
       final statusAfter = (event['statusAfter']?.toString() ?? '').toLowerCase();
-      final tableName = (event['tableName'] ?? event['tableNo'] ?? event['table'])?.toString() ?? '';
       final billingId = (event['billingId'] ?? '').toString();
+
+      String rawTable = (event['tableName'] ??
+              event['tableNo'] ??
+              event['table'] ??
+              (event['tableDetails'] is Map ? event['tableDetails']['tableNumber'] : null) ??
+              '')
+          .toString()
+          .trim();
+      final rawSection = (event['section'] ??
+              (event['tableDetails'] is Map ? event['tableDetails']['section'] : null) ??
+              '')
+          .toString()
+          .trim();
+      final kotNum = (event['kotNumber'] ?? '').toString().trim();
+
+      String tableDisplay = '';
+      if (rawTable.isNotEmpty) {
+        if (!rawTable.toLowerCase().startsWith('table') && RegExp(r'^\d+$').hasMatch(rawTable)) {
+          rawTable = 'Table $rawTable';
+        }
+        tableDisplay = rawSection.isNotEmpty && !rawTable.contains(rawSection)
+            ? '$rawSection - $rawTable'
+            : rawTable;
+      } else if (rawSection.isNotEmpty) {
+        tableDisplay = rawSection;
+      } else if (kotNum.isNotEmpty) {
+        tableDisplay = 'KOT #$kotNum';
+      } else if (billingId.isNotEmpty) {
+        tableDisplay = 'Order #${billingId.length > 6 ? billingId.substring(billingId.length - 6) : billingId}';
+      } else {
+        tableDisplay = 'Takeaway';
+      }
+
+      final rawProdName = (event['productName'] ??
+              (event['itemSnapshot'] is Map ? event['itemSnapshot']['name'] : null) ??
+              '')
+          .toString()
+          .trim();
+      final productNamesList = event['productNames'];
+      String productsDisplay = '';
+      if (rawProdName.isNotEmpty) {
+        productsDisplay = rawProdName;
+      } else if (productNamesList is List && productNamesList.isNotEmpty) {
+        productsDisplay = productNamesList
+            .map((e) => e?.toString().trim() ?? '')
+            .where((s) => s.isNotEmpty)
+            .join(', ');
+      }
 
       if (statusAfter == 'confirmed' || statusAfter == 'ordered' || statusAfter == 'pending') {
         if (widget.pageType != PageType.kot) {
           CommonScaffold.incrementKotBadge();
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          final snackText = productsDisplay.isNotEmpty
+              ? '$tableDisplay • $productsDisplay (${statusAfter.toUpperCase()})'
+              : '$tableDisplay (${statusAfter.toUpperCase()})';
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Row(
@@ -170,9 +220,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      tableName.isNotEmpty
-                          ? 'New Order: Table $tableName (${statusAfter.toUpperCase()})'
-                          : 'New Order #$billingId (${statusAfter.toUpperCase()})',
+                      snackText,
                       style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white),
                     ),
                   ),
@@ -907,7 +955,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
 
       final response = await http
           .post(
-            Uri.parse('https://blackforest-api.vseyal.com/api/call-waiter/ack'),
+            Uri.parse('https://dev1-blacforest.vseyal.com/api/call-waiter/ack'),
             headers: {
               'Authorization': 'Bearer $token',
               'Content-Type': 'application/json',
@@ -997,7 +1045,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     try {
       final response = await http
           .get(
-            Uri.parse('https://blackforest-api.vseyal.com/api/users/me'),
+            Uri.parse('https://dev1-blacforest.vseyal.com/api/users/me'),
             headers: {'Authorization': 'Bearer $token'},
           )
           .timeout(const Duration(seconds: 5));
@@ -1124,7 +1172,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
 
           // 1. Find the log record that has an ACTIVE session
           final searchUrl =
-              'https://blackforest-api.vseyal.com/api/attendance?where[user][equals]=$userId&where[activities.status][equals]=active&limit=1';
+              'https://dev1-blacforest.vseyal.com/api/attendance?where[user][equals]=$userId&where[activities.status][equals]=active&limit=1';
           final searchResp = await http
               .get(
                 Uri.parse(searchUrl),
@@ -1163,7 +1211,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                 final updateResp = await http
                     .patch(
                       Uri.parse(
-                        'https://blackforest-api.vseyal.com/api/attendance/$sessionId',
+                        'https://dev1-blacforest.vseyal.com/api/attendance/$sessionId',
                       ),
                       headers: {
                         'Authorization': 'Bearer $token',
@@ -1371,7 +1419,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
       final branchRes = await http
           .get(
             Uri.parse(
-              'https://blackforest-api.vseyal.com/api/branches/$branchId?depth=1',
+              'https://dev1-blacforest.vseyal.com/api/branches/$branchId?depth=1',
             ),
             headers: headers,
           )
@@ -2592,7 +2640,7 @@ class _KotPageState extends State<KotPage> {
     String token,
   ) async {
     final billResponse = await http.get(
-      Uri.parse('https://blackforest-api.vseyal.com/api/billings/$billId'),
+      Uri.parse('https://dev1-blacforest.vseyal.com/api/billings/$billId'),
       headers: {
         'Authorization': 'Bearer $token',
         'Content-Type': 'application/json',
@@ -3063,7 +3111,53 @@ class _KotPageState extends State<KotPage> {
     // Play alert sound and show WhatsApp-style lockscreen notification for new orders & updates
     final statusAfter = _readText(message['statusAfter']).toLowerCase();
     final billingId = _readText(message['billingId']);
-    final tableName = _readText(message['tableName'] ?? message['tableNo'] ?? message['table']);
+
+    // 1. Resolve Table display
+    String rawTable = _readText(
+      message['tableName'] ??
+          message['tableNo'] ??
+          message['table'] ??
+          (message['tableDetails'] is Map ? message['tableDetails']['tableNumber'] : null),
+    ).trim();
+    final rawSection = _readText(
+      message['section'] ??
+          (message['tableDetails'] is Map ? message['tableDetails']['section'] : null),
+    ).trim();
+    final kotNum = _readText(message['kotNumber']).trim();
+
+    String tableDisplay = '';
+    if (rawTable.isNotEmpty) {
+      if (!rawTable.toLowerCase().startsWith('table') && RegExp(r'^\d+$').hasMatch(rawTable)) {
+        rawTable = 'Table $rawTable';
+      }
+      tableDisplay = rawSection.isNotEmpty && !rawTable.contains(rawSection)
+          ? '$rawSection - $rawTable'
+          : rawTable;
+    } else if (rawSection.isNotEmpty) {
+      tableDisplay = rawSection;
+    } else if (kotNum.isNotEmpty) {
+      tableDisplay = 'KOT #$kotNum';
+    } else if (billingId.isNotEmpty) {
+      tableDisplay = 'Order #${billingId.length > 6 ? billingId.substring(billingId.length - 6) : billingId}';
+    } else {
+      tableDisplay = 'Takeaway';
+    }
+
+    // 2. Resolve Product display
+    final rawProdName = _readText(
+      message['productName'] ??
+          (message['itemSnapshot'] is Map ? message['itemSnapshot']['name'] : null),
+    ).trim();
+    final productNamesList = message['productNames'];
+    String productsDisplay = '';
+    if (rawProdName.isNotEmpty) {
+      productsDisplay = rawProdName;
+    } else if (productNamesList is List && productNamesList.isNotEmpty) {
+      productsDisplay = productNamesList
+          .map((e) => e?.toString().trim() ?? '')
+          .where((s) => s.isNotEmpty)
+          .join(', ');
+    }
 
     if (statusAfter == 'ordered' || statusAfter == 'pending' || statusAfter == 'confirmed') {
       if (_isChef) {
@@ -3077,16 +3171,20 @@ class _KotPageState extends State<KotPage> {
 
       try {
         final notifTitle = (statusAfter == 'ordered' || statusAfter == 'pending')
-            ? '🔔 New Order Received!'
-            : '✅ Order Status Updated: ${statusAfter.toUpperCase()}';
-        final notifBody = tableName.isNotEmpty
-            ? 'Table: $tableName • Status: ${statusAfter.toUpperCase()}'
-            : 'Order #${billingId.isNotEmpty ? billingId : ''} • Status: ${statusAfter.toUpperCase()}';
+            ? '🔔 New Order: $tableDisplay'
+            : (statusAfter == 'confirmed')
+                ? '✅ Order Confirmed: $tableDisplay'
+                : '✅ Order Status Updated: ${statusAfter.toUpperCase()}';
+
+        final notifBody = productsDisplay.isNotEmpty
+            ? '$tableDisplay • $productsDisplay'
+            : '$tableDisplay • Status: ${statusAfter.toUpperCase()}';
 
         NotificationService().showOrderNotification(
           id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
           title: notifTitle,
           body: notifBody,
+          payload: billingId.isNotEmpty ? billingId : null,
         );
       } catch (nErr) {
         debugPrint('Failed to display order notification: $nErr');
@@ -3147,7 +3245,7 @@ class _KotPageState extends State<KotPage> {
       return resolveApiAssetUrl(value);
     }
     if (value.startsWith('//')) return resolveApiAssetUrl('https:$value');
-    if (value.startsWith('blackforest-api.vseyal.com')) {
+    if (value.startsWith('dev1-blacforest.vseyal.com')) {
       return resolveApiAssetUrl('https://$value');
     }
     if (value.startsWith('/')) {
@@ -3912,7 +4010,7 @@ class _KotPageState extends State<KotPage> {
         final foundIds = <String>{};
         final response = await http.get(
           Uri.parse(
-            'https://blackforest-api.vseyal.com/api/products?where[id][in]=$idsParam&depth=1&limit=100',
+            'https://dev1-blacforest.vseyal.com/api/products?where[id][in]=$idsParam&depth=1&limit=100',
           ),
           headers: {
             'Authorization': 'Bearer $token',
@@ -3931,7 +4029,7 @@ class _KotPageState extends State<KotPage> {
         if (docs.isEmpty) {
           final fallbackResponse = await http.get(
             Uri.parse(
-              'https://blackforest-api.vseyal.com/api/products?where[_id][in]=$idsParam&depth=1&limit=100',
+              'https://dev1-blacforest.vseyal.com/api/products?where[_id][in]=$idsParam&depth=1&limit=100',
             ),
             headers: {
               'Authorization': 'Bearer $token',
@@ -3949,7 +4047,7 @@ class _KotPageState extends State<KotPage> {
         if (docs.isEmpty) {
           final productIdFallbackResponse = await http.get(
             Uri.parse(
-              'https://blackforest-api.vseyal.com/api/products?where[productId][in]=$idsParam&depth=1&limit=100',
+              'https://dev1-blacforest.vseyal.com/api/products?where[productId][in]=$idsParam&depth=1&limit=100',
             ),
             headers: {
               'Authorization': 'Bearer $token',
@@ -4005,7 +4103,7 @@ class _KotPageState extends State<KotPage> {
 
           final idEndpointResponse = await http.get(
             Uri.parse(
-              'https://blackforest-api.vseyal.com/api/products/${Uri.encodeComponent(id)}?depth=1',
+              'https://dev1-blacforest.vseyal.com/api/products/${Uri.encodeComponent(id)}?depth=1',
             ),
             headers: {
               'Authorization': 'Bearer $token',
@@ -4019,7 +4117,7 @@ class _KotPageState extends State<KotPage> {
           if (productDoc.isEmpty) {
             final productIdLookup = await http.get(
               Uri.parse(
-                'https://blackforest-api.vseyal.com/api/products?where[productId][equals]=${Uri.encodeQueryComponent(id)}&depth=1&limit=1',
+                'https://dev1-blacforest.vseyal.com/api/products?where[productId][equals]=${Uri.encodeQueryComponent(id)}&depth=1&limit=1',
               ),
               headers: {
                 'Authorization': 'Bearer $token',
@@ -4040,7 +4138,7 @@ class _KotPageState extends State<KotPage> {
           if (productDoc.isEmpty) {
             final upcLookup = await http.get(
               Uri.parse(
-                'https://blackforest-api.vseyal.com/api/products?where[upc][equals]=${Uri.encodeQueryComponent(id)}&depth=1&limit=1',
+                'https://dev1-blacforest.vseyal.com/api/products?where[upc][equals]=${Uri.encodeQueryComponent(id)}&depth=1&limit=1',
               ),
               headers: {
                 'Authorization': 'Bearer $token',
@@ -4109,7 +4207,7 @@ class _KotPageState extends State<KotPage> {
             final query = Uri.encodeQueryComponent(queryText);
             final response = await http.get(
               Uri.parse(
-                'https://blackforest-api.vseyal.com/api/products?where[name][$operator]=$query&depth=1&limit=18',
+                'https://dev1-blacforest.vseyal.com/api/products?where[name][$operator]=$query&depth=1&limit=18',
               ),
               headers: {
                 'Authorization': 'Bearer $token',
@@ -4302,7 +4400,7 @@ class _KotPageState extends State<KotPage> {
       final tomorrowStartUtc = tomorrowStartLocal.toUtc().toIso8601String();
 
       String urlString =
-          'https://blackforest-api.vseyal.com/api/billings?where[status][in][0]=pending&where[status][in][1]=ordered&where[status][in][2]=confirmed&where[status][in][3]=prepared&where[status][in][4]=delivered&where[createdAt][greater_than_equal]=$todayStartUtc&where[createdAt][less_than]=$tomorrowStartUtc&limit=100&sort=-updatedAt&depth=1';
+          'https://dev1-blacforest.vseyal.com/api/billings?where[status][in][0]=pending&where[status][in][1]=ordered&where[status][in][2]=confirmed&where[status][in][3]=prepared&where[status][in][4]=delivered&where[createdAt][greater_than_equal]=$todayStartUtc&where[createdAt][less_than]=$tomorrowStartUtc&limit=100&sort=-updatedAt&depth=1';
       if (branchId.isNotEmpty) {
         urlString += '&where[branch][equals]=$branchId';
       }
@@ -4318,7 +4416,7 @@ class _KotPageState extends State<KotPage> {
       final tablesFuture = (branchId.isNotEmpty && token.isNotEmpty)
           ? http.get(
               Uri.parse(
-                'https://blackforest-api.vseyal.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
+                'https://dev1-blacforest.vseyal.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
               ),
               headers: {'Authorization': 'Bearer $token'},
             ).timeout(const Duration(seconds: 4)).catchError((_) => http.Response('', 500))
@@ -4850,7 +4948,7 @@ class _KotPageState extends State<KotPage> {
 
           return http.patch(
             Uri.parse(
-              'https://blackforest-api.vseyal.com/api/billings/${activeItem.billId}',
+              'https://dev1-blacforest.vseyal.com/api/billings/${activeItem.billId}',
             ),
             headers: {
               'Authorization': 'Bearer $token',
@@ -4877,7 +4975,7 @@ class _KotPageState extends State<KotPage> {
 
           updateResponse = await http.patch(
             Uri.parse(
-              'https://blackforest-api.vseyal.com/api/billings/${activeItem.billId}/items/status',
+              'https://dev1-blacforest.vseyal.com/api/billings/${activeItem.billId}/items/status',
             ),
             headers: {
               'Authorization': 'Bearer $token',
