@@ -310,9 +310,7 @@ class GlobalKotRealtimeService {
 
     // Handle instant Waiter Call Alert
     if (eventType == 'waiter_call_received') {
-      try {
-        _audioPlayer.play(AssetSource('sounds/alert.wav'));
-      } catch (_) {}
+      unawaited(_playWaiterCallSound());
       unawaited(KotAutoPrintService.syncWaiterCallAlertsOnly());
       _updateController.add(null);
       return;
@@ -336,9 +334,7 @@ class GlobalKotRealtimeService {
         }
       }
 
-      try {
-        _audioPlayer.play(AssetSource('sounds/order.wav'));
-      } catch (_) {}
+      unawaited(_playOrderSound());
       
       try {
         final notifTitle = (statusAfter == 'ordered' || statusAfter == 'pending')
@@ -405,6 +401,44 @@ class GlobalKotRealtimeService {
       final currentUnread = CommonScaffold.unreadChatNotifier.value;
       CommonScaffold.setUnreadChatCount(currentUnread + 1);
       ChatPage.setUnreadChatCount(currentUnread + 1);
+    }
+  }
+
+  Future<void> _playOrderSound() async {
+    try {
+      await _audioPlayer.stop();
+      await _audioPlayer.setAudioContext(
+        AudioContext(
+          android: const AudioContextAndroid(
+            isSpeakerphoneOn: true,
+            stayAwake: true,
+            contentType: AndroidContentType.sonification,
+            usageType: AndroidUsageType.notification,
+            audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+          ),
+          iOS: AudioContextIOS(
+            category: AVAudioSessionCategory.playback,
+            options: const {
+              AVAudioSessionOptions.duckOthers,
+              AVAudioSessionOptions.defaultToSpeaker,
+            },
+          ),
+        ),
+      );
+      await _audioPlayer.setVolume(1.0);
+      await _audioPlayer.play(AssetSource('sounds/order.wav'));
+    } catch (e) {
+      debugPrint('Error playing order alert sound: $e');
+    }
+  }
+
+  Future<void> _playWaiterCallSound() async {
+    try {
+      await _audioPlayer.stop();
+      await _audioPlayer.setVolume(1.0);
+      await _audioPlayer.play(AssetSource('sounds/table.mp3'));
+    } catch (e) {
+      debugPrint('Error playing waiter call sound: $e');
     }
   }
 }

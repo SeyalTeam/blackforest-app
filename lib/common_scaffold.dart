@@ -2933,8 +2933,10 @@ class _KotPageState extends State<KotPage> {
     final seq = _readInt(message['seq']);
     if (billId.isNotEmpty && seq != null) {
       final prevSeq = _latestSeqByBillId[billId];
-      if (prevSeq != null && seq <= prevSeq) return false;
-      _latestSeqByBillId[billId] = seq;
+      if (prevSeq != null && seq < prevSeq) return false;
+      if (prevSeq == null || seq > prevSeq) {
+        _latestSeqByBillId[billId] = seq;
+      }
     }
 
     final itemId = _readText(message['itemId']);
@@ -3071,9 +3073,7 @@ class _KotPageState extends State<KotPage> {
           return;
         }
       }
-      try {
-        _audioPlayer.play(AssetSource('sounds/alert.wav'));
-      } catch (_) {}
+      unawaited(_playKotAlertSound());
 
       try {
         final notifTitle = (statusAfter == 'ordered' || statusAfter == 'pending')
@@ -3099,6 +3099,34 @@ class _KotPageState extends State<KotPage> {
     } catch (_) {}
 
     _scheduleWsDrivenRefresh();
+  }
+
+  Future<void> _playKotAlertSound() async {
+    try {
+      await _audioPlayer.stop();
+      await _audioPlayer.setAudioContext(
+        AudioContext(
+          android: const AudioContextAndroid(
+            isSpeakerphoneOn: true,
+            stayAwake: true,
+            contentType: AndroidContentType.sonification,
+            usageType: AndroidUsageType.notification,
+            audioFocus: AndroidAudioFocus.gainTransientMayDuck,
+          ),
+          iOS: AudioContextIOS(
+            category: AVAudioSessionCategory.playback,
+            options: const {
+              AVAudioSessionOptions.duckOthers,
+              AVAudioSessionOptions.defaultToSpeaker,
+            },
+          ),
+        ),
+      );
+      await _audioPlayer.setVolume(1.0);
+      await _audioPlayer.play(AssetSource('sounds/order.wav'));
+    } catch (e) {
+      debugPrint('Failed to play order alert sound in KotPage: $e');
+    }
   }
 
   Map<String, dynamic> _asMap(dynamic value) {

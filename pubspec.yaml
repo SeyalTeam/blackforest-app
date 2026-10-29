@@ -56,3 +56,4 @@ flutter:
     - assets/sounds/table.mp3
     - assets/sounds/pay.mp3
     - assets/sounds/order.wav
+    - assets/sounds/alert.wav
