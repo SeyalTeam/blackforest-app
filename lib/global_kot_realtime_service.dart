@@ -386,21 +386,25 @@ class GlobalKotRealtimeService {
       unawaited(_playOrderSound());
       
       try {
-        final notifTitle = (statusAfter == 'ordered' || statusAfter == 'pending')
-            ? '🔔 New Order: $tableDisplay'
-            : (statusAfter == 'confirmed')
-                ? '✅ Order Confirmed: $tableDisplay'
-                : '✅ Order Status Updated: ${statusAfter.toUpperCase()}';
+        final statusLabel = (statusAfter == 'confirmed')
+            ? 'Confirmed'
+            : (statusAfter == 'ordered' || statusAfter == 'pending')
+                ? 'Ordered'
+                : statusAfter.toUpperCase();
 
-        final notifBody = productsDisplay.isNotEmpty
-            ? '$tableDisplay • $productsDisplay'
-            : '$tableDisplay • Status: ${statusAfter.toUpperCase()}';
-            
+        // Target single-line format: "Table 3 - Coffee (Confirmed)" with light grey status
+        final itemOrProduct = productsDisplay.isNotEmpty ? productsDisplay : 'Order';
+        final plainTitle = '$tableDisplay - $itemOrProduct ($statusLabel)';
+        final htmlTitle =
+            '$tableDisplay - $itemOrProduct <font color="#9E9E9E">($statusLabel)</font>';
+
         NotificationService().showOrderNotification(
           id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
-          title: notifTitle,
-          body: notifBody,
+          title: plainTitle,
+          htmlTitle: htmlTitle,
+          body: null,
           payload: billingId.isNotEmpty ? billingId : null,
+          timeoutMs: 3500,
         );
       } catch (nErr) {
         debugPrint('Failed to display order notification: $nErr');

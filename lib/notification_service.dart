@@ -162,10 +162,12 @@ class NotificationService {
   Future<void> showOrderNotification({
     required int id,
     required String title,
-    required String body,
+    String? body,
+    String? htmlTitle,
     String? payload,
+    int timeoutMs = 3500,
   }) async {
-    const AndroidNotificationDetails androidNotificationDetails =
+    final AndroidNotificationDetails androidNotificationDetails =
         AndroidNotificationDetails(
           'order_realtime_alerts',
           'Order Alerts',
@@ -175,25 +177,49 @@ class NotificationService {
           ticker: 'New Order Alert',
           playSound: true,
           enableVibration: true,
-          fullScreenIntent: true,
+          fullScreenIntent: false,
           category: AndroidNotificationCategory.status,
           visibility: NotificationVisibility.public,
-          sound: RawResourceAndroidNotificationSound('order'),
+          sound: const RawResourceAndroidNotificationSound('order'),
+          timeoutAfter: timeoutMs,
+          autoCancel: true,
+          styleInformation: BigTextStyleInformation(
+            htmlTitle ?? title,
+            htmlFormatBigText: htmlTitle != null,
+            contentTitle: htmlTitle ?? title,
+            htmlFormatContentTitle: htmlTitle != null,
+            summaryText: (body != null && body.trim().isNotEmpty) ? body : null,
+          ),
         );
 
-    const NotificationDetails notificationDetails = NotificationDetails(
+    final NotificationDetails notificationDetails = NotificationDetails(
       android: androidNotificationDetails,
-      iOS: DarwinNotificationDetails(presentSound: true, sound: 'order.wav'),
-      macOS: DarwinNotificationDetails(presentSound: true),
+      iOS: const DarwinNotificationDetails(presentSound: true, sound: 'order.wav'),
+      macOS: const DarwinNotificationDetails(presentSound: true),
     );
+
+    final effectiveBody = (body != null && body.trim().isNotEmpty) ? body.trim() : null;
 
     await flutterLocalNotificationsPlugin.show(
       id: id,
       title: title,
-      body: body,
+      body: effectiveBody,
       notificationDetails: notificationDetails,
       payload: payload,
     );
+
+    // Guaranteed auto-remove fallback after timeout so it never blocks the screen
+    Future.delayed(Duration(milliseconds: timeoutMs), () {
+      try {
+        flutterLocalNotificationsPlugin.cancel(id: id);
+      } catch (_) {}
+    });
+  }
+
+  Future<void> cancelOrderNotifications() async {
+    try {
+      await flutterLocalNotificationsPlugin.cancelAll();
+    } catch (_) {}
   }
 
   Future<void> showBackgroundNotification(

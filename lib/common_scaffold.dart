@@ -209,9 +209,13 @@ class _CommonScaffoldState extends State<CommonScaffold> {
         if (widget.pageType != PageType.kot) {
           CommonScaffold.incrementKotBadge();
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
-          final snackText = productsDisplay.isNotEmpty
-              ? '$tableDisplay • $productsDisplay (${statusAfter.toUpperCase()})'
-              : '$tableDisplay (${statusAfter.toUpperCase()})';
+          final statusLabel = (statusAfter == 'confirmed')
+              ? 'Confirmed'
+              : (statusAfter == 'ordered' || statusAfter == 'pending')
+                  ? 'Ordered'
+                  : statusAfter.toUpperCase();
+          final itemOrProduct = productsDisplay.isNotEmpty ? productsDisplay : 'Order';
+          final snackText = '$tableDisplay - $itemOrProduct ($statusLabel)';
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Row(
@@ -2508,11 +2512,13 @@ class _KotPageState extends State<KotPage> {
   Timer? _wsRefreshTimer;
   io.WebSocket? _wsSocket;
   StreamSubscription<dynamic>? _wsSocketSubscription;
-  StreamSubscription<void>? _globalKotUpdateSub;
+  StreamSubscription<dynamic>? _globalKotUpdateSub;
   bool _wsConnecting = false;
   bool _wsSubscribed = false;
+  bool get isWsSubscribed => _wsSubscribed;
   bool _isRealtimeDisposed = false;
   bool _isFetchInFlight = false;
+  bool _hasPendingRefreshRequest = false;
   int _wsConnectionGeneration = 0;
   int _wsReconnectAttempt = 0;
   String _wsToken = '';
@@ -2669,10 +2675,13 @@ class _KotPageState extends State<KotPage> {
     super.initState();
     CommonScaffold.setUnreadKotCount(0);
     unawaited(GlobalKotRealtimeService.instance.connect());
-    _globalKotUpdateSub = GlobalKotRealtimeService.instance.onUpdate.listen((_) {
-      if (mounted && !_isRealtimeDisposed) {
-        _scheduleWsDrivenRefresh(immediate: true);
+    _globalKotUpdateSub = GlobalKotRealtimeService.instance.onOrderEvent.listen((event) {
+      if (!mounted || _isRealtimeDisposed) return;
+      final billId = _readText(event['billingId']);
+      if (billId.isNotEmpty) {
+        unawaited(_fetchSingleBillAndMerge(billId, _authToken));
       }
+      _scheduleWsDrivenRefresh(immediate: true);
     });
     unawaited(_initializeKotDataFlow());
     _clockTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -3034,6 +3043,10 @@ class _KotPageState extends State<KotPage> {
 
   void _scheduleWsDrivenRefresh({bool immediate = false}) {
     if (_isRealtimeDisposed || !mounted) return;
+    if (_isFetchInFlight) {
+      _hasPendingRefreshRequest = true;
+      return;
+    }
     _wsRefreshTimer?.cancel();
     final delay = immediate ? Duration.zero : _wsRefreshDebounceInterval;
     _wsRefreshTimer = Timer(delay, () {
@@ -3170,21 +3183,23 @@ class _KotPageState extends State<KotPage> {
       unawaited(_playKotAlertSound());
 
       try {
-        final notifTitle = (statusAfter == 'ordered' || statusAfter == 'pending')
-            ? '🔔 New Order: $tableDisplay'
-            : (statusAfter == 'confirmed')
-                ? '✅ Order Confirmed: $tableDisplay'
-                : '✅ Order Status Updated: ${statusAfter.toUpperCase()}';
-
-        final notifBody = productsDisplay.isNotEmpty
-            ? '$tableDisplay • $productsDisplay'
-            : '$tableDisplay • Status: ${statusAfter.toUpperCase()}';
+        final statusLabel = (statusAfter == 'confirmed')
+            ? 'Confirmed'
+            : (statusAfter == 'ordered' || statusAfter == 'pending')
+                ? 'Ordered'
+                : statusAfter.toUpperCase();
+        final itemOrProduct = productsDisplay.isNotEmpty ? productsDisplay : 'Order';
+        final plainTitle = '$tableDisplay - $itemOrProduct ($statusLabel)';
+        final htmlTitle =
+            '$tableDisplay - $itemOrProduct <font color="#9E9E9E">($statusLabel)</font>';
 
         NotificationService().showOrderNotification(
           id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
-          title: notifTitle,
-          body: notifBody,
+          title: plainTitle,
+          htmlTitle: htmlTitle,
+          body: null,
           payload: billingId.isNotEmpty ? billingId : null,
+          timeoutMs: 2500,
         );
       } catch (nErr) {
         debugPrint('Failed to display order notification: $nErr');
@@ -3196,6 +3211,9 @@ class _KotPageState extends State<KotPage> {
       KotAutoPrintService.syncPendingWebsiteKots();
     } catch (_) {}
 
+    if (billingId.isNotEmpty) {
+      unawaited(_fetchSingleBillAndMerge(billingId, _authToken));
+    }
     _scheduleWsDrivenRefresh();
   }
 
@@ -4289,11 +4307,194 @@ class _KotPageState extends State<KotPage> {
     }
   }
 
+  Future<void> _fetchSingleBillAndMerge(String billId, [String? token]) async {
+    final cleanBillId = billId.trim();
+    var cleanToken = (token ?? _authToken).trim();
+    if (cleanToken.isEmpty) {
+      final prefs = await SharedPreferences.getInstance();
+      cleanToken = _readText(prefs.getString('token') ?? prefs.getString('auth_token'));
+      if (cleanToken.isNotEmpty) {
+        _authToken = cleanToken;
+      }
+    }
+    if (cleanBillId.isEmpty || cleanToken.isEmpty || !mounted || _isRealtimeDisposed) return;
+
+    try {
+      final url = 'https://blackforest-api.vseyal.com/api/billings/$cleanBillId?depth=1';
+      final res = await http.get(
+        Uri.parse(url),
+        headers: {
+          'Authorization': 'Bearer $cleanToken',
+          'Content-Type': 'application/json',
+        },
+      ).timeout(const Duration(seconds: 4));
+
+      if (res.statusCode != 200 || !mounted || _isRealtimeDisposed) return;
+      final bill = _asMap(jsonDecode(res.body));
+      if (bill.isEmpty) return;
+
+      final prefs = await SharedPreferences.getInstance();
+      final branchId = _readText(prefs.getString('branchId'));
+      if (branchId.isNotEmpty) {
+        final billBranch = _resolveId(bill['branch']);
+        if (billBranch.isNotEmpty && billBranch != branchId) return;
+      }
+
+      if (_role.isEmpty) {
+        _role = _readText(prefs.getString('role')).toLowerCase();
+        _isChef = _role == 'chef' || _role == 'kitchen';
+      }
+
+      final userKeys = WaiterCallRangeFilterService.resolveCandidateUserKeysFromPrefs(prefs);
+      final selectedTableRows = branchId.isEmpty
+          ? const <WaiterCallRangeSelection>[]
+          : WaiterCallRangeFilterService.readSelectionsForAnyUser(
+              prefs: prefs,
+              userKeys: userKeys,
+              branchId: branchId,
+            );
+
+      final isShared = _isSharedTableOrder(bill);
+      if (!isShared && selectedTableRows.isNotEmpty) {
+        if (!_matchesSelectedTableRange(bill, selectedTableRows)) return;
+      }
+
+      final sourceStatus = _sourceStatusForRole(_role);
+      final rawItems = bill['items'] is List ? List<dynamic>.from(bill['items']) : const <dynamic>[];
+      if (rawItems.isEmpty) return;
+
+      final tableLabel = _resolveTableLabel(bill);
+      final sectionLabel = _resolveSectionLabel(bill);
+      final kotLabel = _formatKotLabel(_readText(bill['kotNumber']));
+      final tableStartedAt = _resolveKotTableStartedAt(bill);
+      final customerName = _resolveCustomerName(bill);
+      final createdBy = _asMap(bill['createdBy']);
+      final waiterName = _readText(
+        createdBy['name'] ?? createdBy['username'] ?? bill['waiterName'],
+      );
+
+      var hasChanges = false;
+      final cachedItemsForBill = <Map<String, dynamic>>[];
+
+      for (final rawItem in rawItems) {
+        final itemMap = _asMap(rawItem);
+        if (itemMap.isEmpty) continue;
+        cachedItemsForBill.add(Map<String, dynamic>.from(itemMap));
+
+        final itemId = _resolveId(itemMap['id']);
+        final status = _readText(itemMap['status']).toLowerCase();
+        final productName = _readText(itemMap['name']);
+        if (productName.isEmpty) continue;
+
+        final productMap = _asMap(itemMap['product']);
+        if (_isChef && !_doesItemMatchChefCategories(itemMap, productMap)) {
+          continue;
+        }
+
+        final resolvedRelationProductId = _resolveId(itemMap['product']);
+        final productCode = _readText(productMap['productId']);
+        final productUpc = _readText(productMap['upc']);
+        final productId = resolvedRelationProductId.isNotEmpty
+            ? resolvedRelationProductId
+            : (productCode.isNotEmpty ? productCode : productUpc);
+
+        final deliveryToken = _deliveryTokenForParts(
+          billId: cleanBillId,
+          itemId: itemId,
+          productId: productId,
+          productName: productName,
+        );
+
+        if (status != sourceStatus) {
+          final prevLength = _items.length;
+          _items.removeWhere((it) =>
+              it.billId == cleanBillId &&
+              ((itemId.isNotEmpty && it.itemId == itemId) || it.productName == productName));
+          if (_items.length != prevLength) {
+            hasChanges = true;
+          }
+          continue;
+        }
+
+        if (_inFlightDeliveryTokens.contains(deliveryToken)) continue;
+        final deliveredAt = _locallyDeliveredTokens[deliveryToken];
+        if (deliveredAt != null &&
+            DateTime.now().difference(deliveredAt).inSeconds < 60) {
+          continue;
+        }
+
+        final quantity = _readDouble(itemMap['quantity'], fallback: 0);
+        final unit = _readText(itemMap['unit']);
+        final startedAt = _resolveKotItemStartedAtWithBillContext(itemMap, bill);
+        final finalizedAt = _resolveKotItemFinalizedAt(itemMap, startedAt);
+        final preparationMinutes = _resolveItemPreparationMinutes(itemMap, productMap);
+        final itemUpdatedAt = _parseDate(itemMap['itemUpdatedAt']) ??
+            _parseDate(bill['updatedAt']) ??
+            _parseDate(bill['createdAt']);
+        final updatedToken = itemUpdatedAt?.millisecondsSinceEpoch.toString() ?? '0';
+        final uniqueKey = '$cleanBillId|$itemId|$productId|$productName|$updatedToken';
+
+        final existingIdx = _items.indexWhere((it) =>
+            it.billId == cleanBillId &&
+            ((itemId.isNotEmpty && it.itemId == itemId) || it.productName == productName));
+
+        final newItem = _KotConfirmedItem(
+          key: uniqueKey,
+          billId: cleanBillId,
+          itemId: itemId,
+          productId: productId,
+          status: status,
+          productName: productName,
+          quantity: quantity,
+          unit: unit,
+          tableLabel: tableLabel,
+          sectionLabel: sectionLabel,
+          kotLabel: kotLabel,
+          waiterName: waiterName,
+          customerName: customerName,
+          imageUrl: _productImageById[productId] ?? _productImageByName[productName.toLowerCase()],
+          updatedAt: itemUpdatedAt,
+          startedAt: startedAt,
+          finalizedAt: finalizedAt,
+          preparationMinutes: preparationMinutes,
+          tableStartedAt: tableStartedAt,
+        );
+
+        if (existingIdx >= 0) {
+          _items[existingIdx] = newItem;
+        } else {
+          _items.insert(0, newItem);
+        }
+        hasChanges = true;
+      }
+
+      if (cachedItemsForBill.isNotEmpty) {
+        _billItemsCacheByBillId[cleanBillId] = cachedItemsForBill;
+      }
+
+      if (hasChanges && mounted && !_isRealtimeDisposed) {
+        _items.sort((a, b) {
+          final aTime = a.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+          final bTime = b.updatedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+          final timeCompare = bTime.compareTo(aTime);
+          if (timeCompare != 0) return timeCompare;
+          final tableCompare = a.tableLabel.compareTo(b.tableLabel);
+          if (tableCompare != 0) return tableCompare;
+          return a.productName.compareTo(b.productName);
+        });
+        setState(() {});
+      }
+    } catch (_) {}
+  }
+
   Future<void> _refreshConfirmedItems({
     bool showLoader = false,
     bool hydrateImages = true,
   }) async {
-    if (_isFetchInFlight) return;
+    if (_isFetchInFlight) {
+      _hasPendingRefreshRequest = true;
+      return;
+    }
     _isFetchInFlight = true;
     if (showLoader && mounted) {
       setState(() {
@@ -4321,46 +4522,48 @@ class _KotPageState extends State<KotPage> {
 
       if (isChef) {
         final cached = prefs.getStringList('chef_assigned_category_ids');
-        if (cached != null) {
+        if (cached != null && cached.isNotEmpty) {
           _assignedChefCategoryIds.clear();
           _assignedChefCategoryIds.addAll(cached);
         }
-        try {
-          final profile = await ApiService.instance.fetchUserProfile();
-          if (profile.isNotEmpty) {
-            final user = profile['user'] ?? profile;
-            final userCats = user['categories'];
-            final freshCatIds = <String>[];
-            if (userCats is List) {
-              for (final c in userCats) {
-                final cId = (c is Map ? (c['id'] ?? c['_id'] ?? c[r'$oid']) : c)
+        if (_assignedChefCategoryIds.isEmpty) {
+          try {
+            final profile = await ApiService.instance.fetchUserProfile();
+            if (profile.isNotEmpty) {
+              final user = profile['user'] ?? profile;
+              final userCats = user['categories'];
+              final freshCatIds = <String>[];
+              if (userCats is List) {
+                for (final c in userCats) {
+                  final cId = (c is Map ? (c['id'] ?? c['_id'] ?? c[r'$oid']) : c)
+                          ?.toString()
+                          .trim() ??
+                      '';
+                  if (cId.isNotEmpty) freshCatIds.add(cId);
+                }
+              } else if (userCats is Map) {
+                final cId = (userCats['id'] ??
+                            userCats['_id'] ??
+                            userCats[r'$oid'])
                         ?.toString()
                         .trim() ??
                     '';
                 if (cId.isNotEmpty) freshCatIds.add(cId);
               }
-            } else if (userCats is Map) {
-              final cId = (userCats['id'] ??
-                          userCats['_id'] ??
-                          userCats[r'$oid'])
-                      ?.toString()
-                      .trim() ??
-                  '';
-              if (cId.isNotEmpty) freshCatIds.add(cId);
+              _assignedChefCategoryIds.clear();
+              _assignedChefCategoryIds.addAll(freshCatIds);
+              unawaited(
+                prefs.setStringList('chef_assigned_category_ids', freshCatIds),
+              );
+              unawaited(
+                prefs.setString(
+                  'chef_assigned_category_ids_csv',
+                  freshCatIds.join(','),
+                ),
+              );
             }
-            _assignedChefCategoryIds.clear();
-            _assignedChefCategoryIds.addAll(freshCatIds);
-            unawaited(
-              prefs.setStringList('chef_assigned_category_ids', freshCatIds),
-            );
-            unawaited(
-              prefs.setString(
-                'chef_assigned_category_ids_csv',
-                freshCatIds.join(','),
-              ),
-            );
-          }
-        } catch (_) {}
+          } catch (_) {}
+        }
 
         if (_assignedChefCategoryIds.isEmpty && (role == 'chef')) {
           if (!mounted) return;
@@ -4413,7 +4616,7 @@ class _KotPageState extends State<KotPage> {
         },
       );
 
-      final tablesFuture = (branchId.isNotEmpty && token.isNotEmpty)
+      final tablesFuture = (branchId.isNotEmpty && token.isNotEmpty && cachedTables.isEmpty)
           ? http.get(
               Uri.parse(
                 'https://blackforest-api.vseyal.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
@@ -4750,6 +4953,10 @@ class _KotPageState extends State<KotPage> {
       });
     } finally {
       _isFetchInFlight = false;
+      if (_hasPendingRefreshRequest && mounted && !_isRealtimeDisposed) {
+        _hasPendingRefreshRequest = false;
+        _scheduleWsDrivenRefresh(immediate: true);
+      }
     }
   }
 
@@ -4870,6 +5077,7 @@ class _KotPageState extends State<KotPage> {
 
   Future<void> _markAsDelivered(_KotConfirmedItem item) async {
     if (_updatingKeys.contains(item.key)) return;
+    unawaited(NotificationService().cancelOrderNotifications());
     final deliveryToken = _deliveryTokenForItem(item);
     _locallyDeliveredTokens[deliveryToken] = DateTime.now();
     setState(() {
