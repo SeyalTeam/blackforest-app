@@ -886,11 +886,11 @@ class _EmployeePageState extends State<EmployeePage> {
       if (image == null) return null;
 
       img_lib.Image resized = image;
-      if (image.width > 1280 || image.height > 1280) {
+      if (image.width > 720 || image.height > 720) {
         if (image.width > image.height) {
-          resized = img_lib.copyResize(image, width: 1280);
+          resized = img_lib.copyResize(image, width: 720);
         } else {
-          resized = img_lib.copyResize(image, height: 1280);
+          resized = img_lib.copyResize(image, height: 720);
         }
       }
       return img_lib.encodeJpg(resized, quality: 70);
@@ -903,7 +903,8 @@ class _EmployeePageState extends State<EmployeePage> {
     try {
       if (!await originalFile.exists()) return originalFile;
       final length = await originalFile.length();
-      if (length < 1500 * 1024) return originalFile;
+      // If already compact (< 100 KB), upload directly
+      if (length < 100 * 1024) return originalFile;
 
       final bytes = await originalFile.readAsBytes();
       final compressedBytes = await compute(_compressImageIsolate, bytes);
@@ -1161,22 +1162,31 @@ class _EmployeePageState extends State<EmployeePage> {
           body: jsonEncode({'activities': updatedActivities}),
         );
         if (response.statusCode == 200) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Successfully punched in! All sections are now unlocked.',
+          if (mounted) {
+            setState(() {
+              _hasActiveSession = true;
+              _isProcessingPunch = false;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Successfully punched in! All sections are now unlocked.',
+                ),
               ),
-            ),
-          );
-          await AttendanceManager.setPunchedInState(
+            );
+          }
+          unawaited(AttendanceManager.setPunchedInState(
             true,
             punchInTime: now.toIso8601String(),
-          );
-          await _fetchEmployeeProfile();
-          await _fetchAttendance();
-          await _fetchDailyTasks();
+          ));
           _lastPunchOutType = null;
-          await _storage.delete(key: 'lastPunchOutType');
+          unawaited(_storage.delete(key: 'lastPunchOutType'));
+          // Fast parallel background refresh without blocking the user
+          unawaited(Future.wait([
+            _fetchEmployeeProfile(),
+            _fetchAttendance(),
+            _fetchDailyTasks(),
+          ]));
         }
       } else {
         final localMidnight = DateTime(now.year, now.month, now.day);
@@ -1200,22 +1210,31 @@ class _EmployeePageState extends State<EmployeePage> {
           }),
         );
         if (response.statusCode == 200 || response.statusCode == 201) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Successfully punched in! All sections are now unlocked.',
+          if (mounted) {
+            setState(() {
+              _hasActiveSession = true;
+              _isProcessingPunch = false;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Successfully punched in! All sections are now unlocked.',
+                ),
               ),
-            ),
-          );
-          await AttendanceManager.setPunchedInState(
+            );
+          }
+          unawaited(AttendanceManager.setPunchedInState(
             true,
             punchInTime: now.toIso8601String(),
-          );
-          await _fetchEmployeeProfile();
-          await _fetchAttendance();
-          await _fetchDailyTasks();
+          ));
           _lastPunchOutType = null;
-          await _storage.delete(key: 'lastPunchOutType');
+          unawaited(_storage.delete(key: 'lastPunchOutType'));
+          // Fast parallel background refresh without blocking the user
+          unawaited(Future.wait([
+            _fetchEmployeeProfile(),
+            _fetchAttendance(),
+            _fetchDailyTasks(),
+          ]));
         }
       }
     } catch (e) {
@@ -1782,15 +1801,24 @@ class _EmployeePageState extends State<EmployeePage> {
       );
 
       if (response.statusCode == 200) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Successfully punched out!')),
-        );
-        await AttendanceManager.setPunchedInState(false);
-        await _fetchEmployeeProfile();
-        await _fetchAttendance();
+        if (mounted) {
+          setState(() {
+            _hasActiveSession = false;
+            _isProcessingPunch = false;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Successfully punched out!')),
+          );
+        }
+        unawaited(AttendanceManager.setPunchedInState(false));
         _autoPunchInFired = false;
         _lastPunchOutType = 'manual';
-        await _storage.write(key: 'lastPunchOutType', value: 'manual');
+        unawaited(_storage.write(key: 'lastPunchOutType', value: 'manual'));
+        // Fast parallel background refresh without blocking the user
+        unawaited(Future.wait([
+          _fetchEmployeeProfile(),
+          _fetchAttendance(),
+        ]));
       }
     } catch (e) {
       debugPrint('Punch Out Error: $e');
