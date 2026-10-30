@@ -249,41 +249,6 @@ class AttendanceManager {
     }
   }
 
-  /// Sends periodic GPS telemetry breadcrumbs without altering attendance branch assignment
-  static Future<void> sendMovementTelemetry({required Position position}) async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      const storage = FlutterSecureStorage();
-      final token = (await storage.read(key: 'token')) ?? prefs.getString('token');
-      final userId = (await storage.read(key: 'userId')) ?? prefs.getString('userId');
-      final lockedBranchId = prefs.getString('lockedBranchId') ??
-          (await storage.read(key: 'lockedBranchId')) ??
-          prefs.getString('branchId');
-
-      if (token == null || token.isEmpty || userId == null || userId.isEmpty) return;
-
-      final payload = {
-        'user': userId,
-        if (lockedBranchId != null && lockedBranchId.isNotEmpty) 'branch': lockedBranchId,
-        'latitude': position.latitude,
-        'longitude': position.longitude,
-        'accuracy': position.accuracy,
-        'timestamp': DateTime.now().toUtc().toIso8601String(),
-      };
-
-      await http.post(
-        Uri.parse('${ApiConfig.baseUrl}/staff-movement-history'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode(payload),
-      ).timeout(const Duration(seconds: 4));
-    } catch (_) {
-      // Telemetry failures are non-critical and fail silently
-    }
-  }
-
   /// Immediately triggers a check and auto-punch-in / auto-punch-out evaluation.
   Future<void> checkNow() async {
     await checkAndProcessAttendance(isBackground: false);
@@ -342,12 +307,6 @@ class AttendanceManager {
 
       final isInside = geo.isInside;
       final now = DateTime.now();
-
-      // Transmit movement telemetry ONLY when the staff member is OUTSIDE the branch boundary.
-      // While safely inside the branch, indoor movement is paused to prevent GPS drift spam and conserve battery.
-      if (!isInside) {
-        unawaited(sendMovementTelemetry(position: currentPos));
-      }
 
       // If user is safely inside branch and already has an active session, skip server query!
       if (isInside) {
