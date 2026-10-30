@@ -239,11 +239,6 @@ class AttendanceManager {
               position: position,
             ),
           );
-          unawaited(
-            sendMovementTelemetry(
-              position: position,
-            ),
-          );
         },
         onError: (e) {
           debugPrint('AttendanceManager positionStream error: $e');
@@ -347,6 +342,12 @@ class AttendanceManager {
 
       final isInside = geo.isInside;
       final now = DateTime.now();
+
+      // Transmit movement telemetry ONLY when the staff member is OUTSIDE the branch boundary.
+      // While safely inside the branch, indoor movement is paused to prevent GPS drift spam and conserve battery.
+      if (!isInside) {
+        unawaited(sendMovementTelemetry(position: currentPos));
+      }
 
       // If user is safely inside branch and already has an active session, skip server query!
       if (isInside) {
