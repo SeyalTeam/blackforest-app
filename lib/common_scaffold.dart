@@ -955,7 +955,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
 
       final response = await http
           .post(
-            Uri.parse('https://dev1-blacforest.vseyal.com/api/call-waiter/ack'),
+            Uri.parse('https://blackforest-api.vseyal.com/api/call-waiter/ack'),
             headers: {
               'Authorization': 'Bearer $token',
               'Content-Type': 'application/json',
@@ -1045,7 +1045,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
     try {
       final response = await http
           .get(
-            Uri.parse('https://dev1-blacforest.vseyal.com/api/users/me'),
+            Uri.parse('https://blackforest-api.vseyal.com/api/users/me'),
             headers: {'Authorization': 'Bearer $token'},
           )
           .timeout(const Duration(seconds: 5));
@@ -1172,7 +1172,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
 
           // 1. Find the log record that has an ACTIVE session
           final searchUrl =
-              'https://dev1-blacforest.vseyal.com/api/attendance?where[user][equals]=$userId&where[activities.status][equals]=active&limit=1';
+              'https://blackforest-api.vseyal.com/api/attendance?where[user][equals]=$userId&where[activities.status][equals]=active&limit=1';
           final searchResp = await http
               .get(
                 Uri.parse(searchUrl),
@@ -1211,7 +1211,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
                 final updateResp = await http
                     .patch(
                       Uri.parse(
-                        'https://dev1-blacforest.vseyal.com/api/attendance/$sessionId',
+                        'https://blackforest-api.vseyal.com/api/attendance/$sessionId',
                       ),
                       headers: {
                         'Authorization': 'Bearer $token',
@@ -1419,7 +1419,7 @@ class _CommonScaffoldState extends State<CommonScaffold> {
       final branchRes = await http
           .get(
             Uri.parse(
-              'https://dev1-blacforest.vseyal.com/api/branches/$branchId?depth=1',
+              'https://blackforest-api.vseyal.com/api/branches/$branchId?depth=1',
             ),
             headers: headers,
           )
@@ -2640,7 +2640,7 @@ class _KotPageState extends State<KotPage> {
     String token,
   ) async {
     final billResponse = await http.get(
-      Uri.parse('https://dev1-blacforest.vseyal.com/api/billings/$billId'),
+      Uri.parse('https://blackforest-api.vseyal.com/api/billings/$billId'),
       headers: {
         'Authorization': 'Bearer $token',
         'Content-Type': 'application/json',
@@ -3245,7 +3245,7 @@ class _KotPageState extends State<KotPage> {
       return resolveApiAssetUrl(value);
     }
     if (value.startsWith('//')) return resolveApiAssetUrl('https:$value');
-    if (value.startsWith('dev1-blacforest.vseyal.com')) {
+    if (value.startsWith('blackforest-api.vseyal.com')) {
       return resolveApiAssetUrl('https://$value');
     }
     if (value.startsWith('/')) {
@@ -4010,7 +4010,7 @@ class _KotPageState extends State<KotPage> {
         final foundIds = <String>{};
         final response = await http.get(
           Uri.parse(
-            'https://dev1-blacforest.vseyal.com/api/products?where[id][in]=$idsParam&depth=1&limit=100',
+            'https://blackforest-api.vseyal.com/api/products?where[id][in]=$idsParam&depth=1&limit=100',
           ),
           headers: {
             'Authorization': 'Bearer $token',
@@ -4029,7 +4029,7 @@ class _KotPageState extends State<KotPage> {
         if (docs.isEmpty) {
           final fallbackResponse = await http.get(
             Uri.parse(
-              'https://dev1-blacforest.vseyal.com/api/products?where[_id][in]=$idsParam&depth=1&limit=100',
+              'https://blackforest-api.vseyal.com/api/products?where[_id][in]=$idsParam&depth=1&limit=100',
             ),
             headers: {
               'Authorization': 'Bearer $token',
@@ -4047,7 +4047,7 @@ class _KotPageState extends State<KotPage> {
         if (docs.isEmpty) {
           final productIdFallbackResponse = await http.get(
             Uri.parse(
-              'https://dev1-blacforest.vseyal.com/api/products?where[productId][in]=$idsParam&depth=1&limit=100',
+              'https://blackforest-api.vseyal.com/api/products?where[productId][in]=$idsParam&depth=1&limit=100',
             ),
             headers: {
               'Authorization': 'Bearer $token',
@@ -4103,7 +4103,7 @@ class _KotPageState extends State<KotPage> {
 
           final idEndpointResponse = await http.get(
             Uri.parse(
-              'https://dev1-blacforest.vseyal.com/api/products/${Uri.encodeComponent(id)}?depth=1',
+              'https://blackforest-api.vseyal.com/api/products/${Uri.encodeComponent(id)}?depth=1',
             ),
             headers: {
               'Authorization': 'Bearer $token',
@@ -4117,7 +4117,7 @@ class _KotPageState extends State<KotPage> {
           if (productDoc.isEmpty) {
             final productIdLookup = await http.get(
               Uri.parse(
-                'https://dev1-blacforest.vseyal.com/api/products?where[productId][equals]=${Uri.encodeQueryComponent(id)}&depth=1&limit=1',
+                'https://blackforest-api.vseyal.com/api/products?where[productId][equals]=${Uri.encodeQueryComponent(id)}&depth=1&limit=1',
               ),
               headers: {
                 'Authorization': 'Bearer $token',
@@ -4138,7 +4138,7 @@ class _KotPageState extends State<KotPage> {
           if (productDoc.isEmpty) {
             final upcLookup = await http.get(
               Uri.parse(
-                'https://dev1-blacforest.vseyal.com/api/products?where[upc][equals]=${Uri.encodeQueryComponent(id)}&depth=1&limit=1',
+                'https://blackforest-api.vseyal.com/api/products?where[upc][equals]=${Uri.encodeQueryComponent(id)}&depth=1&limit=1',
               ),
               headers: {
                 'Authorization': 'Bearer $token',
@@ -4207,7 +4207,7 @@ class _KotPageState extends State<KotPage> {
             final query = Uri.encodeQueryComponent(queryText);
             final response = await http.get(
               Uri.parse(
-                'https://dev1-blacforest.vseyal.com/api/products?where[name][$operator]=$query&depth=1&limit=18',
+                'https://blackforest-api.vseyal.com/api/products?where[name][$operator]=$query&depth=1&limit=18',
               ),
               headers: {
                 'Authorization': 'Bearer $token',
@@ -4400,7 +4400,7 @@ class _KotPageState extends State<KotPage> {
       final tomorrowStartUtc = tomorrowStartLocal.toUtc().toIso8601String();
 
       String urlString =
-          'https://dev1-blacforest.vseyal.com/api/billings?where[status][in][0]=pending&where[status][in][1]=ordered&where[status][in][2]=confirmed&where[status][in][3]=prepared&where[status][in][4]=delivered&where[createdAt][greater_than_equal]=$todayStartUtc&where[createdAt][less_than]=$tomorrowStartUtc&limit=100&sort=-updatedAt&depth=1';
+          'https://blackforest-api.vseyal.com/api/billings?where[status][in][0]=pending&where[status][in][1]=ordered&where[status][in][2]=confirmed&where[status][in][3]=prepared&where[status][in][4]=delivered&where[createdAt][greater_than_equal]=$todayStartUtc&where[createdAt][less_than]=$tomorrowStartUtc&limit=100&sort=-updatedAt&depth=1';
       if (branchId.isNotEmpty) {
         urlString += '&where[branch][equals]=$branchId';
       }
@@ -4416,7 +4416,7 @@ class _KotPageState extends State<KotPage> {
       final tablesFuture = (branchId.isNotEmpty && token.isNotEmpty)
           ? http.get(
               Uri.parse(
-                'https://dev1-blacforest.vseyal.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
+                'https://blackforest-api.vseyal.com/api/tables?where[branch][equals]=$branchId&limit=1&depth=1',
               ),
               headers: {'Authorization': 'Bearer $token'},
             ).timeout(const Duration(seconds: 4)).catchError((_) => http.Response('', 500))
@@ -4948,7 +4948,7 @@ class _KotPageState extends State<KotPage> {
 
           return http.patch(
             Uri.parse(
-              'https://dev1-blacforest.vseyal.com/api/billings/${activeItem.billId}',
+              'https://blackforest-api.vseyal.com/api/billings/${activeItem.billId}',
             ),
             headers: {
               'Authorization': 'Bearer $token',
@@ -4975,7 +4975,7 @@ class _KotPageState extends State<KotPage> {
 
           updateResponse = await http.patch(
             Uri.parse(
-              'https://dev1-blacforest.vseyal.com/api/billings/${activeItem.billId}/items/status',
+              'https://blackforest-api.vseyal.com/api/billings/${activeItem.billId}/items/status',
             ),
             headers: {
               'Authorization': 'Bearer $token',

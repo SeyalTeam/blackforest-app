@@ -319,13 +319,20 @@ class _EmployeePageState extends State<EmployeePage> {
         }
 
         final prefs = await SharedPreferences.getInstance();
+        final lockedBranch = prefs.getString('lockedBranchName') ??
+            (await _storage.read(key: 'lockedBranchName'));
+        final isLocked = (prefs.getBool('isBranchLocked') ?? false) ||
+            (lockedBranch != null && lockedBranch.isNotEmpty);
+
         final currentGps = _gpsBranchName ?? prefs.getString('lastGpsBranchName');
         final currentStoredBranch = _branchName ?? prefs.getString('branchName') ?? (await _storage.read(key: 'userBranchName'));
-        final activeBranchName = (currentGps != null && currentGps.isNotEmpty)
-            ? currentGps
-            : ((currentStoredBranch != null && currentStoredBranch.isNotEmpty)
-                ? currentStoredBranch
-                : bName);
+        final activeBranchName = isLocked
+            ? (lockedBranch ?? currentStoredBranch ?? bName)
+            : ((currentGps != null && currentGps.isNotEmpty)
+                ? currentGps
+                : ((currentStoredBranch != null && currentStoredBranch.isNotEmpty)
+                    ? currentStoredBranch
+                    : bName));
 
         String? kName;
         String? kId;
@@ -426,7 +433,7 @@ class _EmployeePageState extends State<EmployeePage> {
         if (empDocId != null && empDocId.isNotEmpty) {
           await _storage.write(key: 'employeeDocId', value: empDocId);
         }
-        if (activeBranchName != null && activeBranchName.isNotEmpty) {
+        if (!isLocked && activeBranchName != null && activeBranchName.isNotEmpty) {
           await _storage.write(key: 'userBranchName', value: activeBranchName);
           await prefs.setString('userBranchName', activeBranchName);
           await prefs.setString('branchName', activeBranchName);
@@ -538,31 +545,39 @@ class _EmployeePageState extends State<EmployeePage> {
           _workStartTime = _parseWorkTime(firstDoc['workStartTime']);
           _workCompletedTime = _parseWorkTime(firstDoc['workCompletedTime']);
           
-          final loginBranchData = firstDoc['loginBranch'];
-          if (loginBranchData is Map<String, dynamic>) {
-            final docBranchName = loginBranchData['name']?.toString();
-            final docBranchId = loginBranchData['id']?.toString() ?? loginBranchData['_id']?.toString();
+          final prefs = await SharedPreferences.getInstance();
+          final lockedName = prefs.getString('lockedBranchName') ?? (await _storage.read(key: 'lockedBranchName'));
+          final isLocked = (prefs.getBool('isBranchLocked') ?? false) || (lockedName != null && lockedName.isNotEmpty);
 
-            final currentPhysicalBranch = _gpsBranchName;
-            if (currentPhysicalBranch != null && currentPhysicalBranch.isNotEmpty) {
-              _loginBranchName = currentPhysicalBranch;
-              _branchName = currentPhysicalBranch;
-            } else if (docBranchName != null && docBranchName.isNotEmpty) {
-              _loginBranchName = docBranchName;
-              _branchName = docBranchName;
-              if (docBranchId != null) {
-                final prefs = await SharedPreferences.getInstance();
-                await prefs.setString('branchId', docBranchId);
-                await prefs.setString('userBranchName', docBranchName);
-                await _storage.write(key: 'userBranchName', value: docBranchName);
-              }
-            }
+          if (isLocked && lockedName != null && lockedName.isNotEmpty) {
+            _loginBranchName = lockedName;
+            _branchName = lockedName;
           } else {
-            if (_gpsBranchName != null && _gpsBranchName!.isNotEmpty) {
-              _loginBranchName = _gpsBranchName;
-              _branchName = _gpsBranchName;
+            final loginBranchData = firstDoc['loginBranch'];
+            if (loginBranchData is Map<String, dynamic>) {
+              final docBranchName = loginBranchData['name']?.toString();
+              final docBranchId = loginBranchData['id']?.toString() ?? loginBranchData['_id']?.toString();
+
+              final currentPhysicalBranch = _gpsBranchName;
+              if (currentPhysicalBranch != null && currentPhysicalBranch.isNotEmpty) {
+                _loginBranchName = currentPhysicalBranch;
+                _branchName = currentPhysicalBranch;
+              } else if (docBranchName != null && docBranchName.isNotEmpty) {
+                _loginBranchName = docBranchName;
+                _branchName = docBranchName;
+                if (docBranchId != null) {
+                  await prefs.setString('branchId', docBranchId);
+                  await prefs.setString('userBranchName', docBranchName);
+                  await _storage.write(key: 'userBranchName', value: docBranchName);
+                }
+              }
             } else {
-              _loginBranchName = null;
+              if (_gpsBranchName != null && _gpsBranchName!.isNotEmpty) {
+                _loginBranchName = _gpsBranchName;
+                _branchName = _gpsBranchName;
+              } else {
+                _loginBranchName = null;
+              }
             }
           }
         } else {
@@ -1002,7 +1017,18 @@ class _EmployeePageState extends State<EmployeePage> {
     String? geofenceBranchId;
     if (!isWatcher) {
       if (!mounted) return;
-      final geo = await GeofenceUtil.checkLocationAndGeofence();
+      final prefs = await SharedPreferences.getInstance();
+      final lockedBranchId = prefs.getString('lockedBranchId') ??
+          (await _storage.read(key: 'lockedBranchId')) ??
+          prefs.getString('userBranchId');
+      final lockedBranchName = prefs.getString('lockedBranchName') ??
+          (await _storage.read(key: 'lockedBranchName')) ??
+          prefs.getString('userBranchName');
+
+      final geo = await GeofenceUtil.checkLocationAndGeofence(
+        targetBranchId: lockedBranchId,
+        targetBranchName: lockedBranchName,
+      );
       if (!geo.isInside && mounted) {
         // Show the same error message that isInsideAnyBranch would show
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1012,27 +1038,37 @@ class _EmployeePageState extends State<EmployeePage> {
         return; // Block punch in if not inside branch circle
       }
       geofencePosition = geo.position;
-      geofenceBranchId = geo.branchId;
+      geofenceBranchId = lockedBranchId ?? geo.branchId;
       if (geo.branchName != null && geo.branchName!.isNotEmpty) {
-        final prefs = await SharedPreferences.getInstance();
         await prefs.setString('lastGpsBranchName', geo.branchName!);
-        await prefs.setString('branchName', geo.branchName!);
-        await prefs.setString('userBranchName', geo.branchName!);
-        await _storage.write(key: 'userBranchName', value: geo.branchName!);
-        if (geo.branchId != null && geo.branchId!.isNotEmpty) {
-          await prefs.setString('branchId', geo.branchId!);
-          await _storage.write(key: 'userBranchId', value: geo.branchId!);
-        }
-        if (mounted) {
-          setState(() {
-            _gpsBranchName = geo.branchName;
-            _branchName = geo.branchName;
-            _loginBranchName = geo.branchName;
-            if (_kitchenName != null &&
-                !_kitchenName!.toLowerCase().contains(geo.branchName!.toLowerCase())) {
-              _kitchenName = null;
-            }
-          });
+        final isLocked = (prefs.getBool('isBranchLocked') ?? false) ||
+            (lockedBranchId != null && lockedBranchId.isNotEmpty);
+
+        if (!isLocked) {
+          await prefs.setString('branchName', geo.branchName!);
+          await prefs.setString('userBranchName', geo.branchName!);
+          await _storage.write(key: 'userBranchName', value: geo.branchName!);
+          if (geo.branchId != null && geo.branchId!.isNotEmpty) {
+            await prefs.setString('branchId', geo.branchId!);
+            await _storage.write(key: 'userBranchId', value: geo.branchId!);
+          }
+          if (mounted) {
+            setState(() {
+              _gpsBranchName = geo.branchName;
+              _branchName = geo.branchName;
+              _loginBranchName = geo.branchName;
+              if (_kitchenName != null &&
+                  !_kitchenName!.toLowerCase().contains(geo.branchName!.toLowerCase())) {
+                _kitchenName = null;
+              }
+            });
+          }
+        } else {
+          if (mounted) {
+            setState(() {
+              _gpsBranchName = geo.branchName;
+            });
+          }
         }
       }
     }
@@ -1107,6 +1143,7 @@ class _EmployeePageState extends State<EmployeePage> {
       'punchInType': isAuto ? 'auto' : 'manual',
       if (position != null) 'latitude': position.latitude,
       if (position != null) 'longitude': position.longitude,
+      if (position != null) 'accuracy': position.accuracy,
     };
 
     try {
@@ -1212,27 +1249,48 @@ class _EmployeePageState extends State<EmployeePage> {
     if (!mounted || _isProcessingPunch) return;
     await AttendanceManager.instance.checkNow();
     try {
-      final geo = await GeofenceUtil.checkLocationAndGeofence();
+      final prefs = await SharedPreferences.getInstance();
+      final lockedBranchId = prefs.getString('lockedBranchId') ??
+          (await _storage.read(key: 'lockedBranchId')) ??
+          prefs.getString('userBranchId');
+      final lockedBranchName = prefs.getString('lockedBranchName') ??
+          (await _storage.read(key: 'lockedBranchName')) ??
+          prefs.getString('userBranchName');
+
+      final geo = await GeofenceUtil.checkLocationAndGeofence(
+        targetBranchId: lockedBranchId,
+        targetBranchName: lockedBranchName,
+      );
       if (geo.branchName != null && geo.branchName!.isNotEmpty) {
-        final prefs = await SharedPreferences.getInstance();
         await prefs.setString('lastGpsBranchName', geo.branchName!);
-        await prefs.setString('branchName', geo.branchName!);
-        await prefs.setString('userBranchName', geo.branchName!);
-        await _storage.write(key: 'userBranchName', value: geo.branchName!);
-        if (geo.branchId != null && geo.branchId!.isNotEmpty) {
-          await prefs.setString('branchId', geo.branchId!);
-          await _storage.write(key: 'userBranchId', value: geo.branchId!);
-        }
-        if (mounted) {
-          setState(() {
-            _gpsBranchName = geo.branchName;
-            _branchName = geo.branchName;
-            _loginBranchName = geo.branchName;
-            if (_kitchenName != null &&
-                !_kitchenName!.toLowerCase().contains(geo.branchName!.toLowerCase())) {
-              _kitchenName = null;
-            }
-          });
+        final isLocked = (prefs.getBool('isBranchLocked') ?? false) ||
+            (lockedBranchId != null && lockedBranchId.isNotEmpty);
+
+        if (!isLocked) {
+          await prefs.setString('branchName', geo.branchName!);
+          await prefs.setString('userBranchName', geo.branchName!);
+          await _storage.write(key: 'userBranchName', value: geo.branchName!);
+          if (geo.branchId != null && geo.branchId!.isNotEmpty) {
+            await prefs.setString('branchId', geo.branchId!);
+            await _storage.write(key: 'userBranchId', value: geo.branchId!);
+          }
+          if (mounted) {
+            setState(() {
+              _gpsBranchName = geo.branchName;
+              _branchName = geo.branchName;
+              _loginBranchName = geo.branchName;
+              if (_kitchenName != null &&
+                  !_kitchenName!.toLowerCase().contains(geo.branchName!.toLowerCase())) {
+                _kitchenName = null;
+              }
+            });
+          }
+        } else {
+          if (mounted) {
+            setState(() {
+              _gpsBranchName = geo.branchName;
+            });
+          }
         }
       }
     } catch (_) {}

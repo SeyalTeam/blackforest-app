@@ -239,6 +239,11 @@ class AttendanceManager {
               position: position,
             ),
           );
+          unawaited(
+            sendMovementTelemetry(
+              position: position,
+            ),
+          );
         },
         onError: (e) {
           debugPrint('AttendanceManager positionStream error: $e');
@@ -246,6 +251,41 @@ class AttendanceManager {
       );
     } catch (e) {
       debugPrint('AttendanceManager startPositionStream error: $e');
+    }
+  }
+
+  /// Sends periodic GPS telemetry breadcrumbs without altering attendance branch assignment
+  static Future<void> sendMovementTelemetry({required Position position}) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      const storage = FlutterSecureStorage();
+      final token = (await storage.read(key: 'token')) ?? prefs.getString('token');
+      final userId = (await storage.read(key: 'userId')) ?? prefs.getString('userId');
+      final lockedBranchId = prefs.getString('lockedBranchId') ??
+          (await storage.read(key: 'lockedBranchId')) ??
+          prefs.getString('branchId');
+
+      if (token == null || token.isEmpty || userId == null || userId.isEmpty) return;
+
+      final payload = {
+        'user': userId,
+        if (lockedBranchId != null && lockedBranchId.isNotEmpty) 'branch': lockedBranchId,
+        'latitude': position.latitude,
+        'longitude': position.longitude,
+        'accuracy': position.accuracy,
+        'timestamp': DateTime.now().toUtc().toIso8601String(),
+      };
+
+      await http.post(
+        Uri.parse('${ApiConfig.baseUrl}/staff-movement-history'),
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode(payload),
+      ).timeout(const Duration(seconds: 4));
+    } catch (_) {
+      // Telemetry failures are non-critical and fail silently
     }
   }
 
@@ -283,9 +323,18 @@ class AttendanceManager {
         return;
       }
 
-      // 1. Check GPS position & Geofence
+      final lockedBranchId = prefs.getString('lockedBranchId') ??
+          (await storage.read(key: 'lockedBranchId')) ??
+          prefs.getString('userBranchId');
+      final lockedBranchName = prefs.getString('lockedBranchName') ??
+          (await storage.read(key: 'lockedBranchName')) ??
+          prefs.getString('userBranchName');
+
+      // 1. Check GPS position & Geofence (locked to assigned branch)
       final geo = await GeofenceUtil.checkLocationAndGeofence(
         existingPosition: position,
+        targetBranchId: lockedBranchId,
+        targetBranchName: lockedBranchName,
       );
       final currentPos = geo.position;
 
@@ -459,11 +508,14 @@ class AttendanceManager {
       // ── 5. AUTO PUNCH OUT EVALUATION ──────────────────────────────────────
       if (activeSession != null) {
         final isApiError = geo.errorMessage != null && geo.errorMessage!.contains('API error');
-        if (!isInside && !isApiError) {
+        // Require trustworthy accuracy (< 45m) to avoid false exits from indoor drift
+        final bool isAccurateFix = currentPos.accuracy <= 45.0;
+
+        if (!isInside && !isApiError && isAccurateFix) {
           _consecutiveOutsideTicks++;
 
-          // Immediate exit detection: trigger on 1 confirmed outside reading
-          const int requiredTicks = 1;
+          // Multi-tick exit detection: requires 2 confirmed consecutive outside readings
+          const int requiredTicks = 2;
           if (_consecutiveOutsideTicks >= requiredTicks) {
             // Punch out
             final punchInStr = activeSession['punchIn']?.toString() ?? '';
@@ -516,7 +568,7 @@ class AttendanceManager {
               );
             }
           }
-        } else {
+        } else if (isInside) {
           // Inside branch
           _consecutiveOutsideTicks = 0;
         }
@@ -547,6 +599,7 @@ class AttendanceManager {
             'punchInType': 'auto',
             'latitude': currentPos.latitude,
             'longitude': currentPos.longitude,
+            'accuracy': currentPos.accuracy,
           };
 
           final updatedActivities = List<dynamic>.from(rawActivities)

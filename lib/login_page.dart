@@ -872,6 +872,7 @@ class _LoginPageState extends State<LoginPage> {
         if (loginPosition != null) ...{
           'x-latitude': loginPosition.latitude.toString(),
           'x-longitude': loginPosition.longitude.toString(),
+          'x-accuracy': loginPosition.accuracy.toString(),
         },
       };
 
@@ -984,14 +985,16 @@ class _LoginPageState extends State<LoginPage> {
           branchId = branchObj;
         }
 
-        // Use Branch returned by server or matched from PIN
+        // PIN-authoritative branch assignment: The branch verified by PIN is the authoritative branch
         Map<String, dynamic>? matchedBranch = _matchedBranchForPin;
         if (matchedBranch != null) {
-          if (branchId.isEmpty) {
-            branchId = (matchedBranch['id'] ?? matchedBranch['_id'])?.toString() ?? '';
+          final mId = (matchedBranch['id'] ?? matchedBranch['_id'])?.toString() ?? '';
+          final mName = matchedBranch['name']?.toString() ?? '';
+          if (mId.isNotEmpty) {
+            branchId = mId;
           }
-          if (branchName.isEmpty) {
-            branchName = matchedBranch['name']?.toString() ?? '';
+          if (mName.isNotEmpty) {
+            branchName = mName;
           }
         }
 
@@ -1095,6 +1098,9 @@ class _LoginPageState extends State<LoginPage> {
         if (branchId.isNotEmpty) {
           await storage.write(key: 'userBranchId', value: branchId);
           await storage.write(key: 'userBranchName', value: branchName);
+          await storage.write(key: 'isBranchLocked', value: 'true');
+          await storage.write(key: 'lockedBranchId', value: branchId);
+          await storage.write(key: 'lockedBranchName', value: branchName);
         }
         await storage.delete(key: 'userKitchenName');
         await storage.delete(key: 'userKitchenId');
@@ -1121,6 +1127,9 @@ class _LoginPageState extends State<LoginPage> {
           await prefs.setString('branchId', branchId);
           await prefs.setString('branch', branchId);
           await prefs.setString('userBranchId', branchId);
+          await prefs.setBool('isBranchLocked', true);
+          await prefs.setString('lockedBranchId', branchId);
+          await prefs.setString('lockedBranchName', branchName);
         }
         if (branchName.isNotEmpty) {
           await prefs.setString('branchName', branchName);
