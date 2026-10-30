@@ -2494,6 +2494,7 @@ class _KotPageState extends State<KotPage> {
   final Set<String> _updatingKeys = <String>{};
   final Set<String> _inFlightDeliveryTokens = <String>{};
   final Map<String, DateTime> _locallyDeliveredTokens = <String, DateTime>{};
+  static final Map<String, Future<void>> _billDeliveryLocks = <String, Future<void>>{};
   final Map<String, List<Map<String, dynamic>>> _billItemsCacheByBillId =
       <String, List<Map<String, dynamic>>>{};
   final Map<String, String> _productImageById = <String, String>{};
@@ -5095,7 +5096,18 @@ class _KotPageState extends State<KotPage> {
       ),
     );
 
+    final billLockKey = item.billId.trim();
+    final prevLock = _billDeliveryLocks[billLockKey];
+    final completer = Completer<void>();
+    _billDeliveryLocks[billLockKey] = completer.future;
+
     try {
+      if (prevLock != null) {
+        try {
+          await prevLock;
+        } catch (_) {}
+      }
+
       final prefs = await SharedPreferences.getInstance();
       final token = _readText(prefs.getString('token'));
       if (token.isEmpty) {
@@ -5197,6 +5209,25 @@ class _KotPageState extends State<KotPage> {
             timeout: const Duration(seconds: 12),
           );
 
+          if (updateResponse.statusCode >= 500) {
+            await Future.delayed(const Duration(milliseconds: 350));
+            updateResponse = await http.patch(
+              Uri.parse(
+                'https://blackforest-api.vseyal.com/api/billings/${activeItem.billId}/items/status',
+              ),
+              headers: {
+                'Authorization': 'Bearer $token',
+                'Content-Type': 'application/json',
+                http.idempotencyHeaderName: http.generateIdempotencyKey(
+                  scope:
+                      'billings-item-status-${activeItem.billId}-${activeItem.itemId}-$currentStepStatus-retry',
+                ),
+              },
+              body: jsonEncode(statusPayload),
+              timeout: const Duration(seconds: 12),
+            );
+          }
+
           if (updateResponse.statusCode == 404 ||
               updateResponse.statusCode == 405) {
             updateResponse = await runLegacyBillPatch();
@@ -5297,11 +5328,16 @@ class _KotPageState extends State<KotPage> {
         ),
       );
     } finally {
+      if (!completer.isCompleted) {
+        completer.complete();
+      }
+      if (_billDeliveryLocks[billLockKey] == completer.future) {
+        _billDeliveryLocks.remove(billLockKey);
+      }
+      _updatingKeys.remove(item.key);
+      _inFlightDeliveryTokens.remove(deliveryToken);
       if (mounted) {
-        setState(() {
-          _updatingKeys.remove(item.key);
-          _inFlightDeliveryTokens.remove(deliveryToken);
-        });
+        setState(() {});
       }
     }
   }
